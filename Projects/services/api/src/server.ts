@@ -1,3 +1,4 @@
+import { initSentry, Sentry } from "./instrument";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -7,6 +8,7 @@ import { apiRouter } from "./routes";
 import { initAuthSchema } from "./storage/authStore";
 import { isProductionMediaStorageReady } from "./storage/mediaStorage";
 import { initProjectSchema } from "./storage/projectsStore";
+import { runMigrations } from "./storage/migrate";
 
 dotenv.config();
 
@@ -100,6 +102,8 @@ export function createApp(): express.Express {
   app.use(express.json({ limit: "25mb" }));
   app.use(httpLogger);
   app.use("/api", apiRouter);
+  // Sentry error handler must come after routes and before any other error handler
+  Sentry.setupExpressErrorHandler(app);
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (typeof err === "object" && err !== null && "type" in err) {
       const kind = String((err as { type?: string }).type || "");
@@ -119,14 +123,51 @@ export function createApp(): express.Express {
 }
 
 export async function bootstrap() {
+  initSentry();
   validateProviderConfig();
+  await runMigrations();
   await initAuthSchema();
   await initProjectSchema();
   const app = createApp();
 
-  return app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ API running on http://0.0.0.0:${PORT}`);
   });
+
+  let shuttingDown = false;
+  async function shutdown(signal: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[server] ${signal} received — shutting down gracefully`);
+    server.close(async (err) => {
+      if (err) console.error("[server] error closing HTTP server", err);
+      try {
+        const { getPgPool } = await import("./storage/postgres");
+        await getPgPool().end();
+        console.log("[server] database pool closed");
+      } catch {
+        // Pool may not be open in file-backed mode
+      }
+      process.exit(err ? 1 : 0);
+    });
+    // Force-exit if requests don't drain within 10 seconds
+    setTimeout(() => {
+      console.error("[server] force exit after 10s drain timeout");
+      process.exit(1);
+    }, 10_000).unref();
+  }
+
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("uncaughtException", (err) => {
+    console.error("[server] uncaughtException", err);
+    void shutdown("uncaughtException");
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error("[server] unhandledRejection", reason);
+  });
+
+  return server;
 }
 
 if (require.main === module) {

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/react-native";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -8,6 +9,20 @@ import { queryClient } from "@/lib/query-client";
 import { AuthProvider } from "@/lib/auth-context";
 import { DataProvider } from "@/lib/data-context";
 import { logResolvedApiBaseUrlOnce } from "@/lib/api-base-url";
+import Constants from "expo-constants";
+
+const sentryDsn = (Constants.expoConfig?.extra as { sentryDsn?: string } | undefined)?.sentryDsn
+  || process.env.EXPO_PUBLIC_SENTRY_DSN;
+
+if (sentryDsn) {
+  Sentry.init({
+    dsn: sentryDsn,
+    environment: __DEV__ ? "development" : "production",
+    tracesSampleRate: __DEV__ ? 1.0 : 0.2,
+    attachScreenshot: true,
+    enableNativeFramesTracking: true,
+  });
+}
 
 SplashScreen.preventAutoHideAsync();
 
@@ -115,7 +130,7 @@ function RootLayoutNav() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   useEffect(() => {
     logResolvedApiBaseUrlOnce();
     SplashScreen.hideAsync();
@@ -135,3 +150,5 @@ export default function RootLayout() {
     </ErrorBoundary>
   );
 }
+
+export default sentryDsn ? Sentry.wrap(RootLayout) : RootLayout;
