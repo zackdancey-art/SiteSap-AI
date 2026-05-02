@@ -1,0 +1,5 @@
+
+# Expo
+apps/mobile/.expo/
+.env
+**/.env

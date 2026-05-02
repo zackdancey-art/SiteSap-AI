@@ -1,0 +1,123 @@
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import { httpLogger } from "./middleware/logger";
+import { apiRouter } from "./routes";
+import { initAuthSchema } from "./storage/authStore";
+import { isProductionMediaStorageReady } from "./storage/mediaStorage";
+import { initProjectSchema } from "./storage/projectsStore";
+
+dotenv.config();
+
+function isConfigured(value?: string) {
+  return Boolean(value && value.trim());
+}
+
+function validateProviderConfig() {
+  const hasDatabase = isConfigured(process.env.DATABASE_URL);
+  const hasEmailProvider =
+    (isConfigured(process.env.RESEND_API_KEY) || isConfigured(process.env.SENDGRID_API_KEY)) &&
+    isConfigured(process.env.EMAIL_FROM);
+  const hasSmsProvider =
+    isConfigured(process.env.TWILIO_ACCOUNT_SID) &&
+    isConfigured(process.env.TWILIO_AUTH_TOKEN) &&
+    isConfigured(process.env.TWILIO_FROM_NUMBER);
+  const hasMediaStorage = isProductionMediaStorageReady();
+
+  if (process.env.NODE_ENV === "production") {
+    if (!hasDatabase || !hasEmailProvider || !hasSmsProvider || !hasMediaStorage) {
+      const missing = [
+        !hasDatabase ? "PostgreSQL DATABASE_URL" : null,
+        !hasEmailProvider ? "email provider (RESEND/SENDGRID + EMAIL_FROM)" : null,
+        !hasSmsProvider ? "Twilio SMS provider (SID, TOKEN, FROM_NUMBER)" : null,
+        !hasMediaStorage ? "S3-compatible media storage (MEDIA_STORAGE_PROVIDER=s3 + S3_* env vars)" : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      throw new Error(`Missing production auth provider configuration: ${missing}`);
+    }
+    return;
+  }
+
+  if (!hasDatabase) {
+    console.warn("[auth] Dev mode warning: DATABASE_URL is not set. Using in-memory auth fallback (data resets on restart).");
+  }
+  if (!hasMediaStorage) {
+    console.warn("[uploads] Dev mode warning: media storage provider is not configured. Using local disk uploads.");
+  }
+  if (!hasEmailProvider || !hasSmsProvider) {
+    console.warn(
+      "[auth] Dev mode provider warning: using local code fallback. Configure RESEND/SENDGRID + EMAIL_FROM and TWILIO vars for real delivery."
+    );
+  }
+}
+
+const rawPort = process.env.PORT;
+const PORT = rawPort && !isNaN(Number(rawPort)) ? Number(rawPort) : 4000;
+const allowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+export function createApp(): express.Express {
+  const app = express();
+  app.disable("x-powered-by");
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (allowedOrigins.length === 0) return cb(null, true);
+        if (allowedOrigins.includes(origin)) return cb(null, true);
+        return cb(new Error("CORS origin blocked"));
+      },
+    })
+  );
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+    next();
+  });
+  app.use(express.json({ limit: "25mb" }));
+  app.use(httpLogger);
+  app.use("/api", apiRouter);
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (typeof err === "object" && err !== null && "type" in err) {
+      const kind = String((err as { type?: string }).type || "");
+      if (kind === "entity.too.large") {
+        return res.status(413).json({
+          error: "Request payload is too large. Reduce photo count/size and retry.",
+        });
+      }
+      if (kind === "entity.parse.failed") {
+        return res.status(400).json({ error: "Malformed JSON request body." });
+      }
+    }
+    console.error("[server] Unhandled request error", err);
+    return res.status(500).json({ error: "Internal server error." });
+  });
+  return app;
+}
+
+export async function bootstrap() {
+  validateProviderConfig();
+  await initAuthSchema();
+  await initProjectSchema();
+  const app = createApp();
+
+  return app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ API running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+if (require.main === module) {
+  bootstrap().catch((error) => {
+    console.error("❌ API startup failed", error);
+    process.exit(1);
+  });
+}

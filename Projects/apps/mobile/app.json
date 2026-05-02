@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "SiteSnap",
+    "slug": "sitesnap",
+    "scheme": "sitesnap",
+    "version": "1.0.0",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "jsEngine": "hermes",
+    "plugins": [
+      "expo-router"
+    ],
+    "ios": {
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSExceptionDomains": {
+            "localhost": {
+              "NSThirdPartyExceptionAllowsInsecureHTTPLoads": true,
+              "NSThirdPartyExceptionRequiresForwardSecrecy": false,
+              "NSIncludesSubdomains": true
+            }
+          }
+        },
+        "NSLocalNetworkUsageDescription": "This app needs local network access to communicate with the development API."
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react",
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "references": [
+    { "path": "../../shared/tsconfig.build.json" }
+  ],
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "constants/**/*.ts",
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
+    "*.ts",
+    "*.tsx"
+  ]
+}

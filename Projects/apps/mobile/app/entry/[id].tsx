@@ -1,0 +1,496 @@
+import React from "react";
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  StyleSheet,
+  Platform,
+  Alert,
+  Image,
+  Modal,
+  Linking,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import { useData } from "@/lib/data-context";
+import Colors from "@/constants/colors";
+import { Photo } from "@/lib/types";
+import { buildEntryPhotosReportHtml, exportReportDocument } from "@/lib/export-utils";
+
+export default function EntryDetailScreen() {
+  const insets = useSafeAreaInsets();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { getEntry, getSite, deleteEntry } = useData();
+
+  const entry = getEntry(id);
+  const site = entry ? getSite(entry.siteId) : null;
+
+  const webTopInset = Platform.OS === "web" ? 67 : 0;
+  const webBottomInset = Platform.OS === "web" ? 34 : 0;
+  const [previewPhoto, setPreviewPhoto] = React.useState<Photo | null>(null);
+
+  if (!entry) {
+    return (
+      <View style={styles.notFound}>
+        <Text style={styles.notFoundText}>Entry not found</Text>
+        <Pressable onPress={() => router.back()}>
+          <Text style={styles.backLink}>Go back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const handleDelete = () => {
+    if (Platform.OS === "web") {
+      deleteEntry(id);
+      router.back();
+      return;
+    }
+    Alert.alert("Delete Entry", "Remove this daily entry?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          deleteEntry(id);
+          router.back();
+        },
+      },
+    ]);
+  };
+
+  const handleEdit = () => {
+    router.push({
+      pathname: "/new-entry",
+      params: { siteId: entry.siteId, entryId: entry.id },
+    });
+  };
+
+  const handleOpenMaps = async () => {
+    if (!entry.locationAddress) return;
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(entry.locationAddress)}`;
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) return;
+    await Linking.openURL(url);
+  };
+
+  const dateObj = new Date(entry.date + "T00:00:00");
+  const formattedDate = dateObj.toLocaleDateString("en-AU", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  const handleExportPhotos = () => {
+    if (!site || entry.photos.length === 0) {
+      Alert.alert("No Photos", "This entry has no photos to export.");
+      return;
+    }
+    const html = buildEntryPhotosReportHtml({
+      site,
+      entryDate: formattedDate,
+      notes: entry.notes,
+      photos: entry.photos,
+    });
+    Alert.alert("Export Entry Photos", "Choose an export format.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Word",
+        onPress: () =>
+          void exportReportDocument({
+            filenameBase: `${site.name}-${entry.date}-entry-photos`,
+            html,
+            format: "doc",
+          }),
+      },
+      {
+        text: "PDF",
+        onPress: () =>
+          void exportReportDocument({
+            filenameBase: `${site.name}-${entry.date}-entry-photos`,
+            html,
+            format: "pdf",
+          }),
+      },
+    ]);
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={[styles.header, { paddingTop: insets.top + webTopInset + 8 }]}>
+        <View style={styles.headerNav}>
+          <Pressable onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={22} color={Colors.white} />
+          </Pressable>
+          <Text style={styles.headerLabel}>Daily Entry</Text>
+          <View style={styles.headerActions}>
+            <Pressable onPress={handleEdit} style={styles.headerAction}>
+              <Ionicons name="create-outline" size={20} color="rgba(255,255,255,0.8)" />
+            </Pressable>
+            <Pressable onPress={handleDelete} style={styles.headerAction}>
+              <Ionicons name="trash-outline" size={20} color="rgba(255,255,255,0.8)" />
+            </Pressable>
+          </View>
+        </View>
+        <Text style={styles.dateText}>{formattedDate}</Text>
+        {site && <Text style={styles.siteText}>{site.name}</Text>}
+      </View>
+
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 40 + webBottomInset }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.infoGrid}>
+          {!!entry.weather && (
+            <View style={styles.infoCard}>
+              <Ionicons name="partly-sunny" size={24} color={Colors.accent} />
+              <Text style={styles.infoLabel}>Weather</Text>
+              <Text style={styles.infoValue}>{entry.weather}</Text>
+            </View>
+          )}
+          {!!entry.crewCount && (
+            <View style={styles.infoCard}>
+              <Ionicons name="people" size={24} color={Colors.accent} />
+              <Text style={styles.infoLabel}>Crew</Text>
+              <Text style={styles.infoValue}>{entry.crewCount} workers</Text>
+            </View>
+          )}
+          <View style={styles.infoCard}>
+            <Ionicons name="camera" size={24} color={Colors.accent} />
+            <Text style={styles.infoLabel}>Photos</Text>
+            <Text style={styles.infoValue}>{entry.photos.length}</Text>
+          </View>
+        </View>
+
+        {!!entry.locationAddress && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Address</Text>
+            <Pressable style={styles.notesCard} onPress={handleOpenMaps}>
+              <Text style={styles.notesText}>{entry.locationAddress}</Text>
+              <View style={styles.mapHintRow}>
+                <Ionicons name="map-outline" size={14} color={Colors.accent} />
+                <Text style={styles.mapHintText}>Open in Google Maps</Text>
+              </View>
+            </Pressable>
+          </View>
+        )}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Notes & Observations</Text>
+          <View style={styles.notesCard}>
+            <Text style={styles.notesText}>{entry.notes}</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Photos</Text>
+            {entry.photos.length > 0 && (
+              <Pressable style={styles.exportPhotosButton} onPress={handleExportPhotos}>
+                <Ionicons name="share-outline" size={14} color={Colors.accent} />
+                <Text style={styles.exportPhotosText}>Export</Text>
+              </Pressable>
+            )}
+          </View>
+          {entry.photos.length === 0 ? (
+            <View style={styles.noPhotos}>
+              <Ionicons name="images-outline" size={36} color={Colors.textTertiary} />
+              <Text style={styles.noPhotosText}>No photos attached</Text>
+            </View>
+          ) : (
+            <View style={styles.photoGrid}>
+              {entry.photos.map((photo) => (
+                <Pressable
+                  key={photo.id}
+                  style={styles.photoThumb}
+                  onPress={() => setPreviewPhoto(photo)}
+                >
+                  <Image source={{ uri: photo.uri }} style={styles.photoImage} />
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      <Modal
+        visible={!!previewPhoto}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreviewPhoto(null)}
+      >
+        <View style={styles.previewBackdrop}>
+          <Pressable style={styles.previewClose} onPress={() => setPreviewPhoto(null)}>
+            <Ionicons name="close" size={26} color={Colors.white} />
+          </Pressable>
+          {!!previewPhoto && (
+            <>
+              <ScrollView
+                style={styles.previewScroll}
+                contentContainerStyle={styles.previewScrollContent}
+                maximumZoomScale={4}
+                minimumZoomScale={1}
+                bouncesZoom
+                centerContent
+                showsHorizontalScrollIndicator={false}
+                showsVerticalScrollIndicator={false}
+              >
+                <Image source={{ uri: previewPhoto.uri }} style={styles.previewImage} resizeMode="contain" />
+              </ScrollView>
+              <View style={styles.previewMeta}>
+                <Text style={styles.previewMetaText}>
+                  Captured {new Date(previewPhoto.timestamp || entry.timestamp).toLocaleString("en-AU")}
+                </Text>
+                {!!previewPhoto.caption && (
+                  <Text style={styles.previewCaption}>{previewPhoto.caption}</Text>
+                )}
+              </View>
+            </>
+          )}
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  notFound: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+  },
+  notFoundText: {
+    fontSize: 18,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+  },
+  backLink: {
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: Colors.accent,
+  },
+  header: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  headerNav: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerLabel: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.white,
+  },
+  headerAction: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  dateText: {
+    fontSize: 22,
+    fontFamily: "Inter_700Bold",
+    color: Colors.white,
+    marginBottom: 4,
+  },
+  siteText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "rgba(255,255,255,0.6)",
+  },
+  scrollContent: {
+    padding: 16,
+    gap: 20,
+  },
+  infoGrid: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  infoCard: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 14,
+    alignItems: "center",
+    gap: 6,
+    shadowColor: Colors.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  infoLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: Colors.textTertiary,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  infoValue: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+    textAlign: "center",
+  },
+  section: {
+    gap: 10,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+    marginLeft: 4,
+  },
+  exportPhotosButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: Colors.accent + "10",
+  },
+  exportPhotosText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.accent,
+  },
+  notesCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: Colors.cardShadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  notesText: {
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: Colors.text,
+    lineHeight: 24,
+  },
+  mapHintRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  mapHintText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.accent,
+  },
+  noPhotos: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 32,
+    alignItems: "center",
+    gap: 8,
+  },
+  noPhotosText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textTertiary,
+  },
+  photoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  photoThumb: {
+    width: "31%",
+    aspectRatio: 1,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: Colors.borderLight,
+  },
+  photoImage: {
+    width: "100%",
+    height: "100%",
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    paddingTop: 56,
+  },
+  previewClose: {
+    position: "absolute",
+    top: 56,
+    right: 24,
+    zIndex: 1,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewScroll: {
+    flex: 1,
+    width: "100%",
+  },
+  previewScrollContent: {
+    flexGrow: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  previewImage: {
+    width: 340,
+    height: 520,
+    maxWidth: "100%",
+  },
+  previewMeta: {
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    gap: 6,
+  },
+  previewMetaText: {
+    color: Colors.white,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  previewCaption: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
+  },
+});

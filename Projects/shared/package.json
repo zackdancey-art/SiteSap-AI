@@ -1,0 +1,23 @@
+{
+  "name": "@sitesnap/shared",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.d.ts",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "zod": "^3.21.4"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.d.ts",
+      "types": "./dist/index.d.ts"
+    },
+    "./schemas/*": "./dist/shared/schemas/*.d.ts",
+    "./types/*": "./dist/shared/types/*.d.ts",
+    "./schemas-legacy/*": "./dist/schemas/*.d.ts",
+    "./types-legacy/*": "./dist/types/*.d.ts"
+  },
+  "scripts": {
+    "build:types": "tsc -p tsconfig.build.json"
+  }
+}

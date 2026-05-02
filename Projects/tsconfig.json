@@ -1,0 +1,28 @@
+{
+  "files": [],
+  "include": [],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "lib": ["ES2022", "DOM"],
+    "rootDir": ".",
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "incremental": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "paths": {
+      "@sitesnap/shared/*": ["shared/*"]
+    }
+  },
+  "references": [
+    { "path": "shared/tsconfig.build.json" },
+    { "path": "services/api/tsconfig.json" },
+    { "path": "apps/mobile/tsconfig.json" }
+  ]
+}
