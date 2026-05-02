@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Site, Entry, GeneratedDiary } from "@/lib/types";
 import { resolveApiBaseUrl } from "@/lib/api-base-url";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, isTokenExpiringSoon } from "@/lib/auth-context";
 import {
   deletePhotoPayloads,
   hydrateEntriesWithPhotoPayloads,
@@ -64,8 +64,13 @@ async function getToken() {
   return AsyncStorage.getItem("sitesnap.token");
 }
 
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getToken();
+// Holds a reference to the auth context's refreshToken so apiJson can call it without prop-drilling
+let _refreshTokenFn: (() => Promise<string | null>) | null = null;
+export function _setRefreshTokenFn(fn: () => Promise<string | null>) {
+  _refreshTokenFn = fn;
+}
+
+async function doFetch<T>(path: string, init: RequestInit | undefined, token: string | null): Promise<T> {
   const res = await fetch(`${BASE_URL}/api${path}`, {
     ...init,
     headers: {
@@ -75,6 +80,11 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      const err = new Error("Unauthorized") as Error & { status: number };
+      err.status = 401;
+      throw err;
+    }
     const contentType = res.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
       const payload = (await res.json()) as { error?: string; message?: string };
@@ -95,6 +105,27 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("Unexpected response type from API.");
   }
   return res.json() as Promise<T>;
+}
+
+async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let token = await getToken();
+
+  // Proactively refresh if the token expires within 1 hour
+  if (token && isTokenExpiringSoon(token) && _refreshTokenFn) {
+    const refreshed = await _refreshTokenFn();
+    if (refreshed) token = refreshed;
+  }
+
+  try {
+    return await doFetch<T>(path, init, token);
+  } catch (err) {
+    // On 401, attempt one token refresh then retry
+    if (err instanceof Error && (err as Error & { status?: number }).status === 401 && _refreshTokenFn) {
+      const refreshed = await _refreshTokenFn();
+      if (refreshed) return doFetch<T>(path, init, refreshed);
+    }
+    throw err;
+  }
 }
 
 async function uploadPhoto(photo: Entry["photos"][number]) {
@@ -125,14 +156,12 @@ async function uploadPhoto(photo: Entry["photos"][number]) {
   }
 
   const payload = (await res.json()) as { url?: string; storagePath?: string; storageKey?: string };
-  const accessPath = payload.url || "";
-  const normalizedUri = accessPath.startsWith("http")
-    ? `${accessPath}${accessPath.includes("?") ? "&" : "?"}authToken=${encodeURIComponent(token)}`
-    : `${BASE_URL}${accessPath}?authToken=${encodeURIComponent(token)}`;
+  // Store the canonical path only — tokens are never embedded in URIs
+  const canonicalPath = payload.url?.startsWith("/") ? payload.url : (payload.url || "");
 
   return {
     ...photo,
-    uri: normalizedUri,
+    uri: canonicalPath,
     storagePath: payload.storagePath,
     storageKey: payload.storageKey,
   };
@@ -182,28 +211,78 @@ async function loadCache(email: string | null | undefined) {
   return { sites: legacySites, entries: legacyEntries, diaries: legacyDiaries };
 }
 
-function attachAuthToPhotoUris(entries: Entry[], token: string | null) {
-  if (!token) return entries;
+// Module-level signed URL cache keyed by canonical path
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const SIGNED_URL_CACHE_TTL_MS = 90 * 60 * 1000; // 90 min — well under 2-hr server TTL
+
+function toCanonicalPath(uri: string): string | null {
+  // Strip legacy ?authToken= or ?sig= query params to recover the canonical path
+  const cleaned = uri.replace(/[?&](authToken|sig|exp)=[^&]*/g, "").replace(/[?&]$/, "");
+  // Accept absolute URLs pointing to our API or relative /api/uploads/ paths
+  const match = cleaned.match(/(\/api\/uploads\/[^?#]+)/);
+  return match ? match[1] : null;
+}
+
+async function batchSignPaths(paths: string[], token: string): Promise<void> {
+  if (paths.length === 0) return;
+  try {
+    const res = await fetch(`${BASE_URL}/api/uploads/sign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ paths }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { signed: { path: string; url: string | null }[] };
+    const expiresAt = Date.now() + SIGNED_URL_CACHE_TTL_MS;
+    for (const item of data.signed) {
+      if (item.url) signedUrlCache.set(item.path, { url: item.url, expiresAt });
+    }
+  } catch {
+    // Signing failure is non-fatal — photos just won't display
+  }
+}
+
+async function attachSignedPhotoUris(entries: Entry[], token: string | null): Promise<Entry[]> {
+  if (!token || entries.length === 0) return entries;
+  const now = Date.now();
+
+  // Collect canonical paths that need (re-)signing
+  const toSign: string[] = [];
+  for (const entry of entries) {
+    for (const photo of entry.photos) {
+      if (!photo.uri) continue;
+      const canonical = toCanonicalPath(photo.uri);
+      if (!canonical) continue;
+      const cached = signedUrlCache.get(canonical);
+      if (!cached || cached.expiresAt <= now) toSign.push(canonical);
+    }
+  }
+  // Deduplicate
+  const unique = [...new Set(toSign)];
+  // Batch in groups of 50 (server limit)
+  for (let i = 0; i < unique.length; i += 50) {
+    await batchSignPaths(unique.slice(i, i + 50), token);
+  }
+
   return entries.map((entry) => ({
     ...entry,
     photos: entry.photos.map((photo) => {
       if (!photo.uri) return photo;
-      const normalizedUri = photo.uri.startsWith("/api/uploads/")
-        ? `${BASE_URL}${photo.uri}`
-        : photo.uri.replace(/\?authToken=.*$/, "");
-      if (!normalizedUri.includes("/api/uploads/")) {
-        return photo;
-      }
-      return {
-        ...photo,
-        uri: `${normalizedUri}${normalizedUri.includes("?") ? "&" : "?"}authToken=${encodeURIComponent(token)}`,
-      };
+      const canonical = toCanonicalPath(photo.uri);
+      if (!canonical) return photo;
+      const cached = signedUrlCache.get(canonical);
+      return cached ? { ...photo, uri: cached.url } : photo;
     }),
   }));
 }
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading: authLoading, user, token } = useAuth();
+  const { isAuthenticated, loading: authLoading, user, token, refreshToken } = useAuth();
+
+  // Keep the module-level refresh fn in sync with the current context instance
+  React.useEffect(() => {
+    _setRefreshTokenFn(refreshToken);
+  }, [refreshToken]);
   const [sites, setSites] = useState<Site[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [diaries, setDiaries] = useState<GeneratedDiary[]>([]);
@@ -214,7 +293,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const refresh = async () => {
     const userEmail = user?.email ?? null;
     const cachedBase = await loadCache(userEmail);
-    const cached = { ...cachedBase, entries: attachAuthToPhotoUris(cachedBase.entries, token) };
+    const cached = { ...cachedBase, entries: await attachSignedPhotoUris(cachedBase.entries, token) };
     setSites(cached.sites);
     setEntries(cached.entries);
     setDiaries(cached.diaries);
@@ -228,7 +307,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setSyncStatus("syncing");
       setLastSyncError(null);
       const bootstrap = await apiJson<{ sites: Site[]; entries: Entry[]; diaries: GeneratedDiary[] }>("/projects/bootstrap");
-      const hydratedEntries = attachAuthToPhotoUris(await hydrateEntriesWithPhotoPayloads(bootstrap.entries), token);
+      const hydratedEntries = await attachSignedPhotoUris(
+        await hydrateEntriesWithPhotoPayloads(bootstrap.entries),
+        token
+      );
       setSites(bootstrap.sites);
       setEntries(hydratedEntries);
       setDiaries(bootstrap.diaries);

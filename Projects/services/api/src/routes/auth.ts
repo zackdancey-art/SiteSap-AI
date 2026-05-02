@@ -4,6 +4,7 @@ import {
   createUser,
   deletePasswordResetToken,
   deletePendingRegistration,
+  deleteUserAccount,
   findUserByEmail,
   findUserByIdentifier,
   getPasswordResetToken,
@@ -14,6 +15,7 @@ import {
   updateUserProfile,
   updateUserPassword,
 } from "../storage/authStore";
+import { deleteAllUserProjectData } from "../storage/projectsStore";
 import {
   isChannelConfigured,
   sendAccountVerification,
@@ -21,11 +23,9 @@ import {
 } from "../services/notificationService";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { createAuthToken } from "../utils/authToken";
+import { isRateLimited } from "../middleware/rateLimit";
 import { hashPassword, verifyPassword } from "../utils/password";
 
-type RateLimitRecord = { count: number; resetAt: number };
-
-const rateLimitStore = new Map<string, RateLimitRecord>();
 const router: Router = Router();
 const verificationTtlMs = Number(process.env.ACCOUNT_VERIFICATION_TTL_MS ?? 10 * 60 * 1000);
 const isProd = process.env.NODE_ENV === "production";
@@ -63,25 +63,6 @@ function buildResetLink(resetToken: string) {
   return `${base}${separator}token=${encodeURIComponent(resetToken)}`;
 }
 
-function getRateLimitKey(req: Request, action: string) {
-  const xff = req.headers["x-forwarded-for"];
-  const forwarded = Array.isArray(xff) ? xff[0] : xff;
-  const ip = String(forwarded || req.ip || "unknown").split(",")[0].trim();
-  return `${action}:${ip}`;
-}
-
-function isRateLimited(req: Request, action: string, maxRequests: number, windowMs: number) {
-  const key = getRateLimitKey(req, action);
-  const now = Date.now();
-  const current = rateLimitStore.get(key);
-  if (!current || now > current.resetAt) {
-    rateLimitStore.set(key, { count: 1, resetAt: now + windowMs });
-    return false;
-  }
-  current.count += 1;
-  rateLimitStore.set(key, current);
-  return current.count > maxRequests;
-}
 
 function isUniqueViolation(err: unknown) {
   return Boolean(
@@ -331,6 +312,34 @@ router.patch("/auth/profile", requireAuth, async (req: Request, res: Response) =
   if (!updated) return res.status(404).json({ error: "User not found." });
   const token = createAuthToken({ email: updated.email, fullName: updated.fullName, role: updated.role });
   return res.json({ token, user: { email: updated.email, name: updated.fullName, role: updated.role } });
+});
+
+// Permanently delete the authenticated user's account and all their data
+router.delete("/auth/account", requireAuth, async (req: Request, res: Response) => {
+  if (isRateLimited(req, "delete-account", 3, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: "Too many account deletion attempts." });
+  }
+  const auth = (req as AuthenticatedRequest).auth;
+  try {
+    await deleteAllUserProjectData(auth.email);
+    await deleteUserAccount(auth.email);
+    return res.json({ ok: true, message: "Account and all associated data have been permanently deleted." });
+  } catch (error) {
+    console.error("[auth] delete-account failed", error);
+    return res.status(500).json({ error: "Failed to delete account." });
+  }
+});
+
+// Refresh a valid (not-expired) token — returns a new token with a fresh expiry
+router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) => {
+  const auth = (req as AuthenticatedRequest).auth;
+  const user = await findUserByEmail(auth.email);
+  // Fall back to token claims when no DB (in-memory/dev mode)
+  const email = user?.email ?? auth.email;
+  const fullName = user?.fullName ?? auth.fullName;
+  const role = user?.role ?? auth.role;
+  const token = createAuthToken({ email, fullName, role });
+  return res.json({ token, user: { email, name: fullName, role } });
 });
 
 router.post("/auth/forgot-password", async (req, res) => {

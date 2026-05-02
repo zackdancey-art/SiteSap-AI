@@ -9,6 +9,7 @@ import {
   Platform,
   Alert,
   Image,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -61,11 +62,12 @@ function SettingRow({ icon, label, value, toggle, toggleValue, onToggle, onPress
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const { user, logout, token } = useAuth();
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [notifications, setNotifications] = useState(true);
   const [autoSave, setAutoSave] = useState(true);
   const [locationTracking, setLocationTracking] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
@@ -77,6 +79,41 @@ export default function SettingsScreen() {
       getLocalProfile().then(setProfile).catch(() => setProfile(DEFAULT_PROFILE));
     }, [])
   );
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This will permanently delete your account and all your site data, entries, and reports. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete My Account",
+          style: "destructive",
+          onPress: async () => {
+            setDeletingAccount(true);
+            try {
+              const { resolveApiBaseUrl } = await import("@/lib/api-base-url");
+              const BASE_URL = resolveApiBaseUrl();
+              const res = await fetch(`${BASE_URL}/api/auth/account`, {
+                method: "DELETE",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+              });
+              if (!res.ok) {
+                const data = (await res.json()) as { error?: string };
+                throw new Error(data.error || "Failed to delete account.");
+              }
+              await logout();
+              router.replace("/login");
+            } catch (err) {
+              Alert.alert("Error", err instanceof Error ? err.message : "Failed to delete account. Please try again.");
+            } finally {
+              setDeletingAccount(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleLogout = () => {
     if (Platform.OS === "web") {
@@ -181,6 +218,15 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.sectionCard}>
             <SettingRow icon="log-out-outline" label="Sign Out" onPress={handleLogout} danger />
+            <View style={styles.divider} />
+            {deletingAccount ? (
+              <View style={styles.settingRow}>
+                <ActivityIndicator size="small" color={Colors.error} style={{ marginRight: 12 }} />
+                <Text style={[styles.settingLabel, { color: Colors.error }]}>Deleting account…</Text>
+              </View>
+            ) : (
+              <SettingRow icon="trash-outline" label="Delete Account" onPress={handleDeleteAccount} danger />
+            )}
           </View>
         </View>
       </ScrollView>

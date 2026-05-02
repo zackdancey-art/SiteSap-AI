@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
+import { rateLimit } from "../middleware/rateLimit";
 import { getMediaStorage } from "../storage/mediaStorage";
 import { listEntries, listSites } from "../storage/projectsStore";
 import { getOpenAIClient } from "../services/openaiClient";
@@ -75,7 +76,7 @@ type DiaryOutput = {
 
 type OpenAIContentItem =
   | { type: "input_text"; text: string }
-  | { type: "input_image"; image_url: string };
+  | { type: "input_image"; image_url: string; detail: "auto" | "low" | "high" };
 
 export const aiRouter: Router = Router();
 const mediaStorage = getMediaStorage();
@@ -321,6 +322,7 @@ async function buildVisionInputs(entries: GenerateDiaryEntry[]) {
       content.push({
         type: "input_image",
         image_url: imageUrl,
+        detail: "auto",
       });
     }
   }
@@ -570,7 +572,7 @@ async function resolveDiaryRequest(req: AuthenticatedRequest, body: GenerateDiar
   };
 }
 
-aiRouter.post("/generate-diary", requireAuth, async (req, res) => {
+aiRouter.post("/generate-diary", requireAuth, rateLimit("generate-diary", 10, 60 * 60 * 1000), async (req, res) => {
   const parsed = GenerateDiaryBodySchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid request payload.", details: parsed.error.flatten() });

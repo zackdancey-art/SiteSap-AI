@@ -509,6 +509,22 @@ export async function purgeExpiredAuthRecords() {
   await getPgPool().query(`DELETE FROM auth_password_reset_tokens WHERE expires_at < NOW()`);
 }
 
+export async function deleteUserAccount(email: string): Promise<void> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    memoryUsers.delete(email);
+    memoryPending.delete(email);
+    for (const [token, record] of memoryResetTokens.entries()) {
+      if (record.email === email) memoryResetTokens.delete(token);
+    }
+    await persistMemory();
+    return;
+  }
+  // Password reset tokens are deleted via CASCADE on auth_users
+  await getPgPool().query(`DELETE FROM auth_pending_registrations WHERE email = $1`, [email]);
+  await getPgPool().query(`DELETE FROM auth_users WHERE email = $1`, [email]);
+}
+
 export async function resetAuthStoreForTests() {
   if (useDatabase()) {
     await getPgPool().query(`DELETE FROM auth_password_reset_tokens`);

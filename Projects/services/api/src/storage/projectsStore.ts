@@ -704,6 +704,27 @@ export async function getSupervisorReport(): Promise<SupervisorReportRow[]> {
   }));
 }
 
+export async function deleteAllUserProjectData(email: string): Promise<void> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    for (const [id, site] of memory.sites.entries()) {
+      if (site.ownerEmail === email) memory.sites.delete(id);
+    }
+    for (const [id, entry] of memory.entries.entries()) {
+      if (entry.ownerEmail === email) memory.entries.delete(id);
+    }
+    for (const [id, diary] of memory.diaries.entries()) {
+      if (diary.ownerEmail === email) memory.diaries.delete(id);
+    }
+    await persistMemory();
+    return;
+  }
+  // CASCADE constraints handle entries/diaries automatically on site delete
+  await getPgPool().query(`DELETE FROM project_sites WHERE owner_email = $1`, [email]);
+  await getPgPool().query(`DELETE FROM project_entries WHERE owner_email = $1`, [email]);
+  await getPgPool().query(`DELETE FROM project_diaries WHERE owner_email = $1`, [email]);
+}
+
 export async function resetProjectStoreForTests() {
   if (useDatabase()) {
     await getPgPool().query(`DELETE FROM project_diaries`);

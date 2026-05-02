@@ -18,6 +18,26 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   updateProfile: (patch: Partial<User>) => Promise<void>;
+  refreshToken: () => Promise<string | null>;
+}
+
+// Decode token expiry without full verification (verification happens server-side)
+function getTokenExpiry(token: string): number | null {
+  try {
+    const payload = token.split(".")[0];
+    if (!payload) return null;
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { exp?: number };
+    return decoded.exp ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function isTokenExpiringSoon(token: string | null, thresholdSeconds = 60 * 60): boolean {
+  if (!token) return false;
+  const exp = getTokenExpiry(token);
+  if (!exp) return false;
+  return exp - Math.floor(Date.now() / 1000) < thresholdSeconds;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -135,6 +155,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const refreshToken = async (): Promise<string | null> => {
+    if (!token) return null;
+    try {
+      const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { token?: string; user?: { email?: string; name?: string; role?: "worker" | "supervisor" | "admin" } };
+      if (!data.token) return null;
+      await AsyncStorage.setItem("sitesnap.token", data.token);
+      setToken(data.token);
+      if (data.user) {
+        const nextUser: User = {
+          email: data.user.email || user?.email || "",
+          name: data.user.name || user?.name || "",
+          role: data.user.role || user?.role || "worker",
+        };
+        setUser(nextUser);
+        await AsyncStorage.setItem("sitesnap.user", JSON.stringify(nextUser));
+      }
+      return data.token;
+    } catch {
+      return null;
+    }
+  };
+
   const logout = async () => {
     try {
       await AsyncStorage.removeItem("sitesnap.token");
@@ -199,7 +246,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, lastEmail, loading, token, login, logout, updateProfile }}>
+    <AuthContext.Provider value={{ isAuthenticated, user, lastEmail, loading, token, login, logout, updateProfile, refreshToken }}>
       {children}
     </AuthContext.Provider>
   );
