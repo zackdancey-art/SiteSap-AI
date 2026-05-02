@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import { Router } from "express";
+import { z } from "zod";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { getMediaStorage } from "../storage/mediaStorage";
 import { listEntries, listSites } from "../storage/projectsStore";
@@ -7,38 +8,44 @@ import { getOpenAIClient } from "../services/openaiClient";
 
 type ReportPeriod = "daily" | "weekly" | "monthly";
 
-type GenerateDiaryPhoto = {
-  id?: string;
-  uri?: string;
-  caption?: string;
-  timestamp?: string;
-  base64?: string;
-  mimeType?: string;
-  storagePath?: string;
-  storageKey?: string;
-};
+const DiaryPhotoSchema = z.object({
+  id: z.string().optional(),
+  uri: z.string().optional(),
+  caption: z.string().optional(),
+  timestamp: z.string().optional(),
+  base64: z.string().optional(),
+  mimeType: z.string().optional(),
+  storagePath: z.string().optional(),
+  storageKey: z.string().optional(),
+});
 
-type GenerateDiaryEntry = {
-  date?: string;
-  locationAddress?: string;
-  weather?: string;
-  crewCount?: string;
-  notes?: string;
-  photos?: GenerateDiaryPhoto[];
-  timestamp?: string;
-};
+const DiaryEntrySchema = z.object({
+  date: z.string().optional(),
+  locationAddress: z.string().optional(),
+  weather: z.string().optional(),
+  crewCount: z.string().optional(),
+  notes: z.string().optional(),
+  photos: z.array(DiaryPhotoSchema).optional(),
+  timestamp: z.string().optional(),
+});
 
-type GenerateDiaryBody = {
-  siteId?: string;
-  site?: {
-    name?: string;
-    client?: string;
-    address?: string;
-    startDate?: string;
-  };
-  period?: ReportPeriod;
-  entries?: GenerateDiaryEntry[];
-};
+const GenerateDiaryBodySchema = z.object({
+  siteId: z.string().optional(),
+  site: z
+    .object({
+      name: z.string().optional(),
+      client: z.string().optional(),
+      address: z.string().optional(),
+      startDate: z.string().optional(),
+    })
+    .optional(),
+  period: z.enum(["daily", "weekly", "monthly"]).optional(),
+  entries: z.array(DiaryEntrySchema).optional(),
+});
+
+type GenerateDiaryPhoto = z.infer<typeof DiaryPhotoSchema>;
+type GenerateDiaryEntry = z.infer<typeof DiaryEntrySchema>;
+type GenerateDiaryBody = z.infer<typeof GenerateDiaryBodySchema>;
 
 type OpenAIErrorLike = {
   status?: number;
@@ -346,8 +353,7 @@ async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutp
     ...visionInputs,
   ];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const response = await (client as any).responses.create({
+  const response = await client.responses.create({
     model,
     input: [
       {
@@ -372,12 +378,10 @@ async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutp
       },
     ],
     temperature: 0.1,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    text: { format: { type: "json_object" } } as any,
+    text: { format: { type: "json_object" } },
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const outputText = String((response as any).output_text || "").trim();
+  const outputText = String(response.output_text || "").trim();
   if (!outputText) {
     return fallback;
   }
@@ -460,13 +464,17 @@ async function resolveDiaryRequest(req: AuthenticatedRequest, body: GenerateDiar
 }
 
 aiRouter.post("/generate-diary", requireAuth, async (req, res) => {
-  const body = (req.body ?? {}) as GenerateDiaryBody;
-  const payloadBytes = Buffer.byteLength(JSON.stringify(body || {}), "utf8");
+  const parsed = GenerateDiaryBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request payload.", details: parsed.error.flatten() });
+  }
+  const body = parsed.data;
+  const payloadBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
 
   try {
     const resolved = await resolveDiaryRequest(req as AuthenticatedRequest, body);
     if (resolved.entries.length === 0) {
-      return res.status(400).json({ success: false, error: "No entries are available for the selected report period." });
+      return res.status(400).json({ error: "No entries are available for the selected report period." });
     }
     const diary = await tryGenerateWithOpenAI(resolved);
     return res.json({ success: true, diary });
@@ -496,7 +504,6 @@ aiRouter.post("/generate-diary", requireAuth, async (req, res) => {
       return res.json({ success: true, diary: fallbackDiary, warning });
     } catch (fallbackError) {
       return res.status(400).json({
-        success: false,
         error: fallbackError instanceof Error ? fallbackError.message : "Failed to generate diary.",
       });
     }

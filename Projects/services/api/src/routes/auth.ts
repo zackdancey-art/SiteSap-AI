@@ -182,7 +182,7 @@ async function initiateRegistration(req: Request, res: Response) {
         ? "Dev mode: provider not configured, using local verification codes."
         : "Verification codes sent to your email and phone.",
       warnings: isDevFallback ? warnings : undefined,
-      devCodes: isDevFallback ? { emailCode, smsCode } : undefined,
+      devCodes: !isProd && isDevFallback ? { emailCode, smsCode } : undefined,
       expiresInSeconds: Math.floor(verificationTtlMs / 1000),
     });
   } catch (error) {
@@ -379,18 +379,18 @@ router.post("/auth/forgot-password", async (req, res) => {
           return res.json({
             ok: true,
             message: "Dev mode: provider not configured, using local reset token.",
-            devResetToken: resetToken,
-            devResetCode: resetCode,
-            devResetLink: resetLink,
+            devResetToken: !isProd ? resetToken : undefined,
+            devResetCode: !isProd ? resetCode : undefined,
+            devResetLink: !isProd ? resetLink : undefined,
           });
         }
       } else {
         return res.json({
           ok: true,
           message: "Dev mode: provider not configured, using local reset token.",
-          devResetToken: resetToken,
-          devResetCode: resetCode,
-          devResetLink: resetLink,
+          devResetToken: !isProd ? resetToken : undefined,
+          devResetCode: !isProd ? resetCode : undefined,
+          devResetLink: !isProd ? resetLink : undefined,
         });
       }
     }

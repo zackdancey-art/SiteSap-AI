@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { httpLogger } from "./middleware/logger";
+import { requestId } from "./middleware/requestId";
 import { apiRouter } from "./routes";
 import { initAuthSchema } from "./storage/authStore";
 import { isProductionMediaStorageReady } from "./storage/mediaStorage";
@@ -14,7 +15,9 @@ function isConfigured(value?: string) {
 }
 
 function validateProviderConfig() {
+  const isProd = process.env.NODE_ENV === "production";
   const hasDatabase = isConfigured(process.env.DATABASE_URL);
+  const hasAuthSecret = isConfigured(process.env.AUTH_TOKEN_SECRET);
   const hasEmailProvider =
     (isConfigured(process.env.RESEND_API_KEY) || isConfigured(process.env.SENDGRID_API_KEY)) &&
     isConfigured(process.env.EMAIL_FROM);
@@ -24,21 +27,27 @@ function validateProviderConfig() {
     isConfigured(process.env.TWILIO_FROM_NUMBER);
   const hasMediaStorage = isProductionMediaStorageReady();
 
-  if (process.env.NODE_ENV === "production") {
-    if (!hasDatabase || !hasEmailProvider || !hasSmsProvider || !hasMediaStorage) {
-      const missing = [
-        !hasDatabase ? "PostgreSQL DATABASE_URL" : null,
-        !hasEmailProvider ? "email provider (RESEND/SENDGRID + EMAIL_FROM)" : null,
-        !hasSmsProvider ? "Twilio SMS provider (SID, TOKEN, FROM_NUMBER)" : null,
-        !hasMediaStorage ? "S3-compatible media storage (MEDIA_STORAGE_PROVIDER=s3 + S3_* env vars)" : null,
-      ]
-        .filter(Boolean)
-        .join(", ");
-      throw new Error(`Missing production auth provider configuration: ${missing}`);
+  if (isProd) {
+    const missing = [
+      !hasAuthSecret ? "AUTH_TOKEN_SECRET" : null,
+      !hasDatabase ? "PostgreSQL DATABASE_URL" : null,
+      !hasEmailProvider ? "email provider (RESEND/SENDGRID + EMAIL_FROM)" : null,
+      !hasSmsProvider ? "Twilio SMS provider (SID, TOKEN, FROM_NUMBER)" : null,
+      !hasMediaStorage ? "S3-compatible media storage (MEDIA_STORAGE_PROVIDER=s3 + S3_* env vars)" : null,
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      throw new Error(`Missing production configuration: ${missing.join(", ")}`);
     }
+    console.warn(
+      "[auth] Production mode: rate limiting is in-memory and will reset on restart. " +
+      "Use a reverse proxy (nginx/Cloudflare) or external rate limiter for multi-instance deployments."
+    );
     return;
   }
 
+  if (!hasAuthSecret) {
+    console.warn("[auth] Dev mode warning: AUTH_TOKEN_SECRET is not set. Using insecure default — never use in production.");
+  }
   if (!hasDatabase) {
     console.warn("[auth] Dev mode warning: DATABASE_URL is not set. Using in-memory auth fallback (data resets on restart).");
   }
@@ -62,14 +71,19 @@ const allowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS ?? "")
 export function createApp(): express.Express {
   const app = express();
   app.disable("x-powered-by");
+  app.use(requestId);
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
+  const isProdMode = process.env.NODE_ENV === "production";
   app.use(
     cors({
       origin: (origin, cb) => {
-        if (!origin) return cb(null, true);
-        if (allowedOrigins.length === 0) return cb(null, true);
+        if (!origin) return cb(null, true); // same-origin or server-to-server
+        if (allowedOrigins.length === 0) {
+          if (isProdMode) return cb(new Error("CORS origin blocked: no CORS_ALLOWED_ORIGINS configured"));
+          return cb(null, true); // dev: allow all
+        }
         if (allowedOrigins.includes(origin)) return cb(null, true);
         return cb(new Error("CORS origin blocked"));
       },
@@ -98,7 +112,7 @@ export function createApp(): express.Express {
         return res.status(400).json({ error: "Malformed JSON request body." });
       }
     }
-    console.error("[server] Unhandled request error", err);
+    console.error("[server] Unhandled request error", { reqId: _req.headers["x-request-id"], err });
     return res.status(500).json({ error: "Internal server error." });
   });
   return app;

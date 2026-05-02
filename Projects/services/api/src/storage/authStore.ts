@@ -1,6 +1,6 @@
-import fs from "fs/promises";
 import path from "path";
 import { getPgPool } from "./postgres";
+import { FileBackedStore } from "./fileStore";
 
 export type AuthUser = {
   email: string;
@@ -36,69 +36,43 @@ type AuthMemoryJson = {
 const memoryUsers = new Map<string, AuthUser>();
 const memoryPending = new Map<string, PendingRegistration>();
 const memoryResetTokens = new Map<string, PasswordResetRecord>();
-let memoryLoaded = false;
-let loadPromise: Promise<void> | null = null;
-let persistQueue: Promise<void> = Promise.resolve();
 
 function useDatabase() {
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
-}
-
-function getStorePath() {
-  return path.join(process.cwd(), "data", "auth-store.json");
 }
 
 function uniqueViolationError(message: string) {
   return { code: "23505", message };
 }
 
-function serializeMemory(): AuthMemoryJson {
-  return {
+const store = new FileBackedStore<Partial<AuthMemoryJson>>(
+  path.join(process.cwd(), "data", "auth-store.json"),
+  (parsed) => {
+    for (const user of Array.isArray(parsed.users) ? parsed.users : []) {
+      memoryUsers.set(user.email, user);
+    }
+    for (const pending of Array.isArray(parsed.pending) ? parsed.pending : []) {
+      memoryPending.set(pending.email, pending);
+    }
+    for (const token of Array.isArray(parsed.resetTokens) ? parsed.resetTokens : []) {
+      memoryResetTokens.set(token.token, token);
+    }
+  },
+  () => ({
     users: Array.from(memoryUsers.values()),
     pending: Array.from(memoryPending.values()),
     resetTokens: Array.from(memoryResetTokens.values()),
-  };
-}
+  })
+);
 
 async function ensureMemoryLoaded() {
-  if (useDatabase() || memoryLoaded) return;
-  if (!loadPromise) {
-    loadPromise = (async () => {
-      try {
-        const raw = await fs.readFile(getStorePath(), "utf8");
-        const parsed = JSON.parse(raw) as Partial<AuthMemoryJson>;
-        for (const user of Array.isArray(parsed.users) ? parsed.users : []) {
-          memoryUsers.set(user.email, user);
-        }
-        for (const pending of Array.isArray(parsed.pending) ? parsed.pending : []) {
-          memoryPending.set(pending.email, pending);
-        }
-        for (const token of Array.isArray(parsed.resetTokens) ? parsed.resetTokens : []) {
-          memoryResetTokens.set(token.token, token);
-        }
-      } catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: string }).code) : "";
-        if (code !== "ENOENT") {
-          console.warn("[auth] Failed to read fallback auth store; starting empty.", error);
-        }
-      }
-      memoryLoaded = true;
-    })().finally(() => {
-      loadPromise = null;
-    });
-  }
-  await loadPromise;
+  if (useDatabase()) return;
+  await store.ensureLoaded();
 }
 
 async function persistMemory() {
   if (useDatabase()) return;
-  await ensureMemoryLoaded();
-  persistQueue = persistQueue.then(async () => {
-    const filepath = getStorePath();
-    await fs.mkdir(path.dirname(filepath), { recursive: true });
-    await fs.writeFile(filepath, JSON.stringify(serializeMemory(), null, 2), "utf8");
-  });
-  await persistQueue;
+  await store.persist();
 }
 
 export async function initAuthSchema() {
@@ -545,10 +519,5 @@ export async function resetAuthStoreForTests() {
   memoryUsers.clear();
   memoryPending.clear();
   memoryResetTokens.clear();
-  memoryLoaded = true;
-  try {
-    await fs.rm(getStorePath(), { force: true });
-  } catch {
-    // ignore cleanup errors in tests
-  }
+  store.resetForTests();
 }

@@ -8,12 +8,19 @@ import {
   deleteEntry,
   deleteSite,
   getScopedBootstrap,
+  getSupervisorReport,
   listDiaries,
   listEntries,
   listSites,
   updateDiary,
   updateEntry,
 } from "../storage/projectsStore";
+
+function parsePagination(query: Record<string, unknown>) {
+  const limit = Math.min(Math.max(Number(query.limit) || 200, 1), 500);
+  const offset = Math.max(Number(query.offset) || 0, 0);
+  return { limit, offset };
+}
 
 const SiteSchema = z.object({
   name: z.string().min(1),
@@ -87,8 +94,9 @@ projectsRouter.get("/projects/summary", async (req, res) => {
 });
 
 projectsRouter.get("/projects/sites", async (req, res) => {
-  const sites = await listSites(getActor(req as unknown as AuthenticatedRequest));
-  res.json({ sites });
+  const { limit, offset } = parsePagination(req.query as Record<string, unknown>);
+  const sites = await listSites(getActor(req as unknown as AuthenticatedRequest), limit, offset);
+  res.json({ sites, limit, offset });
 });
 
 projectsRouter.post("/projects/sites", async (req, res) => {
@@ -110,8 +118,9 @@ projectsRouter.delete("/projects/sites/:id", async (req, res) => {
 projectsRouter.get("/projects/entries", async (req, res) => {
   const actor = getActor(req as unknown as AuthenticatedRequest);
   const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
-  const entries = await listEntries(actor, siteId);
-  return res.json({ entries });
+  const { limit, offset } = parsePagination(req.query as Record<string, unknown>);
+  const entries = await listEntries(actor, siteId, limit, offset);
+  return res.json({ entries, limit, offset });
 });
 
 projectsRouter.post("/projects/entries", async (req, res) => {
@@ -144,8 +153,9 @@ projectsRouter.delete("/projects/entries/:id", async (req, res) => {
 projectsRouter.get("/projects/diaries", async (req, res) => {
   const actor = getActor(req as unknown as AuthenticatedRequest);
   const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
-  const diaries = await listDiaries(actor, siteId);
-  return res.json({ diaries });
+  const { limit, offset } = parsePagination(req.query as Record<string, unknown>);
+  const diaries = await listDiaries(actor, siteId, limit, offset);
+  return res.json({ diaries, limit, offset });
 });
 
 projectsRouter.post("/projects/diaries", async (req, res) => {
@@ -170,25 +180,6 @@ projectsRouter.patch("/projects/diaries/:id", async (req, res) => {
 });
 
 projectsRouter.get("/projects/reports/supervisor", requireRole("supervisor", "admin"), async (req, res) => {
-  const actor = getActor(req as unknown as AuthenticatedRequest);
-  const [sites, entries, diaries] = await Promise.all([
-    listSites(actor),
-    listEntries(actor),
-    listDiaries(actor),
-  ]);
-  const perSite = sites.map((site) => {
-    const siteEntries = entries.filter((entry) => entry.siteId === site.id).length;
-    const siteDiaries = diaries.filter((diary) => diary.siteId === site.id);
-    return {
-      siteId: site.id,
-      name: site.name,
-      client: site.client,
-      status: site.status,
-      ownerEmail: site.ownerEmail,
-      entries: siteEntries,
-      diaries: siteDiaries.length,
-      approvedDiaries: siteDiaries.filter((diary) => diary.status === "approved").length,
-    };
-  });
+  const perSite = await getSupervisorReport();
   return res.json({ generatedAt: new Date().toISOString(), perSite });
 });

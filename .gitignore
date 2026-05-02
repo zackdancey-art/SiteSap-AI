@@ -18,3 +18,10 @@
 
 # TypeScript build info
 **/*.tsbuildinfo
+
+# Uploaded user media
+**/storage/uploads/
+
+# Local data stores
+**/data/auth-store.json
+**/data/projects-store.json

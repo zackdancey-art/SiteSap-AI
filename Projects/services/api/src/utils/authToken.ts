@@ -12,8 +12,21 @@ export type AuthClaims = {
 
 const TOKEN_TTL_SECONDS = Number(process.env.AUTH_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 7);
 
+export const ELEVATED_ROLES: UserRole[] = ["supervisor", "admin"];
+
+export function isElevatedRole(role: UserRole) {
+  return role === "supervisor" || role === "admin";
+}
+
 function getTokenSecret() {
-  return process.env.AUTH_TOKEN_SECRET || "dev-sitesnap-secret";
+  const secret = process.env.AUTH_TOKEN_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("AUTH_TOKEN_SECRET environment variable is required in production.");
+    }
+    return "dev-sitesnap-secret";
+  }
+  return secret;
 }
 
 function base64UrlEncode(value: string) {

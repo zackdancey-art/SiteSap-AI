@@ -381,13 +381,20 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         });
       })
       .catch((error) => {
-        console.warn("save diary failed", error);
+        console.warn("save diary failed, rolling back optimistic entry", error);
+        setDiaries((prev) => {
+          const next = prev.filter((d) => d.id !== optimisticDiary.id);
+          void persistCache(user?.email, sites, entries, next);
+          return next;
+        });
       });
     return optimisticDiary;
   };
 
   const updateDiary = (id: string, patch: Partial<GeneratedDiary>) => {
+    let previousDiary: GeneratedDiary | undefined;
     setDiaries((prev) => {
+      previousDiary = prev.find((d) => d.id === id);
       const next = prev.map((d) => (d.id === id ? { ...d, ...patch } : d));
       void persistCache(user?.email, sites, entries, next);
       return next;
@@ -404,7 +411,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         });
       })
       .catch((error) => {
-        console.warn("update diary failed", error);
+        console.warn("update diary failed, rolling back optimistic update", error);
+        if (previousDiary) {
+          const snapshot = previousDiary;
+          setDiaries((prev) => {
+            const next = prev.map((d) => (d.id === id ? snapshot : d));
+            void persistCache(user?.email, sites, entries, next);
+            return next;
+          });
+        }
       });
   };
 

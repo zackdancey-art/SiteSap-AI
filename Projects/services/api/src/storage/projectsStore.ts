@@ -1,8 +1,8 @@
-import fs from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { getPgPool } from "./postgres";
-import { UserRole } from "../utils/authToken";
+import { UserRole, isElevatedRole } from "../utils/authToken";
+import { FileBackedStore } from "./fileStore";
 
 type SiteStatus = "active" | "completed" | "on-hold";
 type DiaryStatus = "draft" | "approved";
@@ -65,72 +65,42 @@ const memory: MemoryState = {
   diaries: new Map<string, DiaryRecord>(),
 };
 
-let memoryLoaded = false;
-let memoryLoadPromise: Promise<void> | null = null;
-const filePersistQueue: Promise<void> = Promise.resolve();
-let pendingPersist: Promise<void> = filePersistQueue;
-
 function useDatabase() {
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
 }
 
-function getMemoryStorePath() {
-  return path.join(process.cwd(), "data", "projects-store.json");
-}
-
 function canAccessOwner(actor: Actor, ownerEmail: string) {
-  if (actor.role === "supervisor" || actor.role === "admin") return true;
-  return actor.email === ownerEmail;
+  return isElevatedRole(actor.role) || actor.email === ownerEmail;
 }
 
-function toMemoryJson(): MemoryJson {
-  return {
+const store = new FileBackedStore<Partial<MemoryJson>>(
+  path.join(process.cwd(), "data", "projects-store.json"),
+  (parsed) => {
+    for (const site of Array.isArray(parsed.sites) ? parsed.sites : []) {
+      memory.sites.set(site.id, site);
+    }
+    for (const entry of Array.isArray(parsed.entries) ? parsed.entries : []) {
+      memory.entries.set(entry.id, entry);
+    }
+    for (const diary of Array.isArray(parsed.diaries) ? parsed.diaries : []) {
+      memory.diaries.set(diary.id, diary);
+    }
+  },
+  () => ({
     sites: Array.from(memory.sites.values()),
     entries: Array.from(memory.entries.values()),
     diaries: Array.from(memory.diaries.values()),
-  };
-}
+  })
+);
 
 async function ensureMemoryLoaded() {
-  if (useDatabase() || memoryLoaded) return;
-  if (!memoryLoadPromise) {
-    memoryLoadPromise = (async () => {
-      const storePath = getMemoryStorePath();
-      try {
-        const raw = await fs.readFile(storePath, "utf8");
-        const parsed = JSON.parse(raw) as Partial<MemoryJson>;
-        for (const site of Array.isArray(parsed.sites) ? parsed.sites : []) {
-          memory.sites.set(site.id, site);
-        }
-        for (const entry of Array.isArray(parsed.entries) ? parsed.entries : []) {
-          memory.entries.set(entry.id, entry);
-        }
-        for (const diary of Array.isArray(parsed.diaries) ? parsed.diaries : []) {
-          memory.diaries.set(diary.id, diary);
-        }
-      } catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: string }).code) : "";
-        if (code !== "ENOENT") {
-          console.warn("[projects] Failed to read local project store; starting empty.", error);
-        }
-      }
-      memoryLoaded = true;
-    })().finally(() => {
-      memoryLoadPromise = null;
-    });
-  }
-  await memoryLoadPromise;
+  if (useDatabase()) return;
+  await store.ensureLoaded();
 }
 
 async function persistMemory() {
   if (useDatabase()) return;
-  await ensureMemoryLoaded();
-  pendingPersist = pendingPersist.then(async () => {
-    const storePath = getMemoryStorePath();
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, JSON.stringify(toMemoryJson(), null, 2), "utf8");
-  });
-  await pendingPersist;
+  await store.persist();
 }
 
 export async function initProjectSchema() {
@@ -265,35 +235,38 @@ function mapDiary(row: {
   };
 }
 
-export async function listSites(actor: Actor): Promise<SiteRecord[]> {
+export async function listSites(actor: Actor, limit = 200, offset = 0): Promise<SiteRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     return Array.from(memory.sites.values())
       .filter((site) => canAccessOwner(actor, site.ownerEmail))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(offset, offset + limit);
   }
-  const result =
-    actor.role === "supervisor" || actor.role === "admin"
-      ? await getPgPool().query<{
-          id: string;
-          owner_email: string;
-          name: string;
-          address: string;
-          client: string;
-          start_date: string;
-          status: SiteStatus;
-          created_at: Date;
-        }>(`SELECT * FROM project_sites ORDER BY created_at DESC`)
-      : await getPgPool().query<{
-          id: string;
-          owner_email: string;
-          name: string;
-          address: string;
-          client: string;
-          start_date: string;
-          status: SiteStatus;
-          created_at: Date;
-        }>(`SELECT * FROM project_sites WHERE owner_email = $1 ORDER BY created_at DESC`, [actor.email]);
+  const result = isElevatedRole(actor.role)
+    ? await getPgPool().query<{
+        id: string;
+        owner_email: string;
+        name: string;
+        address: string;
+        client: string;
+        start_date: string;
+        status: SiteStatus;
+        created_at: Date;
+      }>(`SELECT * FROM project_sites ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset])
+    : await getPgPool().query<{
+        id: string;
+        owner_email: string;
+        name: string;
+        address: string;
+        client: string;
+        start_date: string;
+        status: SiteStatus;
+        created_at: Date;
+      }>(
+        `SELECT * FROM project_sites WHERE owner_email = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+        [actor.email, limit, offset]
+      );
   return result.rows.map(mapSite);
 }
 
@@ -346,25 +319,25 @@ export async function deleteSite(actor: Actor, siteId: string): Promise<boolean>
     await persistMemory();
     return true;
   }
-  const result =
-    actor.role === "supervisor" || actor.role === "admin"
-      ? await getPgPool().query(`DELETE FROM project_sites WHERE id = $1`, [siteId])
-      : await getPgPool().query(`DELETE FROM project_sites WHERE id = $1 AND owner_email = $2`, [siteId, actor.email]);
+  const result = isElevatedRole(actor.role)
+    ? await getPgPool().query(`DELETE FROM project_sites WHERE id = $1`, [siteId])
+    : await getPgPool().query(`DELETE FROM project_sites WHERE id = $1 AND owner_email = $2`, [siteId, actor.email]);
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function listEntries(actor: Actor, siteId?: string): Promise<EntryRecord[]> {
+export async function listEntries(actor: Actor, siteId?: string, limit = 200, offset = 0): Promise<EntryRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     return Array.from(memory.entries.values())
       .filter((entry) => canAccessOwner(actor, entry.ownerEmail))
       .filter((entry) => (siteId ? entry.siteId === siteId : true))
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(offset, offset + limit);
   }
 
   const queryParts: string[] = [];
-  const params: string[] = [];
-  if (!(actor.role === "supervisor" || actor.role === "admin")) {
+  const params: unknown[] = [];
+  if (!isElevatedRole(actor.role)) {
     params.push(actor.email);
     queryParts.push(`owner_email = $${params.length}`);
   }
@@ -373,6 +346,7 @@ export async function listEntries(actor: Actor, siteId?: string): Promise<EntryR
     queryParts.push(`site_id = $${params.length}`);
   }
   const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  params.push(limit, offset);
   const result = await getPgPool().query<{
     id: string;
     owner_email: string;
@@ -384,7 +358,7 @@ export async function listEntries(actor: Actor, siteId?: string): Promise<EntryR
     notes: string;
     photos_json: Array<Record<string, unknown>>;
     timestamp: Date;
-  }>(`SELECT * FROM project_entries ${where} ORDER BY timestamp DESC`, params);
+  }>(`SELECT * FROM project_entries ${where} ORDER BY timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return result.rows.map(mapEntry);
 }
 
@@ -506,24 +480,24 @@ export async function deleteEntry(actor: Actor, entryId: string): Promise<boolea
     await persistMemory();
     return true;
   }
-  const result =
-    actor.role === "supervisor" || actor.role === "admin"
-      ? await getPgPool().query(`DELETE FROM project_entries WHERE id = $1`, [entryId])
-      : await getPgPool().query(`DELETE FROM project_entries WHERE id = $1 AND owner_email = $2`, [entryId, actor.email]);
+  const result = isElevatedRole(actor.role)
+    ? await getPgPool().query(`DELETE FROM project_entries WHERE id = $1`, [entryId])
+    : await getPgPool().query(`DELETE FROM project_entries WHERE id = $1 AND owner_email = $2`, [entryId, actor.email]);
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function listDiaries(actor: Actor, siteId?: string): Promise<DiaryRecord[]> {
+export async function listDiaries(actor: Actor, siteId?: string, limit = 200, offset = 0): Promise<DiaryRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     return Array.from(memory.diaries.values())
       .filter((diary) => canAccessOwner(actor, diary.ownerEmail))
       .filter((diary) => (siteId ? diary.siteId === siteId : true))
-      .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
+      .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
+      .slice(offset, offset + limit);
   }
   const queryParts: string[] = [];
-  const params: string[] = [];
-  if (!(actor.role === "supervisor" || actor.role === "admin")) {
+  const params: unknown[] = [];
+  if (!isElevatedRole(actor.role)) {
     params.push(actor.email);
     queryParts.push(`owner_email = $${params.length}`);
   }
@@ -532,6 +506,7 @@ export async function listDiaries(actor: Actor, siteId?: string): Promise<DiaryR
     queryParts.push(`site_id = $${params.length}`);
   }
   const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  params.push(limit, offset);
   const result = await getPgPool().query<{
     id: string;
     owner_email: string;
@@ -543,7 +518,7 @@ export async function listDiaries(actor: Actor, siteId?: string): Promise<DiaryR
     full_report: string;
     safety_checklist_json: string[] | null;
     sections_json: Array<Record<string, unknown>>;
-  }>(`SELECT * FROM project_diaries ${where} ORDER BY generated_at DESC`, params);
+  }>(`SELECT * FROM project_diaries ${where} ORDER BY generated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return result.rows.map(mapDiary);
 }
 
@@ -659,6 +634,76 @@ export async function getScopedBootstrap(actor: Actor) {
   return { sites, entries, diaries };
 }
 
+export type SupervisorReportRow = {
+  siteId: string;
+  name: string;
+  client: string;
+  status: SiteStatus;
+  ownerEmail: string;
+  entries: number;
+  diaries: number;
+  approvedDiaries: number;
+};
+
+export async function getSupervisorReport(): Promise<SupervisorReportRow[]> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const sites = Array.from(memory.sites.values());
+    const entries = Array.from(memory.entries.values());
+    const diaries = Array.from(memory.diaries.values());
+    return sites.map((site) => {
+      const siteDiaries = diaries.filter((d) => d.siteId === site.id);
+      return {
+        siteId: site.id,
+        name: site.name,
+        client: site.client,
+        status: site.status,
+        ownerEmail: site.ownerEmail,
+        entries: entries.filter((e) => e.siteId === site.id).length,
+        diaries: siteDiaries.length,
+        approvedDiaries: siteDiaries.filter((d) => d.status === "approved").length,
+      };
+    });
+  }
+
+  const result = await getPgPool().query<{
+    site_id: string;
+    name: string;
+    client: string;
+    status: SiteStatus;
+    owner_email: string;
+    entries: string;
+    diaries: string;
+    approved_diaries: string;
+  }>(`
+    SELECT
+      s.id AS site_id,
+      s.name,
+      s.client,
+      s.status,
+      s.owner_email,
+      COUNT(DISTINCT e.id) AS entries,
+      COUNT(DISTINCT d.id) AS diaries,
+      COUNT(DISTINCT CASE WHEN d.status = 'approved' THEN d.id END) AS approved_diaries
+    FROM project_sites s
+    LEFT JOIN project_entries e ON e.site_id = s.id
+    LEFT JOIN project_diaries d ON d.site_id = s.id
+    GROUP BY s.id, s.name, s.client, s.status, s.owner_email
+    ORDER BY s.created_at DESC
+  `);
+
+  return result.rows.map((row) => ({
+    siteId: row.site_id,
+    name: row.name,
+    client: row.client,
+    status: row.status,
+    ownerEmail: row.owner_email,
+    entries: Number(row.entries),
+    diaries: Number(row.diaries),
+    approvedDiaries: Number(row.approved_diaries),
+  }));
+}
+
 export async function resetProjectStoreForTests() {
   if (useDatabase()) {
     await getPgPool().query(`DELETE FROM project_diaries`);
@@ -669,10 +714,5 @@ export async function resetProjectStoreForTests() {
   memory.sites.clear();
   memory.entries.clear();
   memory.diaries.clear();
-  memoryLoaded = true;
-  try {
-    await fs.rm(getMemoryStorePath(), { force: true });
-  } catch {
-    // ignore cleanup errors in tests
-  }
+  store.resetForTests();
 }
