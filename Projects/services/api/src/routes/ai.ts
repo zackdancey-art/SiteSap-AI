@@ -89,29 +89,45 @@ function cleanString(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function formatDisplayDate(dateStr: string) {
+  try {
+    return new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
 function normalizeEntry(entry: GenerateDiaryEntry): DiarySection {
   const photos = Array.isArray(entry.photos) ? entry.photos : [];
-  const workNotes = entry.locationAddress
-    ? `${entry.notes || "No notes provided."}\nLocation: ${entry.locationAddress}`
-    : entry.notes || "No notes provided.";
   const captionNotes = photos
-    .map((photo) => String(photo.caption || "").trim())
-    .filter(Boolean)
-    .slice(0, 3);
+    .map((p) => String(p.caption || "").trim())
+    .filter(Boolean);
 
-  let photoAnalysis = "N/A";
-  if (captionNotes.length > 0) {
-    photoAnalysis = `Photo observations provided in captions: ${captionNotes.join(" | ")}`;
-  }
+  const workParts: string[] = [];
+  if (entry.notes?.trim()) workParts.push(entry.notes.trim());
+  if (entry.locationAddress?.trim()) workParts.push(`Location: ${entry.locationAddress.trim()}`);
+  const workCompleted = workParts.join("\n") || "Site activities recorded. See photo observations for detail.";
+
+  const photoAnalysis =
+    captionNotes.length > 0
+      ? captionNotes.map((c, i) => `Photo ${i + 1}: ${c}`).join("\n")
+      : photos.length > 0
+        ? `${photos.length} photo(s) uploaded. Review images for site conditions and progress.`
+        : "No photos attached for this entry.";
 
   return {
     date: String(entry.date ?? new Date().toISOString().slice(0, 10)),
     weather: String(entry.weather ?? "Not recorded"),
     crewCount: String(entry.crewCount ?? "Not recorded"),
-    workCompleted: workNotes,
-    safetyObservations: "N/A",
-    materialsUsed: "N/A",
-    issues: "N/A",
+    workCompleted,
+    safetyObservations: "To be completed by site supervisor.",
+    materialsUsed: "Refer to site records.",
+    issues: "None reported.",
     photoAnalysis,
   };
 }
@@ -142,80 +158,111 @@ function formatDateKey(date: Date) {
 
 function filterEntriesByPeriod(entries: GenerateDiaryEntry[], period: ReportPeriod) {
   if (entries.length === 0) return [];
-  const sorted = [...entries].sort((a, b) => dateOnly(String(a.date || "")).getTime() - dateOnly(String(b.date || "")).getTime());
+  const sorted = [...entries].sort(
+    (a, b) => dateOnly(String(a.date || "")).getTime() - dateOnly(String(b.date || "")).getTime()
+  );
   const latest = dateOnly(String(sorted[sorted.length - 1].date || new Date().toISOString().slice(0, 10)));
   if (period === "daily") {
     const key = String(sorted[sorted.length - 1].date || formatDateKey(latest));
-    return sorted.filter((entry) => entry.date === key);
+    return sorted.filter((e) => e.date === key);
   }
   if (period === "weekly") {
     const start = new Date(latest);
     start.setDate(start.getDate() - 6);
-    return sorted.filter((entry) => {
-      const entryDate = dateOnly(String(entry.date || keyFromDate(latest)));
-      return entryDate >= start && entryDate <= latest;
+    return sorted.filter((e) => {
+      const d = dateOnly(String(e.date || formatDateKey(latest)));
+      return d >= start && d <= latest;
     });
   }
-  return sorted.filter((entry) => {
-    const d = dateOnly(String(entry.date || keyFromDate(latest)));
+  return sorted.filter((e) => {
+    const d = dateOnly(String(e.date || formatDateKey(latest)));
     return d.getFullYear() === latest.getFullYear() && d.getMonth() === latest.getMonth();
   });
 }
 
-function keyFromDate(date: Date) {
-  return formatDateKey(date);
-}
+function buildFullReport(args: {
+  sections: DiarySection[];
+  period: ReportPeriod;
+  siteName?: string;
+  client?: string;
+  address?: string;
+  summary?: string;
+  safetyChecklist?: string[];
+}) {
+  const { sections, period, siteName, client, address, summary, safetyChecklist } = args;
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
-function extractObservedSafetyChecklist(entries: GenerateDiaryEntry[]) {
-  const lines = entries.flatMap((entry) => {
-    const notes = String(entry.notes || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const photoCaptions = (entry.photos || [])
-      .map((photo) => String(photo.caption || "").trim())
-      .filter(Boolean);
-    return [...notes, ...photoCaptions];
-  });
+  const dateRange =
+    sections.length > 1
+      ? `${formatDisplayDate(sections[0].date)} – ${formatDisplayDate(sections[sections.length - 1].date)}`
+      : sections.length === 1
+        ? formatDisplayDate(sections[0].date)
+        : today;
 
-  const observed = lines.filter((line) =>
-    /\b(safe|safely|safety|hazard|risk|ppe|helmet|harness|barrier|guardrail|secured|secure|inspection|inspected|clear access|signage)\b/i.test(
-      line
-    )
-  );
+  const lines: string[] = [
+    "CONSTRUCTION SITE DIARY REPORT",
+    "═".repeat(50),
+    `Project:      ${siteName || "Unspecified Project"}`,
+    `Client:       ${client || "—"}`,
+    `Site Address: ${address || "—"}`,
+    `Report Period: ${period.charAt(0).toUpperCase() + period.slice(1)} — ${dateRange}`,
+    `Prepared:     ${today}`,
+    "",
+  ];
 
-  return Array.from(new Set(observed)).slice(0, 8);
-}
-
-function buildFullReport(args: { sections: DiarySection[]; period: ReportPeriod; siteName?: string }) {
-  const { sections, period, siteName } = args;
-  const lines: string[] = [];
-  lines.push(`Period: ${period.toUpperCase()}`);
-  lines.push(`Site: ${siteName || "Unspecified site"}`);
-  lines.push(`Entries analyzed: ${sections.length}`);
-  lines.push("");
-  lines.push("Observed progress:");
-  sections.forEach((section, index) => {
-    lines.push(`${index + 1}. ${section.date}: ${section.workCompleted}`);
-  });
-  lines.push("");
-  lines.push("Photo observations:");
-  sections.forEach((section) => {
-    if (section.photoAnalysis !== "N/A" && section.photoAnalysis !== "No photos attached for this entry") {
-      lines.push(`- ${section.date}: ${section.photoAnalysis}`);
-    }
-  });
-  if (lines[lines.length - 1] === "Photo observations:") {
-    lines.push("- No photo observations captured.");
+  if (summary) {
+    lines.push("EXECUTIVE SUMMARY");
+    lines.push("─".repeat(50));
+    lines.push(summary);
+    lines.push("");
   }
+
+  lines.push("DAILY ACTIVITY RECORDS");
+  lines.push("─".repeat(50));
+
+  sections.forEach((section) => {
+    lines.push(`DATE: ${formatDisplayDate(section.date)}`);
+    lines.push(`Weather Conditions: ${section.weather}`);
+    lines.push(`Crew on Site: ${section.crewCount}`);
+    lines.push("");
+    lines.push("Work Completed:");
+    lines.push(section.workCompleted);
+    lines.push("");
+    lines.push("Materials & Resources Deployed:");
+    lines.push(section.materialsUsed);
+    lines.push("");
+    lines.push("Photo Evidence — Site Observations:");
+    lines.push(section.photoAnalysis);
+    lines.push("");
+    lines.push("Safety Observations:");
+    lines.push(section.safetyObservations);
+    lines.push("");
+    lines.push("Issues & Actions:");
+    lines.push(section.issues);
+    lines.push("─".repeat(50));
+    lines.push("");
+  });
+
+  if (safetyChecklist && safetyChecklist.length > 0) {
+    lines.push("SAFETY & COMPLIANCE CHECKLIST");
+    lines.push("─".repeat(50));
+    safetyChecklist.forEach((item) => lines.push(`• ${item}`));
+    lines.push("");
+  }
+
+  lines.push("END OF REPORT");
+
   return lines.join("\n");
 }
 
 async function normalizeBase64Image(photo: GenerateDiaryPhoto) {
   const raw = String(photo.base64 || "").trim();
-  const mimeType = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(cleanString(photo.mimeType, "image/jpeg"))
+  const mimeType = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(
+    cleanString(photo.mimeType, "image/jpeg")
+  )
     ? cleanString(photo.mimeType, "image/jpeg")
     : "image/jpeg";
+
   if (raw) {
     if (raw.startsWith("data:")) {
       const [, base64Part] = raw.split(",", 2);
@@ -229,7 +276,11 @@ async function normalizeBase64Image(photo: GenerateDiaryPhoto) {
   if (storagePath || storageKey) {
     try {
       const file = storageKey
-        ? await mediaStorage.readFile(storageKey, storageKey.split("/").pop()?.split("-").slice(1).join("-") || "image.jpg", storagePath || undefined)
+        ? await mediaStorage.readFile(
+            storageKey,
+            storageKey.split("/").pop()?.split("-").slice(1).join("-") || "image.jpg",
+            storagePath || undefined
+          )
         : await fs.readFile(storagePath);
       return `data:${mimeType};base64,${file.toString("base64")}`;
     } catch (error) {
@@ -242,11 +293,12 @@ async function normalizeBase64Image(photo: GenerateDiaryPhoto) {
 async function buildVisionInputs(entries: GenerateDiaryEntry[]) {
   const content: OpenAIContentItem[] = [];
   let includedImages = 0;
+  const maxImages = 12;
 
   for (const [entryIndex, entry] of entries.entries()) {
     const photos = Array.isArray(entry.photos) ? entry.photos : [];
     for (const [photoIndex, photo] of photos.entries()) {
-      if (includedImages >= 8) break;
+      if (includedImages >= maxImages) break;
       const imageUrl = await normalizeBase64Image(photo);
       if (!imageUrl) continue;
       includedImages += 1;
@@ -255,10 +307,15 @@ async function buildVisionInputs(entries: GenerateDiaryEntry[]) {
         text: JSON.stringify({
           imageRef: `entry-${entryIndex + 1}-photo-${photoIndex + 1}`,
           entryDate: entry.date || "",
+          entryLocation: entry.locationAddress || "",
           photoTimestamp: photo.timestamp || "",
           userCaption: photo.caption || "",
-          instruction:
-            "Report only directly visible site conditions, equipment, materials, signage, weather, progress, or hazards visible in this image.",
+          instruction: [
+            "Analyse this construction site photograph thoroughly.",
+            "Describe exactly what is visible: construction stage and progress, structural elements, plant and equipment, scaffolding and access systems, materials on site, PPE and safety compliance, signage, weather conditions, and any visible hazards or issues.",
+            "Write specific professional observations using construction industry terminology.",
+            "Reference this image in the photoAnalysis field as 'Photo " + includedImages + "'.",
+          ].join(" "),
         }),
       });
       content.push({
@@ -268,87 +325,134 @@ async function buildVisionInputs(entries: GenerateDiaryEntry[]) {
     }
   }
 
-  return content;
-}
-
-function buildEvidenceCorpus(entries: GenerateDiaryEntry[], sections: DiarySection[]) {
-  const rawLines = entries.flatMap((entry) => {
-    const notes = String(entry.notes || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const captions = (entry.photos || []).map((photo) => String(photo.caption || "").trim()).filter(Boolean);
-    return [...notes, ...captions];
-  });
-
-  const sectionLines = sections.flatMap((section) =>
-    [section.safetyObservations, section.photoAnalysis].filter(
-      (value) => value && value !== "N/A" && value !== "No photos attached for this entry"
-    )
-  );
-
-  return [...rawLines, ...sectionLines].join(" \n ").toLowerCase();
-}
-
-function hasEvidenceSupport(item: string, corpus: string) {
-  const normalized = item.toLowerCase();
-  if (!normalized.trim()) return false;
-  if (corpus.includes(normalized)) return true;
-  const tokens = normalized.match(/[a-z0-9]{4,}/g) || [];
-  if (tokens.length === 0) return false;
-  const overlap = tokens.filter((token) => corpus.includes(token));
-  return overlap.length >= Math.min(2, tokens.length);
+  return { content, imageCount: includedImages };
 }
 
 export function buildDiaryFromEntries(entries: GenerateDiaryEntry[], period: ReportPeriod = "daily"): DiaryOutput {
   const sections = entries.map((entry) => normalizeEntry(entry));
-  const summary = [
-    `Executive summary (${period}):`,
-    `Compiled from ${entries.length} entr${entries.length === 1 ? "y" : "ies"}.`,
-    "Only observations explicitly stated in entry text and photo captions are included below.",
-  ].join(" ");
+  const siteName = "";
+
+  const totalPhotos = entries.reduce((n, e) => n + (e.photos?.length ?? 0), 0);
+  const totalCrew = entries
+    .map((e) => parseInt(e.crewCount || "0", 10))
+    .filter((n) => !isNaN(n) && n > 0);
+  const avgCrew = totalCrew.length > 0 ? Math.round(totalCrew.reduce((a, b) => a + b, 0) / totalCrew.length) : null;
+
+  const summaryParts = [
+    `This ${period} site diary covers ${entries.length} work record${entries.length !== 1 ? "s" : ""} for the reporting period.`,
+  ];
+  if (avgCrew) summaryParts.push(`An average crew of ${avgCrew} operatives was deployed on site.`);
+  if (totalPhotos > 0) summaryParts.push(`${totalPhotos} site photograph${totalPhotos !== 1 ? "s" : ""} were recorded.`);
+  summaryParts.push("Full activity details are recorded in the daily activity section below.");
+
+  const summary = summaryParts.join(" ");
+  const safetyChecklist = [
+    "All operatives to wear appropriate PPE at all times (hard hat, hi-vis vest, safety footwear)",
+    "Site induction completed for all new personnel prior to commencing work",
+    "Daily briefing conducted and hazards communicated to all operatives",
+    "Work area properly demarcated and public exclusion zones maintained",
+    "Plant and equipment pre-use inspections completed and records retained",
+    "Manual handling risks assessed and appropriate controls in place",
+    "Emergency procedures and first aid provisions confirmed on site",
+  ];
+
   return {
     summary,
-    fullReport: buildFullReport({ sections, period }),
-    safetyChecklist: extractObservedSafetyChecklist(entries),
+    fullReport: buildFullReport({ sections, period, siteName, summary, safetyChecklist }),
+    safetyChecklist,
     reportPeriod: period,
     sections,
   };
 }
 
+const SYSTEM_PROMPT = `You are a professional quantity surveyor and construction site manager writing a formal construction site diary report.
+
+Your task is to produce a detailed, accurate, and professionally written site diary based on:
+1. Site photographs (your PRIMARY source — analyse each image carefully)
+2. Field notes and captions provided by the site team
+3. Structured entry data (date, weather, crew count, location)
+
+PHOTO ANALYSIS REQUIREMENTS:
+- Study every photograph in detail before writing
+- Identify and describe: construction stage and structural progress, plant and equipment in use, scaffolding and access systems, materials stored or being installed, ground conditions, weather visibility, PPE compliance among visible workers, safety signage and barriers, any visible defects or concerns
+- Use precise construction industry terminology (e.g. "reinforced concrete pad foundation", "structural steelwork erection", "blockwork cavity wall construction", "formwork striking", "mechanical and electrical first fix")
+- Each photo reference must appear in the photoAnalysis field as "Photo 1:", "Photo 2:", etc.
+- Never write "N/A" for photoAnalysis when images have been provided
+
+PROFESSIONAL WRITING STANDARDS:
+- Write in formal, professional British English suitable for a client, engineer, or QS report
+- Use complete sentences with specific detail — avoid vague or generic statements
+- workCompleted must describe actual activities observed with professional precision
+- safetyObservations must detail visible PPE compliance, hazards, barriers, and signage
+- materialsUsed must list specific materials, products, or plant observed or referenced
+- issues must document any concerns, delays, defects, or non-conformances visible or noted
+- fullReport must be a complete, well-structured report document including all sections
+- summary must be a professional executive paragraph suitable for a project manager or client
+
+SAFETY CHECKLIST REQUIREMENTS:
+- Generate 6–10 specific, actionable safety checklist items
+- Base items on what is actually visible in the photos and the nature of the work observed
+- Include relevant items covering: PPE for the specific tasks visible, plant and equipment safety, access and working at height (if applicable), material handling, environmental controls, and specific hazards present on this site
+- Write each item as an active, specific statement (e.g. "Operatives working at height to be secured with fall arrest harness and lanyard at all times" rather than "Wear PPE")
+
+OUTPUT FORMAT:
+Return strict JSON with exactly these fields:
+{
+  "summary": "Professional executive summary paragraph (3-5 sentences)",
+  "fullReport": "Complete formatted report text with all sections",
+  "safetyChecklist": ["item1", "item2", ...],
+  "sections": [
+    {
+      "date": "YYYY-MM-DD",
+      "weather": "Detailed weather description",
+      "crewCount": "Number and trades present",
+      "workCompleted": "Detailed professional description of all work activities",
+      "safetyObservations": "Specific safety compliance observations from photos and notes",
+      "materialsUsed": "Specific materials, products and plant deployed",
+      "issues": "Any issues, concerns, delays or actions required",
+      "photoAnalysis": "Detailed analysis of each photo: Photo 1: ... Photo 2: ..."
+    }
+  ]
+}`;
+
 async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutput> {
   const entries = Array.isArray(body.entries) ? body.entries : [];
   const period = normalizePeriod(body.period);
+
   if (!process.env.OPENAI_API_KEY) {
     return buildDiaryFromEntries(entries, period);
   }
 
   const fallback = buildDiaryFromEntries(entries, period);
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const model = process.env.OPENAI_MODEL || "gpt-4o";
   const client = getOpenAIClient();
-  const promptPayload = {
-    site: body.site || {},
-    period,
+
+  const { content: visionInputs, imageCount } = await buildVisionInputs(entries);
+
+  const structuredPayload = {
+    reportContext: {
+      site: body.site || {},
+      period,
+      totalEntries: entries.length,
+      totalPhotosAttached: imageCount,
+    },
     entries: entries.map((entry) => ({
       date: entry.date || "",
       locationAddress: entry.locationAddress || "",
       weather: entry.weather || "",
       crewCount: entry.crewCount || "",
       notes: entry.notes || "",
-      photos: (entry.photos || []).map((photo) => ({
-        id: photo.id || "",
-        caption: photo.caption || "",
-        timestamp: photo.timestamp || "",
-        hasImage: Boolean(String(photo.base64 || "").trim()),
-      })),
+      photoCount: (entry.photos || []).length,
+      photoCaptions: (entry.photos || [])
+        .map((p) => p.caption || "")
+        .filter(Boolean),
     })),
   };
 
-  const visionInputs = await buildVisionInputs(entries);
   const userContent: OpenAIContentItem[] = [
     {
       type: "input_text",
-      text: JSON.stringify(promptPayload),
+      text: JSON.stringify(structuredPayload),
     },
     ...visionInputs,
   ];
@@ -358,33 +462,19 @@ async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutp
     input: [
       {
         role: "system",
-        content: [
-          {
-            type: "input_text",
-            text:
-              "You generate construction diary reports. Output strict JSON with: summary, fullReport, safetyChecklist, and sections." +
-              " Each section must include: date, weather, crewCount, workCompleted, safetyObservations, materialsUsed, issues, photoAnalysis." +
-              " Use only evidence explicitly present in the entry text, structured fields, photo captions, and any uploaded images." +
-              " When images are provided, prioritize direct visual observations in photoAnalysis and mention visible equipment, materials, work progress, weather, signage, hazards, or site conditions only if they are plainly visible." +
-              " Do not infer causes, unseen work, compliance, incidents, or hidden risks." +
-              " If an observation cannot be directly supported by visible image evidence or provided text, write 'N/A'." +
-              " Safety checklist items must be directly supported by explicit notes, captions, or clearly visible image evidence.",
-          },
-        ],
+        content: [{ type: "input_text", text: SYSTEM_PROMPT }],
       },
       {
         role: "user",
         content: userContent,
       },
     ],
-    temperature: 0.1,
+    temperature: 0.3,
     text: { format: { type: "json_object" } },
   });
 
   const outputText = String(response.output_text || "").trim();
-  if (!outputText) {
-    return fallback;
-  }
+  if (!outputText) return fallback;
 
   let parsed: Partial<DiaryOutput> = {};
   try {
@@ -394,17 +484,34 @@ async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutp
   }
 
   const modelSections = Array.isArray(parsed.sections) ? parsed.sections : [];
-  const safeSections = fallback.sections.map((section, index) => normalizeSection(modelSections[index], section));
-  const evidenceCorpus = buildEvidenceCorpus(entries, safeSections);
+  const safeSections = fallback.sections.map((section, index) =>
+    normalizeSection(modelSections[index], section)
+  );
+
   const parsedChecklist = Array.isArray(parsed.safetyChecklist)
-    ? parsed.safetyChecklist.map((item) => cleanString(item, "")).filter(Boolean)
+    ? parsed.safetyChecklist.map((item) => cleanString(item, "")).filter((item) => item.length > 10)
     : [];
-  const supportedChecklist = parsedChecklist.filter((item) => hasEvidenceSupport(item, evidenceCorpus)).slice(0, 8);
+
+  const finalChecklist = parsedChecklist.length >= 3 ? parsedChecklist.slice(0, 10) : fallback.safetyChecklist;
+
+  const summary = cleanString(parsed.summary, fallback.summary);
+  const fullReport = cleanString(
+    parsed.fullReport,
+    buildFullReport({
+      sections: safeSections,
+      period,
+      siteName: body.site?.name,
+      client: body.site?.client,
+      address: body.site?.address,
+      summary,
+      safetyChecklist: finalChecklist,
+    })
+  );
 
   return {
-    summary: cleanString(parsed.summary, fallback.summary),
-    fullReport: cleanString(parsed.fullReport, buildFullReport({ sections: safeSections, period, siteName: body.site?.name })),
-    safetyChecklist: supportedChecklist.length > 0 ? supportedChecklist : fallback.safetyChecklist,
+    summary,
+    fullReport,
+    safetyChecklist: finalChecklist,
     reportPeriod: period,
     sections: safeSections,
   };
@@ -435,17 +542,17 @@ async function resolveDiaryRequest(req: AuthenticatedRequest, body: GenerateDiar
       weather: entry.weather,
       crewCount: entry.crewCount,
       notes: entry.notes,
-          photos: Array.isArray(entry.photos)
-            ? entry.photos.map((photo) => ({
-                id: typeof photo.id === "string" ? photo.id : undefined,
-                uri: typeof photo.uri === "string" ? photo.uri : undefined,
-                caption: typeof photo.caption === "string" ? photo.caption : undefined,
-                timestamp: typeof photo.timestamp === "string" ? photo.timestamp : undefined,
-                mimeType: typeof photo.mimeType === "string" ? photo.mimeType : undefined,
-                storagePath: typeof photo.storagePath === "string" ? photo.storagePath : undefined,
-                storageKey: typeof photo.storageKey === "string" ? photo.storageKey : undefined,
-              }))
-            : [],
+      photos: Array.isArray(entry.photos)
+        ? entry.photos.map((photo) => ({
+            id: typeof photo.id === "string" ? photo.id : undefined,
+            uri: typeof photo.uri === "string" ? photo.uri : undefined,
+            caption: typeof photo.caption === "string" ? photo.caption : undefined,
+            timestamp: typeof photo.timestamp === "string" ? photo.timestamp : undefined,
+            mimeType: typeof photo.mimeType === "string" ? photo.mimeType : undefined,
+            storagePath: typeof photo.storagePath === "string" ? photo.storagePath : undefined,
+            storageKey: typeof photo.storageKey === "string" ? photo.storageKey : undefined,
+          }))
+        : [],
       timestamp: entry.timestamp,
     })),
     period
