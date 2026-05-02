@@ -151,19 +151,6 @@ async function persistCache(email: string | null | undefined, sites: Site[], ent
   ]);
 }
 
-function mergeById<T extends { id: string }>(localItems: T[], remoteItems: T[], getFreshness: (item: T) => string) {
-  const merged = new Map<string, T>();
-  for (const item of localItems) {
-    merged.set(item.id, item);
-  }
-  for (const item of remoteItems) {
-    const current = merged.get(item.id);
-    if (!current || getFreshness(item).localeCompare(getFreshness(current)) >= 0) {
-      merged.set(item.id, item);
-    }
-  }
-  return Array.from(merged.values());
-}
 
 async function loadCache(email: string | null | undefined) {
   const keys = getCacheKeys(email);
@@ -242,13 +229,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setLastSyncError(null);
       const bootstrap = await apiJson<{ sites: Site[]; entries: Entry[]; diaries: GeneratedDiary[] }>("/projects/bootstrap");
       const hydratedEntries = attachAuthToPhotoUris(await hydrateEntriesWithPhotoPayloads(bootstrap.entries), token);
-      const mergedSites = mergeById(cached.sites, bootstrap.sites, (item) => item.createdAt || "");
-      const mergedEntries = mergeById(cached.entries, hydratedEntries, (item) => item.timestamp || item.createdAt || item.date || "");
-      const mergedDiaries = mergeById(cached.diaries, bootstrap.diaries, (item) => item.generatedAt || "");
-      setSites(mergedSites);
-      setEntries(mergedEntries);
-      setDiaries(mergedDiaries);
-      await persistCache(userEmail, mergedSites, mergedEntries, mergedDiaries);
+      setSites(bootstrap.sites);
+      setEntries(hydratedEntries);
+      setDiaries(bootstrap.diaries);
+      await persistCache(userEmail, bootstrap.sites, hydratedEntries, bootstrap.diaries);
       setSyncStatus("idle");
     } catch (err) {
       console.warn("Remote bootstrap failed, using cache:", err);

@@ -69,7 +69,6 @@ export default function SettingsScreen() {
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
-  const canSeeSupervisor = user?.role === "supervisor" || user?.role === "admin";
   const extra = Constants.expoConfig?.extra as { appVersion?: string; buildVersion?: string } | undefined;
   const versionLabel = `${extra?.appVersion || "0.0.1"} • ${extra?.buildVersion || "dev"}`;
 
@@ -171,10 +170,6 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
           <View style={styles.sectionCard}>
-            {canSeeSupervisor && (
-              <SettingRow icon="grid-outline" label="Supervisor Dashboard" onPress={() => router.push("/supervisor-dashboard")} />
-            )}
-            {canSeeSupervisor && <View style={styles.divider} />}
             <SettingRow icon="information-circle-outline" label="Version" value={versionLabel} />
             <View style={styles.divider} />
             <SettingRow icon="shield-checkmark-outline" label="Privacy Policy" onPress={() => router.push("/privacy-policy")} />
