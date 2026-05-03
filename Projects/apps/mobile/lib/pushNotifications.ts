@@ -4,12 +4,13 @@ import Constants from "expo-constants";
 import { getApiBaseUrl } from "./api-base-url";
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async () =>
+    ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }) as unknown as Notifications.NotificationBehavior,
 });
 
 export async function registerForPushNotifications(token: string): Promise<string | null> {

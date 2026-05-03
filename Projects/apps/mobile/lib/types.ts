@@ -42,6 +42,8 @@ export interface GeneratedDiary {
   fullReport?: string;
   safetyChecklist?: string[];
   sections: DiarySection[];
+  signedBy?: string | null;
+  signedAt?: string | null;
 }
 
 export interface DiarySection {

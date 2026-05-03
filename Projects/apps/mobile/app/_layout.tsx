@@ -141,6 +141,14 @@ function RootLayoutNav() {
         name="incidents/[siteId]"
         options={{ headerShown: false }}
       />
+      <Stack.Screen
+        name="inspections/[siteId]"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="deliveries/[siteId]"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }

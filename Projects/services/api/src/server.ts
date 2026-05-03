@@ -9,6 +9,8 @@ import { initAuthSchema } from "./storage/authStore";
 import { isProductionMediaStorageReady } from "./storage/mediaStorage";
 import { initProjectSchema } from "./storage/projectsStore";
 import { initPushSchema } from "./storage/pushStore";
+import { initDeliveriesSchema } from "./storage/deliveriesStore";
+import { initTemplateSchema } from "./storage/templateStore";
 import { runMigrations } from "./storage/migrate";
 
 dotenv.config();
@@ -130,6 +132,8 @@ export async function bootstrap() {
   await initAuthSchema();
   await initProjectSchema();
   await initPushSchema();
+  await initDeliveriesSchema();
+  await initTemplateSchema();
   const app = createApp();
 
   const server = app.listen(PORT, "0.0.0.0", () => {

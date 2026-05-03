@@ -215,3 +215,7 @@ export async function sendAccountVerification(payload: VerificationPayload): Pro
   if (!payload.phone) return { ok: false, error: "Missing recipient phone." };
   return sendSms(payload.phone, `Your SiteSnap verification code is: ${payload.code}`);
 }
+
+export async function sendReportEmail(to: string, subject: string, html: string, text: string): Promise<{ ok: boolean; provider?: string; error?: string }> {
+  return sendEmail(to, subject, text, html);
+}

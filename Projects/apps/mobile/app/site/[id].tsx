@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Platform,
   Alert,
+  TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -80,9 +81,21 @@ export default function SiteDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { getSite, getSiteEntries, deleteSite } = useData();
   const [localProgress, setLocalProgress] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
 
   const site = getSite(id);
-  const entries = getSiteEntries(id);
+  const allEntries = getSiteEntries(id);
+  const entries = useMemo(() => {
+    if (!search.trim()) return allEntries;
+    const q = search.trim().toLowerCase();
+    return allEntries.filter(
+      (e) =>
+        e.notes?.toLowerCase().includes(q) ||
+        e.date?.includes(q) ||
+        e.weather?.toLowerCase().includes(q) ||
+        e.locationAddress?.toLowerCase().includes(q)
+    );
+  }, [allEntries, search]);
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
 
@@ -203,7 +216,7 @@ export default function SiteDetailScreen() {
           onPress={() => router.push({ pathname: "/diary/[siteId]", params: { siteId: id } })}
         >
           <Ionicons name="book-outline" size={20} color={Colors.accent} />
-          <Text style={styles.actionSecondaryText}>View Diary</Text>
+          <Text style={styles.actionSecondaryText}>Diary</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
@@ -221,6 +234,39 @@ export default function SiteDetailScreen() {
         </Pressable>
       </View>
 
+      {/* Secondary actions row */}
+      <View style={styles.secondaryBar}>
+        <Pressable
+          style={styles.secondaryBtn}
+          onPress={() => router.push({ pathname: "/inspections/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="shield-checkmark-outline" size={16} color={Colors.textSecondary} />
+          <Text style={styles.secondaryBtnText}>Inspections</Text>
+        </Pressable>
+        <Pressable
+          style={styles.secondaryBtn}
+          onPress={() => router.push({ pathname: "/deliveries/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="cube-outline" size={16} color={Colors.textSecondary} />
+          <Text style={styles.secondaryBtnText}>Deliveries</Text>
+        </Pressable>
+      </View>
+
+      {/* Search bar */}
+      {allEntries.length > 0 && (
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={16} color={Colors.textTertiary} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={`Search ${allEntries.length} entries…`}
+            placeholderTextColor={Colors.textTertiary}
+            value={search}
+            onChangeText={setSearch}
+            clearButtonMode="while-editing"
+          />
+        </View>
+      )}
+
       <FlatList
         data={entries}
         keyExtractor={(item) => item.id}
@@ -230,8 +276,12 @@ export default function SiteDetailScreen() {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Ionicons name="document-text-outline" size={48} color={Colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No entries yet</Text>
-            <Text style={styles.emptyText}>Add your first daily entry to start building the site diary</Text>
+            <Text style={styles.emptyTitle}>{search ? "No results" : "No entries yet"}</Text>
+            <Text style={styles.emptyText}>
+              {search
+                ? `No entries match "${search}"`
+                : "Add your first daily entry to start building the site diary"}
+            </Text>
           </View>
         }
       />
@@ -422,6 +472,48 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     gap: 10,
+  },
+  secondaryBar: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    gap: 10,
+    paddingBottom: 8,
+  },
+  secondaryBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  secondaryBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.textSecondary,
+  },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    height: 42,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.text,
   },
   entryCard: {
     flexDirection: "row",

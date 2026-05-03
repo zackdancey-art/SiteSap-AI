@@ -8,6 +8,8 @@ import { pushRouter } from "./push";
 import { crewRouter } from "./crew";
 import { incidentsRouter } from "./incidents";
 import { inspectionsRouter } from "./inspections";
+import { deliveriesRouter } from "./deliveries";
+import { templatesRouter } from "./templates";
 
 const apiRouter: Router = Router();
 
@@ -20,5 +22,7 @@ apiRouter.use(pushRouter);
 apiRouter.use(crewRouter);
 apiRouter.use(incidentsRouter);
 apiRouter.use(inspectionsRouter);
+apiRouter.use(deliveriesRouter);
+apiRouter.use(templatesRouter);
 
 export { apiRouter };

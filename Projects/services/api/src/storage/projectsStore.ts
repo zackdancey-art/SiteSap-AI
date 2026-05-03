@@ -49,6 +49,8 @@ export type DiaryRecord = {
   fullReport: string;
   safetyChecklist: string[];
   sections: Array<Record<string, unknown>>;
+  signedBy?: string | null;
+  signedAt?: string | null;
   updatedAt?: string;
   deletedAt?: string | null;
 };
@@ -236,6 +238,8 @@ function mapDiary(row: {
   full_report: string;
   safety_checklist_json: string[] | null;
   sections_json: Array<Record<string, unknown>>;
+  signed_by?: string | null;
+  signed_at?: Date | null;
   updated_at?: Date | null;
   deleted_at?: Date | null;
 }): DiaryRecord {
@@ -252,6 +256,8 @@ function mapDiary(row: {
     fullReport: row.full_report || "",
     safetyChecklist: Array.isArray(row.safety_checklist_json) ? row.safety_checklist_json : [],
     sections: row.sections_json,
+    signedBy: row.signed_by ?? null,
+    signedAt: row.signed_at ? row.signed_at.toISOString() : null,
     updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
     deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
   };
@@ -639,7 +645,7 @@ export async function createDiary(
 export async function updateDiary(
   actor: Actor,
   diaryId: string,
-  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections">>
+  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections" | "signedBy" | "signedAt">>
 ): Promise<DiaryRecord | null> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
@@ -670,6 +676,8 @@ export async function updateDiary(
     full_report: string;
     safety_checklist_json: string[] | null;
     sections_json: Array<Record<string, unknown>>;
+    signed_by: string | null;
+    signed_at: Date | null;
   }>(
     `UPDATE project_diaries
      SET
@@ -678,7 +686,9 @@ export async function updateDiary(
        report_period = COALESCE($4, report_period),
        full_report = COALESCE($5, full_report),
        safety_checklist_json = COALESCE($6::jsonb, safety_checklist_json),
-       sections_json = COALESCE($7::jsonb, sections_json)
+       sections_json = COALESCE($7::jsonb, sections_json),
+       signed_by = COALESCE($8, signed_by),
+       signed_at = COALESCE($9, signed_at)
      WHERE id = $1
      RETURNING *`,
     [
@@ -689,6 +699,8 @@ export async function updateDiary(
       patch.fullReport ?? null,
       patch.safetyChecklist ? JSON.stringify(patch.safetyChecklist) : null,
       patch.sections ? JSON.stringify(patch.sections) : null,
+      patch.signedBy ?? null,
+      patch.signedAt ?? null,
     ]
   );
   if (result.rowCount === 0) return null;
@@ -777,11 +789,14 @@ export async function getSupervisorReport(): Promise<SupervisorReportRow[]> {
 export async function deleteAllUserProjectData(email: string): Promise<void> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
+    for (const [id, entry] of memory.entries.entries()) {
+      if (entry.ownerEmail === email) {
+        await cleanupEntryPhotos(entry.photos);
+        memory.entries.delete(id);
+      }
+    }
     for (const [id, site] of memory.sites.entries()) {
       if (site.ownerEmail === email) memory.sites.delete(id);
-    }
-    for (const [id, entry] of memory.entries.entries()) {
-      if (entry.ownerEmail === email) memory.entries.delete(id);
     }
     for (const [id, diary] of memory.diaries.entries()) {
       if (diary.ownerEmail === email) memory.diaries.delete(id);
@@ -789,7 +804,13 @@ export async function deleteAllUserProjectData(email: string): Promise<void> {
     await persistMemory();
     return;
   }
-  // CASCADE constraints handle entries/diaries automatically on site delete
+  // Clean up stored media before deleting rows
+  const entriesResult = await getPgPool().query<{ photos_json: Array<Record<string, unknown>> }>(
+    `SELECT photos_json FROM project_entries WHERE owner_email = $1`,
+    [email]
+  );
+  await Promise.allSettled(entriesResult.rows.map((row) => cleanupEntryPhotos(row.photos_json)));
+  // CASCADE constraints handle entries/diaries automatically when sites are deleted
   await getPgPool().query(`DELETE FROM project_sites WHERE owner_email = $1`, [email]);
   await getPgPool().query(`DELETE FROM project_entries WHERE owner_email = $1`, [email]);
   await getPgPool().query(`DELETE FROM project_diaries WHERE owner_email = $1`, [email]);

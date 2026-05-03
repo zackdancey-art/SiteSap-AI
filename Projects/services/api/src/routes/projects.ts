@@ -16,6 +16,8 @@ import {
   updateEntry,
   updateSiteProgress,
 } from "../storage/projectsStore";
+import { sendReportEmail } from "../services/notificationService";
+import { rateLimit } from "../middleware/rateLimit";
 
 function parsePagination(query: Record<string, unknown>) {
   const limit = Math.min(Math.max(Number(query.limit) || 200, 1), 500);
@@ -61,6 +63,8 @@ const DiaryPatchSchema = z.object({
   fullReport: z.string().optional(),
   safetyChecklist: z.array(z.string()).optional(),
   sections: z.array(z.record(z.unknown())).optional(),
+  signedBy: z.string().max(200).nullable().optional(),
+  signedAt: z.string().nullable().optional(),
 });
 
 export const projectsRouter: Router = Router();
@@ -198,3 +202,31 @@ projectsRouter.get("/projects/reports/supervisor", requireRole("supervisor", "ad
   const perSite = await getSupervisorReport();
   return res.json({ generatedAt: new Date().toISOString(), perSite });
 });
+
+const SendEmailSchema = z.object({
+  to: z.string().email(),
+  subject: z.string().min(1).max(300),
+  html: z.string().min(1).max(500_000),
+  text: z.string().default(""),
+});
+
+projectsRouter.post(
+  "/projects/diaries/send-email",
+  rateLimit("diary-email", 10, 60 * 60 * 1000),
+  async (req, res) => {
+    const parsed = SendEmailSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid payload.", details: parsed.error.flatten() });
+    }
+    const result = await sendReportEmail(
+      parsed.data.to,
+      parsed.data.subject,
+      parsed.data.html,
+      parsed.data.text
+    );
+    if (!result.ok) {
+      return res.status(502).json({ error: result.error || "Email delivery failed." });
+    }
+    return res.json({ ok: true, provider: result.provider });
+  }
+);

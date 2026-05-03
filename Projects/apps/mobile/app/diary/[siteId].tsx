@@ -8,6 +8,8 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Modal,
+  TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -132,6 +134,12 @@ export default function DiaryPreviewScreen() {
   const [generating, setGenerating] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<ReportPeriod>("daily");
   const [currentDiary, setCurrentDiary] = useState<GeneratedDiary | null>(null);
+  const [showSignModal, setShowSignModal] = useState(false);
+  const [signerName, setSignerName] = useState("");
+  const [signing, setSigning] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailTo, setEmailTo] = useState("");
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   const filteredEntries = useMemo(() => filterEntriesByPeriod(entries, selectedPeriod), [entries, selectedPeriod]);
   const totalPhotos = entries.reduce((sum, entry) => sum + entry.photos.length, 0);
@@ -259,15 +267,66 @@ export default function DiaryPreviewScreen() {
 
   const handleApprove = () => {
     if (!currentDiary) return;
-    data.updateDiary(currentDiary.id, { status: "approved" });
-    setCurrentDiary({ ...currentDiary, status: "approved" });
-    Alert.alert("Approved", "Diary has been marked as approved.");
+    setSignerName("");
+    setShowSignModal(true);
+  };
+
+  const confirmApprove = async () => {
+    if (!currentDiary) return;
+    if (!signerName.trim()) { Alert.alert("Signature Required", "Please enter your full name to approve."); return; }
+    setSigning(true);
+    try {
+      const patch = { status: "approved" as const, signedBy: signerName.trim(), signedAt: new Date().toISOString() };
+      data.updateDiary(currentDiary.id, patch);
+      const updated = { ...currentDiary, ...patch };
+      setCurrentDiary(updated);
+      setShowSignModal(false);
+      Alert.alert("Approved", `Diary approved and signed by ${signerName.trim()}.`);
+    } finally {
+      setSigning(false);
+    }
   };
 
   const handleRevertToDraft = () => {
     if (!currentDiary) return;
-    data.updateDiary(currentDiary.id, { status: "draft" });
+    data.updateDiary(currentDiary.id, { status: "draft", signedBy: null, signedAt: null });
     setCurrentDiary({ ...currentDiary, status: "draft" });
+  };
+
+  const handleSendEmail = async () => {
+    if (!currentDiary) { Alert.alert("Nothing to send", "Generate a diary first."); return; }
+    const emailTrimmed = emailTo.trim();
+    if (!emailTrimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+      Alert.alert("Invalid Email", "Enter a valid recipient email address.");
+      return;
+    }
+    setSendingEmail(true);
+    try {
+      const html = buildDiaryReportHtml({
+        diary: { ...currentDiary, sections: visibleSections } as GeneratedDiary,
+        site,
+        summary: resolvedSummary,
+        fullReport: resolvedFullReport,
+        checklist: resolvedChecklist,
+      });
+      const res = await apiRequest("POST", "/api/projects/diaries/send-email", {
+        to: emailTrimmed,
+        subject: `Site Diary — ${site.name} (${resolvedPeriod.toUpperCase()})`,
+        html,
+        text: generateShareText(),
+      });
+      const result = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !result.ok) {
+        Alert.alert("Send Failed", result.error || "Email could not be sent. Check your email provider settings.");
+      } else {
+        setShowEmailModal(false);
+        Alert.alert("Sent", `Diary sent to ${emailTrimmed}.`);
+      }
+    } catch (err) {
+      Alert.alert("Error", err instanceof Error ? err.message : "Failed to send email.");
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   const generateShareText = () => {
@@ -335,10 +394,11 @@ export default function DiaryPreviewScreen() {
   };
 
   const handleShare = async () => {
-    Alert.alert("Export Diary", "Choose an export format.", [
+    Alert.alert("Export Diary", "Choose an option.", [
       { text: "Cancel", style: "cancel" },
-      { text: "Word", onPress: () => void runExport("doc") },
-      { text: "PDF", onPress: () => void runExport("pdf") },
+      { text: "Export Word", onPress: () => void runExport("doc") },
+      { text: "Export PDF", onPress: () => void runExport("pdf") },
+      { text: "Email to Client", onPress: () => { setEmailTo(""); setShowEmailModal(true); } },
     ]);
   };
 
@@ -436,7 +496,9 @@ export default function DiaryPreviewScreen() {
                   color={currentDiary.status === "approved" ? Colors.success : Colors.warning}
                 />
                 <Text style={[styles.statusText, currentDiary.status === "approved" ? styles.statusTextApproved : styles.statusTextDraft]}>
-                  {currentDiary.status === "approved" ? "APPROVED" : "DRAFT - Review Required"}
+                  {currentDiary.status === "approved"
+                    ? `APPROVED${currentDiary.signedBy ? ` · ${currentDiary.signedBy}` : ""}`
+                    : "DRAFT - Review Required"}
                 </Text>
               </View>
               <Text style={styles.generatedDate}>
@@ -523,6 +585,65 @@ export default function DiaryPreviewScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* Digital Signature Modal */}
+      <Modal visible={showSignModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSignModal(false)}>
+        <View style={{ flex: 1, backgroundColor: "#fff", padding: 28, paddingTop: 48, gap: 20 }}>
+          <Text style={{ fontSize: 20, fontWeight: "700", color: Colors.text }}>Approve & Sign</Text>
+          <Text style={{ fontSize: 14, color: Colors.textSecondary, lineHeight: 22 }}>
+            By entering your name you are digitally approving this site diary report. This action is recorded with a timestamp.
+          </Text>
+          <View style={{ gap: 8 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: Colors.text }}>Full Name *</Text>
+            <TextInput
+              style={{ borderWidth: 1, borderColor: Colors.border, borderRadius: 12, padding: 14, fontSize: 16, color: Colors.text }}
+              placeholder="Enter your full name"
+              placeholderTextColor={Colors.textTertiary}
+              value={signerName}
+              onChangeText={setSignerName}
+              autoCapitalize="words"
+            />
+          </View>
+          <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
+            <Pressable style={{ flex: 1, height: 52, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, alignItems: "center", justifyContent: "center" }} onPress={() => setShowSignModal(false)}>
+              <Text style={{ fontSize: 15, fontWeight: "600", color: Colors.textSecondary }}>Cancel</Text>
+            </Pressable>
+            <Pressable style={[{ flex: 1, height: 52, borderRadius: 14, backgroundColor: Colors.success, alignItems: "center", justifyContent: "center" }, signing && { opacity: 0.7 }]} onPress={confirmApprove} disabled={signing}>
+              {signing ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>Approve & Sign</Text>}
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Email to Client Modal */}
+      <Modal visible={showEmailModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowEmailModal(false)}>
+        <View style={{ flex: 1, backgroundColor: "#fff", padding: 28, paddingTop: 48, gap: 20 }}>
+          <Text style={{ fontSize: 20, fontWeight: "700", color: Colors.text }}>Email Diary</Text>
+          <Text style={{ fontSize: 14, color: Colors.textSecondary, lineHeight: 22 }}>
+            The full site diary report will be sent as a formatted HTML email to the recipient.
+          </Text>
+          <View style={{ gap: 8 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: Colors.text }}>Recipient Email *</Text>
+            <TextInput
+              style={{ borderWidth: 1, borderColor: Colors.border, borderRadius: 12, padding: 14, fontSize: 16, color: Colors.text }}
+              placeholder="client@example.com"
+              placeholderTextColor={Colors.textTertiary}
+              value={emailTo}
+              onChangeText={setEmailTo}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+          <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
+            <Pressable style={{ flex: 1, height: 52, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, alignItems: "center", justifyContent: "center" }} onPress={() => setShowEmailModal(false)}>
+              <Text style={{ fontSize: 15, fontWeight: "600", color: Colors.textSecondary }}>Cancel</Text>
+            </Pressable>
+            <Pressable style={[{ flex: 1, height: 52, borderRadius: 14, backgroundColor: Colors.primary, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, sendingEmail && { opacity: 0.7 }]} onPress={handleSendEmail} disabled={sendingEmail}>
+              {sendingEmail ? <ActivityIndicator color="#fff" /> : <><Ionicons name="mail" size={18} color="#fff" /><Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>Send</Text></>}
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

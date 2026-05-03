@@ -24,8 +24,26 @@ import Colors from "@/constants/colors";
 import { Photo } from "@/lib/types";
 import { AddressSuggestion, fetchAddressSuggestions } from "@/lib/geo";
 import { fetchCurrentWeather, formatWeatherString } from "@/lib/weather";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
 type PhotoWithBase64 = Photo & { base64?: string | null };
+type EntryTemplate = { id: string; name: string; notes: string; crewCount: string; weather: string };
+
+async function fetchTemplates(): Promise<EntryTemplate[]> {
+  try {
+    const token = await AsyncStorage.getItem("sitesnap.token");
+    const base = getApiBaseUrl();
+    const res = await fetch(`${base}/api/entry-templates`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { templates: EntryTemplate[] };
+    return data.templates;
+  } catch {
+    return [];
+  }
+}
 
 function normalizeImageMimeType(_mimeType?: string | null) {
   return "image/jpeg";
@@ -84,6 +102,20 @@ export default function NewEntryScreen() {
     } finally {
       setWeatherLoading(false);
     }
+  };
+
+  const [templates, setTemplates] = useState<EntryTemplate[]>([]);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing) fetchTemplates().then(setTemplates);
+  }, [isEditing]);
+
+  const applyTemplate = (tpl: EntryTemplate) => {
+    if (tpl.notes) setNotes(tpl.notes);
+    if (tpl.crewCount) setCrewCount(tpl.crewCount);
+    if (tpl.weather) setWeather(tpl.weather);
+    setShowTemplatePicker(false);
   };
 
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
@@ -280,6 +312,12 @@ export default function NewEntryScreen() {
               <Text style={styles.siteHeaderName} numberOfLines={1}>{site.name}</Text>
               <Text style={styles.siteHeaderClient} numberOfLines={1}>{site.client}</Text>
             </View>
+            {!isEditing && templates.length > 0 && (
+              <Pressable style={styles.templateBtn} onPress={() => setShowTemplatePicker(true)}>
+                <Ionicons name="copy-outline" size={14} color={Colors.accent} />
+                <Text style={styles.templateBtnText}>Template</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -476,6 +514,28 @@ export default function NewEntryScreen() {
           <Text style={styles.saveButtonText}>{isEditing ? "Save Changes" : "Save Entry"}</Text>
         </Pressable>
       </ScrollView>
+
+      {/* Template Picker Modal */}
+      <Modal visible={showTemplatePicker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowTemplatePicker(false)}>
+        <View style={{ flex: 1, backgroundColor: "#fff", paddingTop: 32 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: "#E8EDF5" }}>
+            <Text style={{ fontSize: 18, fontWeight: "700", color: Colors.text }}>Use Template</Text>
+            <Pressable onPress={() => setShowTemplatePicker(false)}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+            {templates.map((tpl) => (
+              <Pressable key={tpl.id} style={{ backgroundColor: "#F8FAFB", borderRadius: 14, padding: 16, borderWidth: 1, borderColor: Colors.border }} onPress={() => applyTemplate(tpl)}>
+                <Text style={{ fontSize: 15, fontWeight: "700", color: Colors.text }}>{tpl.name}</Text>
+                {tpl.weather ? <Text style={{ fontSize: 13, color: Colors.textSecondary, marginTop: 2 }}>Weather: {tpl.weather}</Text> : null}
+                {tpl.crewCount ? <Text style={{ fontSize: 13, color: Colors.textSecondary }}>Crew: {tpl.crewCount}</Text> : null}
+                {tpl.notes ? <Text style={{ fontSize: 13, color: Colors.textTertiary, marginTop: 4 }} numberOfLines={2}>{tpl.notes}</Text> : null}
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -759,6 +819,20 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: Colors.textSecondary,
     marginTop: 1,
+  },
+  templateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: Colors.accent + "14",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  templateBtnText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.accent,
   },
   textArea: {
     backgroundColor: Colors.surface,

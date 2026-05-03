@@ -71,3 +71,7 @@ export function logResolvedApiBaseUrlOnce() {
   const base = resolveApiBaseUrl();
   console.log(`[api] Resolved base URL: ${base}`);
 }
+
+export function getApiBaseUrl() {
+  return resolveApiBaseUrl();
+}
