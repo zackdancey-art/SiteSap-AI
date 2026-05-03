@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,8 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { DailyEntry } from "@/lib/types";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
 function EntryCard({ entry }: { entry: DailyEntry }) {
   const dateObj = new Date(entry.date + "T00:00:00");
@@ -61,15 +63,35 @@ function EntryCard({ entry }: { entry: DailyEntry }) {
   );
 }
 
+async function patchSiteProgress(siteId: string, pct: number) {
+  const token = await AsyncStorage.getItem("sitesnap.token");
+  const base = getApiBaseUrl();
+  await fetch(`${base}/api/projects/sites/${siteId}/progress`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ progressPercent: pct }),
+  });
+}
+
+const PROGRESS_STEPS = [0, 25, 50, 75, 100];
+
 export default function SiteDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { getSite, getSiteEntries, deleteSite } = useData();
+  const [localProgress, setLocalProgress] = useState<number | null>(null);
 
   const site = getSite(id);
   const entries = getSiteEntries(id);
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
+
+  const progress = localProgress ?? (site as { progressPercent?: number } | undefined)?.progressPercent ?? 0;
+
+  const handleProgressStep = (pct: number) => {
+    setLocalProgress(pct);
+    if (id) patchSiteProgress(id, pct).catch(() => {});
+  };
 
   if (!site) {
     return (
@@ -149,6 +171,23 @@ export default function SiteDetailScreen() {
             <Text style={styles.statLabel}>Start</Text>
           </View>
         </View>
+
+        <View style={styles.progressSection}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+            <Text style={styles.progressLabel}>Progress</Text>
+            <Text style={styles.progressPct}>{progress}%</Text>
+          </View>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${progress}%` }]} />
+          </View>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
+            {PROGRESS_STEPS.map((step) => (
+              <Pressable key={step} onPress={() => handleProgressStep(step)} style={[styles.progressStep, progress >= step && styles.progressStepActive]}>
+                <Text style={[styles.progressStepText, progress >= step && styles.progressStepTextActive]}>{step}%</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
       </View>
 
       <View style={styles.actionBar}>
@@ -165,6 +204,20 @@ export default function SiteDetailScreen() {
         >
           <Ionicons name="book-outline" size={20} color={Colors.accent} />
           <Text style={styles.actionSecondaryText}>View Diary</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
+          onPress={() => router.push({ pathname: "/crew/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="people-outline" size={20} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Crew</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
+          onPress={() => router.push({ pathname: "/incidents/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="warning-outline" size={20} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Incidents</Text>
         </Pressable>
       </View>
 
@@ -289,6 +342,51 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
+  },
+  progressSection: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.15)",
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.6)",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  progressPct: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.9)",
+    fontWeight: "700",
+  },
+  progressTrack: {
+    height: 6,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 6,
+    backgroundColor: Colors.success,
+    borderRadius: 3,
+  },
+  progressStep: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: "rgba(255,255,255,0.1)",
+  },
+  progressStepActive: {
+    backgroundColor: Colors.success,
+  },
+  progressStepText: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.6)",
+    fontWeight: "600",
+  },
+  progressStepTextActive: {
+    color: "#fff",
   },
   actionBar: {
     flexDirection: "row",

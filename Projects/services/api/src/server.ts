@@ -8,6 +8,7 @@ import { apiRouter } from "./routes";
 import { initAuthSchema } from "./storage/authStore";
 import { isProductionMediaStorageReady } from "./storage/mediaStorage";
 import { initProjectSchema } from "./storage/projectsStore";
+import { initPushSchema } from "./storage/pushStore";
 import { runMigrations } from "./storage/migrate";
 
 dotenv.config();
@@ -128,6 +129,7 @@ export async function bootstrap() {
   await runMigrations();
   await initAuthSchema();
   await initProjectSchema();
+  await initPushSchema();
   const app = createApp();
 
   const server = app.listen(PORT, "0.0.0.0", () => {

@@ -19,9 +19,33 @@ function sanitizeFilename(filename: string) {
   return filename.replace(/[^a-zA-Z0-9._-]+/g, "-");
 }
 
+const ALLOWED_MAGIC: Array<{ bytes: number[]; mime: string }> = [
+  { bytes: [0xff, 0xd8, 0xff], mime: "image/jpeg" },
+  { bytes: [0x89, 0x50, 0x4e, 0x47], mime: "image/png" },
+  { bytes: [0x47, 0x49, 0x46], mime: "image/gif" },
+  { bytes: [0x52, 0x49, 0x46, 0x46], mime: "image/webp" }, // RIFF....WEBP checked below
+];
+
+function detectMimeType(buf: Buffer): string | null {
+  for (const sig of ALLOWED_MAGIC) {
+    if (sig.bytes.every((b, i) => buf[i] === b)) {
+      if (sig.mime === "image/webp") {
+        return buf.length >= 12 && buf.subarray(8, 12).toString("ascii") === "WEBP" ? "image/webp" : null;
+      }
+      return sig.mime;
+    }
+  }
+  return null;
+}
+
 uploadsRouter.post("/uploads", requireAuth, rateLimit("uploads-post", 30, 60 * 60 * 1000), upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "Missing file field 'file' in multipart form-data." });
+  }
+
+  const detectedMime = detectMimeType(req.file.buffer);
+  if (!detectedMime) {
+    return res.status(415).json({ error: "Unsupported file type. Only JPEG, PNG, GIF, and WebP images are allowed." });
   }
 
   try {

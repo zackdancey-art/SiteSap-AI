@@ -43,3 +43,9 @@ jobs:
         env:
           NODE_ENV: test
           AUTH_TOKEN_SECRET: ci-test-secret
+
+      - name: Typecheck mobile app
+        run: pnpm --filter ./apps/mobile run typecheck
+
+      - name: Lint mobile app
+        run: pnpm run lint --filter ./apps/mobile

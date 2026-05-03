@@ -1,6 +1,7 @@
+import fs from "fs/promises";
 import path from "path";
 import { Readable } from "stream";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { LocalStorageAdapter } from "./local";
 
 type SaveFileArgs = {
@@ -21,6 +22,7 @@ type SavedFile = {
 type MediaStorageAdapter = {
   saveFile: (args: SaveFileArgs) => Promise<SavedFile>;
   readFile: (storageKey: string, filename: string, storagePath?: string) => Promise<Buffer>;
+  deleteFile: (storageKey: string) => Promise<void>;
 };
 
 const localStorage = new LocalStorageAdapter(path.join(process.cwd(), "storage", "uploads"));
@@ -150,6 +152,18 @@ const adapter: MediaStorageAdapter = {
     );
 
     return streamToBuffer(result.Body);
+  },
+
+  async deleteFile(storageKey) {
+    if (!useS3Storage()) {
+      const filepath = path.join(localStorage.base, storageKey.replace(/^uploads\//, ""));
+      await fs.unlink(filepath).catch(() => { /* best-effort */ });
+      return;
+    }
+    const config = getS3Config();
+    await getS3Client().send(
+      new DeleteObjectCommand({ Bucket: config.bucket, Key: storageKey })
+    );
   },
 };
 

@@ -14,6 +14,7 @@ import {
   listSites,
   updateDiary,
   updateEntry,
+  updateSiteProgress,
 } from "../storage/projectsStore";
 
 function parsePagination(query: Record<string, unknown>) {
@@ -28,6 +29,7 @@ const SiteSchema = z.object({
   client: z.string().min(1),
   startDate: z.string().min(1),
   status: z.enum(["active", "completed", "on-hold"]),
+  progressPercent: z.number().min(0).max(100).int().default(0),
 });
 
 const EntrySchema = z.object({
@@ -70,7 +72,8 @@ function getActor(req: AuthenticatedRequest) {
 }
 
 projectsRouter.get("/projects/bootstrap", async (req, res) => {
-  const payload = await getScopedBootstrap(getActor(req as unknown as AuthenticatedRequest));
+  const since = typeof req.query.since === "string" && req.query.since.trim() ? req.query.since.trim() : undefined;
+  const payload = await getScopedBootstrap(getActor(req as unknown as AuthenticatedRequest), since);
   res.json(payload);
 });
 
@@ -113,6 +116,18 @@ projectsRouter.delete("/projects/sites/:id", async (req, res) => {
   const removed = await deleteSite(getActor(req as unknown as AuthenticatedRequest), req.params.id);
   if (!removed) return res.status(404).json({ error: "Site not found." });
   return res.json({ ok: true });
+});
+
+projectsRouter.patch("/projects/sites/:id/progress", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const raw = req.body?.progressPercent;
+  const pct = Number(raw);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+    return res.status(400).json({ error: "progressPercent must be a number between 0 and 100." });
+  }
+  const site = await updateSiteProgress(actor, req.params.id, pct);
+  if (!site) return res.status(404).json({ error: "Site not found." });
+  return res.json({ site });
 });
 
 projectsRouter.get("/projects/entries", async (req, res) => {

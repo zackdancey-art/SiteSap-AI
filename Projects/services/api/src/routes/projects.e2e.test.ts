@@ -54,6 +54,7 @@ test("RBAC project workflow supports supervisor approval and scoped reads", asyn
     client: "City Utilities",
     startDate: "2026-03-05",
     status: "active",
+    progressPercent: 0,
   });
   await createEntry(workerActor, {
     siteId: site.id,

@@ -9,6 +9,8 @@ import {
   savePhotoPayloads,
   stripPhotoPayloads,
 } from "@/lib/photo-payload-store";
+import { registerForPushNotifications } from "@/lib/pushNotifications";
+import { flushQueue } from "@/lib/offlineQueue";
 
 interface DataContextType {
   sites: Site[];
@@ -331,6 +333,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         await refresh();
+        // After successful bootstrap, flush any queued offline actions and register for push
+        if (isAuthenticated && token) {
+          flushQueue(getToken).catch(() => {});
+          registerForPushNotifications(token).catch(() => {});
+        }
       } finally {
         setLoading(false);
       }

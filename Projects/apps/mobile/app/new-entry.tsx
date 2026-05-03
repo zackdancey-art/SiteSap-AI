@@ -23,6 +23,7 @@ import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { Photo } from "@/lib/types";
 import { AddressSuggestion, fetchAddressSuggestions } from "@/lib/geo";
+import { fetchCurrentWeather, formatWeatherString } from "@/lib/weather";
 
 type PhotoWithBase64 = Photo & { base64?: string | null };
 
@@ -60,6 +61,7 @@ export default function NewEntryScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateDraft, setDateDraft] = useState(new Date(`${new Date().toISOString().split("T")[0]}T00:00:00`));
   const [weather, setWeather] = useState("");
+  const [weatherLoading, setWeatherLoading] = useState(false);
   const [locationAddress, setLocationAddress] = useState("");
   const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
@@ -71,6 +73,18 @@ export default function NewEntryScreen() {
   const isEditing = Boolean(entryId);
 
   const weatherOptions = ["Sunny", "Partly Cloudy", "Overcast", "Rain", "Storm", "Windy"];
+
+  const autoFillWeather = async () => {
+    setWeatherLoading(true);
+    try {
+      const result = await fetchCurrentWeather();
+      if (result) {
+        setWeather(formatWeatherString(result));
+      }
+    } finally {
+      setWeatherLoading(false);
+    }
+  };
 
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
 
@@ -350,7 +364,19 @@ export default function NewEntryScreen() {
         </View>
 
         <View style={styles.formGroup}>
-          <Text style={styles.label}>Weather</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <Text style={styles.label}>Weather</Text>
+            <Pressable
+              onPress={autoFillWeather}
+              disabled={weatherLoading}
+              style={{ flexDirection: "row", alignItems: "center", gap: 4, opacity: weatherLoading ? 0.5 : 1 }}
+            >
+              {weatherLoading
+                ? <ActivityIndicator size="small" color={Colors.primary} />
+                : <Ionicons name="location-outline" size={14} color={Colors.primary} />}
+              <Text style={{ fontSize: 13, color: Colors.primary }}>Auto-fill</Text>
+            </Pressable>
+          </View>
           <View style={styles.chipRow}>
             {weatherOptions.map((w) => (
               <Pressable
@@ -362,6 +388,9 @@ export default function NewEntryScreen() {
               </Pressable>
             ))}
           </View>
+          {weather && !weatherOptions.includes(weather) && (
+            <Text style={{ marginTop: 6, fontSize: 13, color: Colors.textSecondary }}>{weather}</Text>
+          )}
         </View>
 
         <View style={styles.formGroup}>

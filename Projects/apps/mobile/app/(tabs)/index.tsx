@@ -15,6 +15,7 @@ import { router } from "expo-router";
 import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { Site } from "@/lib/types";
+import { EmptyState } from "@/components/EmptyState";
 
 function SiteCard({ site }: { site: Site }) {
   const entryCount = useData().entries.filter((e) => e.siteId === site.id).length;
@@ -134,13 +135,15 @@ export default function SitesScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.accent} />}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Ionicons name="business-outline" size={56} color={Colors.textTertiary} />
-            <Text style={styles.emptyTitle}>{search ? "No sites found" : "No sites yet"}</Text>
-            <Text style={styles.emptyText}>
-              {search ? "Try adjusting your search" : "Tap the + button to create your first site"}
-            </Text>
-          </View>
+          search
+            ? <EmptyState icon="search-outline" title="No sites found" subtitle="Try adjusting your search term." />
+            : <EmptyState
+                icon="business-outline"
+                title="No sites yet"
+                subtitle="Add your first construction site to start logging daily entries and generating reports."
+                ctaLabel="Create Site"
+                onCta={() => router.push("/create-site")}
+              />
         }
       />
     </View>

@@ -5,7 +5,8 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "npx expo start --lan --clear",
-    "dev": "npx expo start --lan --clear"
+    "dev": "npx expo start --lan --clear",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -23,6 +24,8 @@
     "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.10",
     "expo-linking": "~8.0.11",
+    "expo-location": "~18.1.5",
+    "expo-notifications": "~0.29.13",
     "expo-print": "^15.0.8",
     "expo-router": "^6.0.23",
     "expo-sharing": "^14.0.8",

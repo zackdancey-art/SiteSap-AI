@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getPgPool } from "./postgres";
 import { UserRole, isElevatedRole } from "../utils/authToken";
 import { FileBackedStore } from "./fileStore";
+import { getMediaStorage } from "./mediaStorage";
 
 type SiteStatus = "active" | "completed" | "on-hold";
 type DiaryStatus = "draft" | "approved";
@@ -16,7 +17,10 @@ export type SiteRecord = {
   client: string;
   startDate: string;
   status: SiteStatus;
+  progressPercent?: number;
   createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string | null;
 };
 
 export type EntryRecord = {
@@ -30,6 +34,8 @@ export type EntryRecord = {
   notes: string;
   photos: Array<Record<string, unknown>>;
   timestamp: string;
+  updatedAt?: string;
+  deletedAt?: string | null;
 };
 
 export type DiaryRecord = {
@@ -43,6 +49,8 @@ export type DiaryRecord = {
   fullReport: string;
   safetyChecklist: string[];
   sections: Array<Record<string, unknown>>;
+  updatedAt?: string;
+  deletedAt?: string | null;
 };
 
 type Actor = { email: string; role: UserRole };
@@ -167,7 +175,10 @@ function mapSite(row: {
   client: string;
   start_date: string;
   status: SiteStatus;
+  progress_percent?: number;
   created_at: Date;
+  updated_at?: Date | null;
+  deleted_at?: Date | null;
 }): SiteRecord {
   return {
     id: row.id,
@@ -177,7 +188,10 @@ function mapSite(row: {
     client: row.client,
     startDate: row.start_date,
     status: row.status,
+    progressPercent: row.progress_percent ?? 0,
     createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
+    deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
   };
 }
 
@@ -192,6 +206,8 @@ function mapEntry(row: {
   notes: string;
   photos_json: Array<Record<string, unknown>>;
   timestamp: Date;
+  updated_at?: Date | null;
+  deleted_at?: Date | null;
 }): EntryRecord {
   return {
     id: row.id,
@@ -204,6 +220,8 @@ function mapEntry(row: {
     notes: row.notes,
     photos: row.photos_json,
     timestamp: row.timestamp.toISOString(),
+    updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
+    deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
   };
 }
 
@@ -218,6 +236,8 @@ function mapDiary(row: {
   full_report: string;
   safety_checklist_json: string[] | null;
   sections_json: Array<Record<string, unknown>>;
+  updated_at?: Date | null;
+  deleted_at?: Date | null;
 }): DiaryRecord {
   const period: ReportPeriod =
     row.report_period === "weekly" || row.report_period === "monthly" ? row.report_period : "daily";
@@ -232,53 +252,50 @@ function mapDiary(row: {
     fullReport: row.full_report || "",
     safetyChecklist: Array.isArray(row.safety_checklist_json) ? row.safety_checklist_json : [],
     sections: row.sections_json,
+    updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
+    deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
   };
 }
 
-export async function listSites(actor: Actor, limit = 200, offset = 0): Promise<SiteRecord[]> {
+export async function listSites(actor: Actor, limit = 200, offset = 0, since?: string): Promise<SiteRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     return Array.from(memory.sites.values())
       .filter((site) => canAccessOwner(actor, site.ownerEmail))
+      .filter((site) => !site.deletedAt)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(offset, offset + limit);
   }
-  const result = isElevatedRole(actor.role)
-    ? await getPgPool().query<{
-        id: string;
-        owner_email: string;
-        name: string;
-        address: string;
-        client: string;
-        start_date: string;
-        status: SiteStatus;
-        created_at: Date;
-      }>(`SELECT * FROM project_sites ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset])
-    : await getPgPool().query<{
-        id: string;
-        owner_email: string;
-        name: string;
-        address: string;
-        client: string;
-        start_date: string;
-        status: SiteStatus;
-        created_at: Date;
-      }>(
-        `SELECT * FROM project_sites WHERE owner_email = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-        [actor.email, limit, offset]
-      );
+  const params: unknown[] = [];
+  const conditions: string[] = ["deleted_at IS NULL"];
+  if (!isElevatedRole(actor.role)) {
+    params.push(actor.email);
+    conditions.push(`owner_email = $${params.length}`);
+  }
+  if (since) {
+    params.push(since);
+    conditions.push(`updated_at > $${params.length}`);
+  }
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  params.push(limit, offset);
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; name: string; address: string; client: string;
+    start_date: string; status: SiteStatus; progress_percent: number;
+    created_at: Date; updated_at: Date; deleted_at: Date | null;
+  }>(`SELECT * FROM project_sites ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return result.rows.map(mapSite);
 }
 
 export async function createSite(
   actor: Actor,
-  payload: Omit<SiteRecord, "id" | "ownerEmail" | "createdAt">
+  payload: Omit<SiteRecord, "id" | "ownerEmail" | "createdAt" | "updatedAt" | "deletedAt">
 ): Promise<SiteRecord> {
   const site: SiteRecord = {
     id: uuidv4(),
     ownerEmail: actor.email,
     createdAt: new Date().toISOString(),
     ...payload,
+    progressPercent: payload.progressPercent ?? 0,
   };
   if (!useDatabase()) {
     await ensureMemoryLoaded();
@@ -287,77 +304,107 @@ export async function createSite(
     return site;
   }
   const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    name: string;
-    address: string;
-    client: string;
-    start_date: string;
-    status: SiteStatus;
-    created_at: Date;
+    id: string; owner_email: string; name: string; address: string; client: string;
+    start_date: string; status: SiteStatus; progress_percent: number;
+    created_at: Date; updated_at: Date; deleted_at: Date | null;
   }>(
-    `INSERT INTO project_sites (id, owner_email, name, address, client, start_date, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO project_sites (id, owner_email, name, address, client, start_date, status, progress_percent)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
-    [site.id, actor.email, site.name, site.address, site.client, site.startDate, site.status]
+    [site.id, actor.email, site.name, site.address, site.client, site.startDate, site.status, site.progressPercent]
   );
   return mapSite(result.rows[0]);
 }
 
+export async function updateSiteProgress(actor: Actor, siteId: string, progressPercent: number): Promise<SiteRecord | null> {
+  const pct = Math.max(0, Math.min(100, Math.round(progressPercent)));
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const existing = memory.sites.get(siteId);
+    if (!existing || !canAccessOwner(actor, existing.ownerEmail) || existing.deletedAt) return null;
+    const updated: SiteRecord = { ...existing, progressPercent: pct };
+    memory.sites.set(siteId, updated);
+    await persistMemory();
+    return updated;
+  }
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; name: string; address: string; client: string;
+    start_date: string; status: SiteStatus; progress_percent: number;
+    created_at: Date; updated_at: Date; deleted_at: Date | null;
+  }>(
+    `UPDATE project_sites SET progress_percent = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
+    [siteId, pct]
+  );
+  if (result.rowCount === 0) return null;
+  return mapSite(result.rows[0]);
+}
+
 export async function deleteSite(actor: Actor, siteId: string): Promise<boolean> {
+  const now = new Date().toISOString();
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const existing = memory.sites.get(siteId);
     if (!existing || !canAccessOwner(actor, existing.ownerEmail)) return false;
-    memory.sites.delete(siteId);
-    for (const [entryId, entry] of memory.entries.entries()) {
-      if (entry.siteId === siteId) memory.entries.delete(entryId);
+    memory.sites.set(siteId, { ...existing, deletedAt: now });
+    for (const [, entry] of memory.entries.entries()) {
+      if (entry.siteId === siteId && !entry.deletedAt) {
+        memory.entries.set(entry.id, { ...entry, deletedAt: now });
+      }
     }
-    for (const [diaryId, diary] of memory.diaries.entries()) {
-      if (diary.siteId === siteId) memory.diaries.delete(diaryId);
+    for (const [, diary] of memory.diaries.entries()) {
+      if (diary.siteId === siteId && !diary.deletedAt) {
+        memory.diaries.set(diary.id, { ...diary, deletedAt: now });
+      }
     }
     await persistMemory();
     return true;
   }
-  const result = isElevatedRole(actor.role)
-    ? await getPgPool().query(`DELETE FROM project_sites WHERE id = $1`, [siteId])
-    : await getPgPool().query(`DELETE FROM project_sites WHERE id = $1 AND owner_email = $2`, [siteId, actor.email]);
-  return (result.rowCount ?? 0) > 0;
+  const conditions = isElevatedRole(actor.role)
+    ? `id = $1`
+    : `id = $1 AND owner_email = $2`;
+  const params = isElevatedRole(actor.role) ? [siteId] : [siteId, actor.email];
+  const result = await getPgPool().query(
+    `UPDATE project_sites SET deleted_at = NOW() WHERE ${conditions} AND deleted_at IS NULL`,
+    params
+  );
+  if ((result.rowCount ?? 0) === 0) return false;
+  await getPgPool().query(`UPDATE project_entries SET deleted_at = NOW() WHERE site_id = $1 AND deleted_at IS NULL`, [siteId]);
+  await getPgPool().query(`UPDATE project_diaries SET deleted_at = NOW() WHERE site_id = $1 AND deleted_at IS NULL`, [siteId]);
+  return true;
 }
 
-export async function listEntries(actor: Actor, siteId?: string, limit = 200, offset = 0): Promise<EntryRecord[]> {
+export async function listEntries(actor: Actor, siteId?: string, limit = 200, offset = 0, since?: string): Promise<EntryRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     return Array.from(memory.entries.values())
       .filter((entry) => canAccessOwner(actor, entry.ownerEmail))
+      .filter((entry) => !entry.deletedAt)
       .filter((entry) => (siteId ? entry.siteId === siteId : true))
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       .slice(offset, offset + limit);
   }
 
-  const queryParts: string[] = [];
+  const conditions: string[] = ["deleted_at IS NULL"];
   const params: unknown[] = [];
   if (!isElevatedRole(actor.role)) {
     params.push(actor.email);
-    queryParts.push(`owner_email = $${params.length}`);
+    conditions.push(`owner_email = $${params.length}`);
   }
   if (siteId) {
     params.push(siteId);
-    queryParts.push(`site_id = $${params.length}`);
+    conditions.push(`site_id = $${params.length}`);
   }
-  const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  if (since) {
+    params.push(since);
+    conditions.push(`updated_at > $${params.length}`);
+  }
+  const where = `WHERE ${conditions.join(" AND ")}`;
   params.push(limit, offset);
   const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    site_id: string;
-    date: string;
-    location_address: string;
-    weather: string;
-    crew_count: string;
-    notes: string;
-    photos_json: Array<Record<string, unknown>>;
-    timestamp: Date;
+    id: string; owner_email: string; site_id: string; date: string;
+    location_address: string; weather: string; crew_count: string; notes: string;
+    photos_json: Array<Record<string, unknown>>; timestamp: Date;
+    updated_at: Date | null; deleted_at: Date | null;
   }>(`SELECT * FROM project_entries ${where} ORDER BY timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return result.rows.map(mapEntry);
 }
@@ -471,53 +518,72 @@ export async function updateEntry(
   return mapEntry(result.rows[0]);
 }
 
+async function cleanupEntryPhotos(photos: Array<Record<string, unknown>>) {
+  const storage = getMediaStorage();
+  await Promise.allSettled(
+    photos
+      .map((p) => String(p.storageKey || "").trim())
+      .filter(Boolean)
+      .map((key) => storage.deleteFile(key))
+  );
+}
+
 export async function deleteEntry(actor: Actor, entryId: string): Promise<boolean> {
+  const now = new Date().toISOString();
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const existing = memory.entries.get(entryId);
     if (!existing || !canAccessOwner(actor, existing.ownerEmail)) return false;
-    memory.entries.delete(entryId);
+    await cleanupEntryPhotos(existing.photos);
+    memory.entries.set(entryId, { ...existing, deletedAt: now });
     await persistMemory();
     return true;
   }
-  const result = isElevatedRole(actor.role)
-    ? await getPgPool().query(`DELETE FROM project_entries WHERE id = $1`, [entryId])
-    : await getPgPool().query(`DELETE FROM project_entries WHERE id = $1 AND owner_email = $2`, [entryId, actor.email]);
+  const fetchResult = await getPgPool().query<{ photos_json: Array<Record<string, unknown>>; owner_email: string }>(
+    `SELECT photos_json, owner_email FROM project_entries WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+    [entryId]
+  );
+  if (fetchResult.rowCount === 0) return false;
+  if (!canAccessOwner(actor, fetchResult.rows[0].owner_email)) return false;
+  await cleanupEntryPhotos(fetchResult.rows[0].photos_json);
+  const result = await getPgPool().query(
+    `UPDATE project_entries SET deleted_at = NOW() WHERE id = $1`,
+    [entryId]
+  );
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function listDiaries(actor: Actor, siteId?: string, limit = 200, offset = 0): Promise<DiaryRecord[]> {
+export async function listDiaries(actor: Actor, siteId?: string, limit = 200, offset = 0, since?: string): Promise<DiaryRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     return Array.from(memory.diaries.values())
       .filter((diary) => canAccessOwner(actor, diary.ownerEmail))
+      .filter((diary) => !diary.deletedAt)
       .filter((diary) => (siteId ? diary.siteId === siteId : true))
       .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
       .slice(offset, offset + limit);
   }
-  const queryParts: string[] = [];
+  const conditions: string[] = ["deleted_at IS NULL"];
   const params: unknown[] = [];
   if (!isElevatedRole(actor.role)) {
     params.push(actor.email);
-    queryParts.push(`owner_email = $${params.length}`);
+    conditions.push(`owner_email = $${params.length}`);
   }
   if (siteId) {
     params.push(siteId);
-    queryParts.push(`site_id = $${params.length}`);
+    conditions.push(`site_id = $${params.length}`);
   }
-  const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  if (since) {
+    params.push(since);
+    conditions.push(`updated_at > $${params.length}`);
+  }
+  const where = `WHERE ${conditions.join(" AND ")}`;
   params.push(limit, offset);
   const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    site_id: string;
-    generated_at: Date;
-    status: DiaryStatus;
-    summary: string;
-    report_period: string;
-    full_report: string;
-    safety_checklist_json: string[] | null;
-    sections_json: Array<Record<string, unknown>>;
+    id: string; owner_email: string; site_id: string; generated_at: Date;
+    status: DiaryStatus; summary: string; report_period: string; full_report: string;
+    safety_checklist_json: string[] | null; sections_json: Array<Record<string, unknown>>;
+    updated_at: Date | null; deleted_at: Date | null;
   }>(`SELECT * FROM project_diaries ${where} ORDER BY generated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return result.rows.map(mapDiary);
 }
@@ -629,8 +695,12 @@ export async function updateDiary(
   return mapDiary(result.rows[0]);
 }
 
-export async function getScopedBootstrap(actor: Actor) {
-  const [sites, entries, diaries] = await Promise.all([listSites(actor), listEntries(actor), listDiaries(actor)]);
+export async function getScopedBootstrap(actor: Actor, since?: string) {
+  const [sites, entries, diaries] = await Promise.all([
+    listSites(actor, 200, 0, since),
+    listEntries(actor, undefined, 200, 0, since),
+    listDiaries(actor, undefined, 200, 0, since),
+  ]);
   return { sites, entries, diaries };
 }
 

@@ -4,9 +4,11 @@ import { Entry, Photo } from "@/lib/types";
 type StoredPhotoPayload = {
   base64?: string;
   mimeType?: string;
+  savedAt: number;
 };
 
 const PHOTO_PAYLOADS_KEY = "sitesnap.photoPayloads";
+const MAX_CACHED_PHOTOS = 50;
 
 async function readPayloadMap(): Promise<Record<string, StoredPhotoPayload>> {
   try {
@@ -23,6 +25,15 @@ async function writePayloadMap(value: Record<string, StoredPhotoPayload>) {
   await AsyncStorage.setItem(PHOTO_PAYLOADS_KEY, JSON.stringify(value));
 }
 
+function evictLruEntries(map: Record<string, StoredPhotoPayload>): Record<string, StoredPhotoPayload> {
+  const keys = Object.keys(map);
+  if (keys.length <= MAX_CACHED_PHOTOS) return map;
+  const sorted = keys.sort((a, b) => (map[a].savedAt ?? 0) - (map[b].savedAt ?? 0));
+  const evicted = { ...map };
+  sorted.slice(0, keys.length - MAX_CACHED_PHOTOS).forEach((k) => delete evicted[k]);
+  return evicted;
+}
+
 export function stripPhotoPayloads<T extends { photos: Photo[] }>(entry: T): T {
   return {
     ...entry,
@@ -35,15 +46,18 @@ export function stripPhotoPayloads<T extends { photos: Photo[] }>(entry: T): T {
 }
 
 export async function savePhotoPayloads(photos: Photo[]) {
-  const payloadMap = await readPayloadMap();
+  let payloadMap = await readPayloadMap();
+  const now = Date.now();
   photos.forEach((photo) => {
     if (!photo.id) return;
     if (!photo.base64) return;
     payloadMap[photo.id] = {
       base64: photo.base64,
       mimeType: photo.mimeType || "image/jpeg",
+      savedAt: now,
     };
   });
+  payloadMap = evictLruEntries(payloadMap);
   await writePayloadMap(payloadMap);
 }
 

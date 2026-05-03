@@ -10,6 +10,9 @@ import { AuthProvider } from "@/lib/auth-context";
 import { DataProvider } from "@/lib/data-context";
 import { logResolvedApiBaseUrlOnce } from "@/lib/api-base-url";
 import Constants from "expo-constants";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router } from "expo-router";
+import { ONBOARDING_COMPLETE_KEY } from "./onboarding";
 
 const sentryDsn = (Constants.expoConfig?.extra as { sentryDsn?: string } | undefined)?.sentryDsn
   || process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -126,6 +129,18 @@ function RootLayoutNav() {
           headerTintColor: "#0F2B46",
         }}
       />
+      <Stack.Screen
+        name="onboarding"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="crew/[siteId]"
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="incidents/[siteId]"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }
@@ -134,6 +149,9 @@ function RootLayout() {
   useEffect(() => {
     logResolvedApiBaseUrlOnce();
     SplashScreen.hideAsync();
+    AsyncStorage.getItem(ONBOARDING_COMPLETE_KEY).then((val) => {
+      if (!val) router.replace("/onboarding");
+    }).catch(() => {});
   }, []);
 
   return (

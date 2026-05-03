@@ -12,8 +12,12 @@ export function getPgPool() {
     throw new Error("DATABASE_URL is required for auth storage.");
   }
 
+  const maxConnections = Number(process.env.PG_POOL_MAX || "10");
   pool = new Pool({
     connectionString: databaseUrl,
+    max: isFinite(maxConnections) && maxConnections > 0 ? maxConnections : 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
     ssl:
       process.env.PG_SSL === "require"
         ? {
