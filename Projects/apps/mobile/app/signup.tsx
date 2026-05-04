@@ -59,7 +59,6 @@ export default function SignUpScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [devCodes, setDevCodes] = useState<{ emailCode: string; smsCode: string } | null>(null);
 
   const normalizedPhone = useMemo(
     () => `${phonePrefix}${normalizeLocalPhone(phoneLocal)}`,
@@ -96,7 +95,6 @@ export default function SignUpScreen() {
 
     setError("");
     setMessage("");
-    setDevCodes(null);
     setSubmitting(true);
     try {
       const res = await apiRequest("POST", "/api/auth/register/initiate", {
@@ -105,22 +103,12 @@ export default function SignUpScreen() {
         phone: normalizedPhone,
         password,
       });
-      const data = (await res.json()) as {
-        error?: string;
-        message?: string;
-        devCodes?: { emailCode?: string; smsCode?: string };
-      };
+      const data = (await res.json()) as { error?: string; message?: string };
       if (!res.ok) {
         throw new Error(data.error || "Could not start registration.");
       }
       setStep("verify");
-      setMessage(data.message || "Verification codes sent.");
-      if (data.devCodes?.emailCode && data.devCodes?.smsCode) {
-        setDevCodes({
-          emailCode: data.devCodes.emailCode,
-          smsCode: data.devCodes.smsCode,
-        });
-      }
+      setMessage(data.message || "Verification codes sent to your email and phone.");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not start registration.");
     } finally {
@@ -170,7 +158,7 @@ export default function SignUpScreen() {
             <Text style={styles.tagline}>
               {step === "details"
                 ? "Register with email and mobile verification"
-                : `Enter the codes sent to ${email.trim().toLowerCase() || "your email"}`}
+                : `Check your email inbox and SMS messages for the 6-digit codes`}
             </Text>
           </View>
 
@@ -192,20 +180,6 @@ export default function SignUpScreen() {
                 <Text style={styles.successText}>{message}</Text>
               </View>
             )}
-            {!!devCodes && (
-              <View style={styles.devCodeCard}>
-                <Text style={styles.devCodeCardTitle}>Verification Codes (Dev)</Text>
-                <View style={styles.devCodeRow}>
-                  <Text style={styles.devCodeLabel}>Email code</Text>
-                  <Text style={styles.devCodeValue}>{devCodes.emailCode}</Text>
-                </View>
-                <View style={styles.devCodeRow}>
-                  <Text style={styles.devCodeLabel}>SMS code</Text>
-                  <Text style={styles.devCodeValue}>{devCodes.smsCode}</Text>
-                </View>
-              </View>
-            )}
-
             {step === "details" ? (
               <>
                 <View style={styles.inputGroup}>
@@ -336,7 +310,6 @@ export default function SignUpScreen() {
                     setStep("details");
                     setError("");
                     setMessage("");
-                    setDevCodes(null);
                     setEmailCode("");
                     setSmsCode("");
                   }}

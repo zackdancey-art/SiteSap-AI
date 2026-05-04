@@ -4,6 +4,7 @@ import {
   Text,
   FlatList,
   Pressable,
+  ScrollView,
   StyleSheet,
   Platform,
   Alert,
@@ -203,54 +204,55 @@ export default function SiteDetailScreen() {
         </View>
       </View>
 
-      <View style={styles.actionBar}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.actionBar}
+        style={styles.actionBarScroll}
+      >
         <Pressable
           style={({ pressed }) => [styles.actionButton, styles.actionPrimary, pressed && { opacity: 0.9 }]}
           onPress={() => router.push({ pathname: "/new-entry", params: { siteId: id } })}
         >
-          <Ionicons name="add-circle-outline" size={20} color={Colors.white} />
+          <Ionicons name="add-circle-outline" size={18} color={Colors.white} />
           <Text style={styles.actionPrimaryText}>New Entry</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
           onPress={() => router.push({ pathname: "/diary/[siteId]", params: { siteId: id } })}
         >
-          <Ionicons name="book-outline" size={20} color={Colors.accent} />
+          <Ionicons name="book-outline" size={18} color={Colors.accent} />
           <Text style={styles.actionSecondaryText}>Diary</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
           onPress={() => router.push({ pathname: "/crew/[siteId]", params: { siteId: id } })}
         >
-          <Ionicons name="people-outline" size={20} color={Colors.accent} />
+          <Ionicons name="people-outline" size={18} color={Colors.accent} />
           <Text style={styles.actionSecondaryText}>Crew</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
           onPress={() => router.push({ pathname: "/incidents/[siteId]", params: { siteId: id } })}
         >
-          <Ionicons name="warning-outline" size={20} color={Colors.accent} />
+          <Ionicons name="warning-outline" size={18} color={Colors.accent} />
           <Text style={styles.actionSecondaryText}>Incidents</Text>
         </Pressable>
-      </View>
-
-      {/* Secondary actions row */}
-      <View style={styles.secondaryBar}>
         <Pressable
-          style={styles.secondaryBtn}
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
           onPress={() => router.push({ pathname: "/inspections/[siteId]", params: { siteId: id } })}
         >
-          <Ionicons name="shield-checkmark-outline" size={16} color={Colors.textSecondary} />
-          <Text style={styles.secondaryBtnText}>Inspections</Text>
+          <Ionicons name="shield-checkmark-outline" size={18} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Inspections</Text>
         </Pressable>
         <Pressable
-          style={styles.secondaryBtn}
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
           onPress={() => router.push({ pathname: "/deliveries/[siteId]", params: { siteId: id } })}
         >
-          <Ionicons name="cube-outline" size={16} color={Colors.textSecondary} />
-          <Text style={styles.secondaryBtnText}>Deliveries</Text>
+          <Ionicons name="cube-outline" size={18} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Dockets</Text>
         </Pressable>
-      </View>
+      </ScrollView>
 
       {/* Search bar */}
       {allEntries.length > 0 && (
@@ -438,20 +440,23 @@ const styles = StyleSheet.create({
   progressStepTextActive: {
     color: "#fff",
   },
+  actionBarScroll: {
+    flexGrow: 0,
+  },
   actionBar: {
     flexDirection: "row",
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 10,
+    paddingVertical: 12,
+    gap: 8,
   },
   actionButton: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    height: 46,
+    gap: 6,
+    height: 44,
     borderRadius: 14,
+    paddingHorizontal: 14,
   },
   actionPrimary: {
     backgroundColor: Colors.accent,
@@ -472,29 +477,6 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     gap: 10,
-  },
-  secondaryBar: {
-    flexDirection: "row",
-    paddingHorizontal: 16,
-    gap: 10,
-    paddingBottom: 8,
-  },
-  secondaryBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    height: 38,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-  },
-  secondaryBtnText: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.textSecondary,
   },
   searchBar: {
     flexDirection: "row",

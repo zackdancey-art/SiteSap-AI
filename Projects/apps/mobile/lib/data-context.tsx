@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router } from "expo-router";
 import { Site, Entry, GeneratedDiary } from "@/lib/types";
 import { resolveApiBaseUrl } from "@/lib/api-base-url";
 import { useAuth, isTokenExpiringSoon } from "@/lib/auth-context";
@@ -72,6 +73,12 @@ export function _setRefreshTokenFn(fn: () => Promise<string | null>) {
   _refreshTokenFn = fn;
 }
 
+// Holds a reference to a logout+redirect handler so apiJson can force sign-out on persistent 401
+let _logoutFn: (() => void) | null = null;
+export function _setLogoutFn(fn: () => void) {
+  _logoutFn = fn;
+}
+
 async function doFetch<T>(path: string, init: RequestInit | undefined, token: string | null): Promise<T> {
   const res = await fetch(`${BASE_URL}/api${path}`, {
     ...init,
@@ -123,8 +130,16 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   } catch (err) {
     // On 401, attempt one token refresh then retry
     if (err instanceof Error && (err as Error & { status?: number }).status === 401 && _refreshTokenFn) {
-      const refreshed = await _refreshTokenFn();
-      if (refreshed) return doFetch<T>(path, init, refreshed);
+      try {
+        const refreshed = await _refreshTokenFn();
+        if (refreshed) return await doFetch<T>(path, init, refreshed);
+      } catch {
+        // Refresh + retry both failed — force logout so user can re-authenticate
+        _logoutFn?.();
+        throw err;
+      }
+      // Refresh returned null — session cannot be recovered
+      _logoutFn?.();
     }
     throw err;
   }
@@ -279,12 +294,16 @@ async function attachSignedPhotoUris(entries: Entry[], token: string | null): Pr
 }
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading: authLoading, user, token, refreshToken } = useAuth();
+  const { isAuthenticated, loading: authLoading, user, token, refreshToken, logout } = useAuth();
 
-  // Keep the module-level refresh fn in sync with the current context instance
+  // Keep the module-level refresh and logout fns in sync with the current context instance
   React.useEffect(() => {
     _setRefreshTokenFn(refreshToken);
-  }, [refreshToken]);
+    _setLogoutFn(() => {
+      void logout();
+      router.replace("/login");
+    });
+  }, [refreshToken, logout]);
   const [sites, setSites] = useState<Site[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [diaries, setDiaries] = useState<GeneratedDiary[]>([]);

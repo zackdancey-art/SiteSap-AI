@@ -124,7 +124,7 @@ export default function DiaryPreviewScreen() {
   const insets = useSafeAreaInsets();
   const { siteId } = useLocalSearchParams<{ siteId: string }>();
   const data = useData();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const safeSiteId = typeof siteId === "string" ? siteId : "";
 
   const site = safeSiteId ? data.getSite(safeSiteId) : undefined;
@@ -200,6 +200,14 @@ export default function DiaryPreviewScreen() {
         siteId: safeSiteId,
         period: selectedPeriod,
       });
+
+      if (res.status === 401) {
+        await logout();
+        router.replace("/login");
+        Alert.alert("Session Expired", "Your session has expired. Please sign in again.");
+        return;
+      }
+
       let payload = (await res.json()) as {
         success?: boolean;
         error?: string;

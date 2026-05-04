@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m ' *)",
+      "Bash(git checkout *)",
+      "Bash(grep -v \".js$\")",
+      "Bash(pnpm --filter ./services/api run build)",
+      "Bash(pnpm --filter ./services/api run test)",
+      "Bash(git stash *)",
+      "Bash(pnpm --filter ./apps/mobile run typecheck)",
+      "Bash(pnpm --filter ./apps/mobile add expo-notifications expo-location)",
+      "Bash(npx expo *)",
+      "Bash(cat /tmp/expo_output.txt)",
+      "Bash(curl -s http://localhost:8081/)",
+      "Bash(curl -s \"http://localhost:8081/_expo/manifest\")",
+      "Bash(ipconfig getifaddr *)",
+      "Bash(awk '{print $1}')",
+      "Read(//private/tmp/**)",
+      "Bash(brew install *)",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"require\\('qrcode-terminal'\\)\")",
+      "Bash(npx qrcode-terminal *)",
+      "Bash(npx --yes qrcode-terminal \"exp://192.168.4.28:8081\")",
+      "Bash(node -e \"const qr = require\\('/Users/zackdancey/Dev/SiteSnap/Projects/node_modules/.pnpm/qrcode-terminal@0.11.0/node_modules/qrcode-terminal'\\); qr.generate\\('exp://192.168.4.28:8081', {small: true}, function\\(qrcode\\){ console.log\\(qrcode\\); }\\);\")",
+      "Bash(lsof -ti:8081)",
+      "Bash(xargs kill *)",
+      "Bash(EXPO_NO_TELEMETRY=1 npx expo start --offline --lan)",
+      "Bash(echo \"PID: $!\")"
+    ]
+  }
+}

@@ -52,7 +52,7 @@ export default function CrewTimecards() {
       const data = await apiJson<{ timecards: Timecard[] }>(`/api/crew/timecards?siteId=${siteId}`);
       setTimecards(data.timecards);
     } catch (err) {
-      console.error(err);
+      console.warn(err);
     } finally {
       setLoading(false);
     }
