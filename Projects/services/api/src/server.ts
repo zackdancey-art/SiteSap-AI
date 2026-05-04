@@ -97,9 +97,15 @@ export function createApp(): express.Express {
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
     res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (isProdMode) {
+      // HSTS: trust this domain for 1 year, include subdomains
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+    }
     next();
   });
   app.use(express.json({ limit: "25mb" }));

@@ -1,4 +1,5 @@
 import { Request, Response, Router } from "express";
+import { randomBytes, randomInt } from "crypto";
 import {
   createPasswordResetToken,
   createUser,
@@ -49,12 +50,12 @@ function normalizePhone(phone: string) {
   return `${hasPlus ? "+" : ""}${digits}`;
 }
 
-function makeResetToken(email: string) {
-  return Buffer.from(`${email}:${Date.now()}:${Math.random()}`).toString("base64url");
+function makeResetToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
-function makeCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+function makeCode(): string {
+  return String(randomInt(100000, 1000000));
 }
 
 function buildResetLink(resetToken: string) {
@@ -96,8 +97,8 @@ async function initiateRegistration(req: Request, res: Response) {
   if (phone.replace(/\D/g, "").length < 8) {
     return res.status(400).json({ error: "Please enter a valid phone number with country code." });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  if (password.length < 12) {
+    return res.status(400).json({ error: "Password must be at least 12 characters." });
   }
 
   try {
@@ -330,6 +331,43 @@ router.delete("/auth/account", requireAuth, async (req: Request, res: Response) 
   }
 });
 
+// Change password — requires current password to be supplied
+router.post("/auth/change-password", requireAuth, async (req: Request, res: Response) => {
+  if (isRateLimited(req, "change-password", 5, 15 * 60 * 1000)) {
+    return res.status(429).json({ error: "Too many password change attempts. Please try again shortly." });
+  }
+  const auth = (req as AuthenticatedRequest).auth;
+  const currentPassword = String(req.body?.currentPassword ?? "").trim();
+  const newPassword = String(req.body?.newPassword ?? "").trim();
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: "currentPassword and newPassword are required." });
+  }
+  if (newPassword.length < 12) {
+    return res.status(400).json({ error: "Password must be at least 12 characters." });
+  }
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ error: "New password must be different from current password." });
+  }
+
+  try {
+    const user = await findUserByEmail(auth.email);
+    if (!user) return res.status(404).json({ error: "User not found." });
+
+    const passwordOk = await verifyPassword(currentPassword, user.passwordHash);
+    if (!passwordOk) {
+      return res.status(401).json({ error: "Current password is incorrect." });
+    }
+
+    const nextHash = await hashPassword(newPassword);
+    await updateUserPassword(auth.email, nextHash);
+    return res.json({ ok: true, message: "Password changed successfully." });
+  } catch (error) {
+    console.error("[auth] change-password failed", error);
+    return res.status(500).json({ error: "Unable to change password." });
+  }
+});
+
 // Refresh a valid (not-expired) token — returns a new token with a fresh expiry
 router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) => {
   const auth = (req as AuthenticatedRequest).auth;
@@ -366,7 +404,7 @@ router.post("/auth/forgot-password", async (req, res) => {
     const user = await findUserByIdentifier(normalizedIdentifier, normalizedPhone);
 
     if (user) {
-      const resetToken = makeResetToken(user.email);
+      const resetToken = makeResetToken();
       const resetLink = buildResetLink(resetToken);
       const resetCode = resetToken.slice(0, 8).toUpperCase();
       await createPasswordResetToken(resetToken, user.email, new Date(Date.now() + 1000 * 60 * 30));
@@ -428,8 +466,8 @@ router.post("/auth/reset-password", async (req, res) => {
   if (!token || !newPassword) {
     return res.status(400).json({ error: "Token and newPassword are required." });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  if (newPassword.length < 12) {
+    return res.status(400).json({ error: "Password must be at least 12 characters." });
   }
 
   try {

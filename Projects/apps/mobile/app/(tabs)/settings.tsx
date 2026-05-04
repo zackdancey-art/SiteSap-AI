@@ -205,11 +205,20 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Security</Text>
+          <View style={styles.sectionCard}>
+            <SettingRow icon="key-outline" label="Change Password" onPress={() => router.push("/change-password")} />
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
           <View style={styles.sectionCard}>
             <SettingRow icon="information-circle-outline" label="Version" value={versionLabel} />
             <View style={styles.divider} />
             <SettingRow icon="shield-checkmark-outline" label="Privacy Policy" onPress={() => router.push("/privacy-policy")} />
+            <View style={styles.divider} />
+            <SettingRow icon="document-text-outline" label="Terms of Service" onPress={() => router.push("/terms-of-service")} />
             <View style={styles.divider} />
             <SettingRow icon="help-circle-outline" label="Help & Support" onPress={() => router.push("/help-support")} />
           </View>

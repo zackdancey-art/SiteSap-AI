@@ -29,9 +29,12 @@
       ]
     ],
     "ios": {
+      "bundleIdentifier": "com.sitesnapai.app",
+      "buildNumber": "1",
+      "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true,
+          "NSAllowsArbitraryLoads": false,
           "NSExceptionDomains": {
             "localhost": {
               "NSThirdPartyExceptionAllowsInsecureHTTPLoads": true,
@@ -40,16 +43,27 @@
             }
           }
         },
-        "NSLocalNetworkUsageDescription": "This app needs local network access to communicate with the development API.",
-        "NSLocationWhenInUseUsageDescription": "SiteSnap uses your location to auto-fill weather conditions for site entries."
+        "NSLocalNetworkUsageDescription": "SiteSnap uses local network access to communicate with the site API server.",
+        "NSLocationWhenInUseUsageDescription": "SiteSnap uses your location to auto-fill weather conditions for site diary entries.",
+        "NSPhotoLibraryUsageDescription": "SiteSnap needs access to your photo library to attach site photos to diary entries.",
+        "NSPhotoLibraryAddUsageDescription": "SiteSnap saves captured site photos to your photo library.",
+        "NSCameraUsageDescription": "SiteSnap uses your camera to capture site photos for diary entries.",
+        "NSMicrophoneUsageDescription": "SiteSnap may use the microphone when recording video on site.",
+        "NSUserNotificationUsageDescription": "SiteSnap sends push notifications for diary approvals, new site entries, and safety alerts.",
+        "NSContactsUsageDescription": "SiteSnap may access contacts to help you add crew members to site records."
       }
     },
     "android": {
+      "package": "com.sitesnapai.app",
+      "versionCode": 1,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE"
+        "VIBRATE",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "CAMERA"
       ]
     },
     "extra": {}

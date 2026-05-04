@@ -49,3 +49,25 @@ jobs:
 
       - name: Lint mobile app
         run: pnpm run lint --filter ./apps/mobile
+
+      - name: Security audit — API
+        run: pnpm --filter ./services/api audit --audit-level=high
+        continue-on-error: false
+
+      - name: Security audit — mobile
+        run: pnpm --filter ./apps/mobile audit --audit-level=high
+        continue-on-error: false
+
+      - name: Security audit — supervisor-web
+        run: pnpm --filter ./apps/supervisor-web audit --audit-level=high
+        continue-on-error: false
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

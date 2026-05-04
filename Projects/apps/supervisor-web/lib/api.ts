@@ -3,7 +3,19 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
 export type User = { email: string; name: string; role: string };
 export type Site = { id: string; name: string; client: string; address: string; status: string; startDate?: string };
 export type Entry = { id: string; siteId: string; date: string; notes: string; weather?: string; crewCount?: string };
-export type Diary = { id: string; siteId: string; status: string; generatedAt: string; reportPeriod?: string; summary?: string };
+export type DiarySection = {
+  date?: string; weather?: string; crewCount?: string;
+  workCompleted?: string; safetyObservations?: string;
+  materialsUsed?: string; issues?: string; photoAnalysis?: string;
+};
+
+export type Diary = {
+  id: string; siteId: string; status: string; generatedAt: string;
+  reportPeriod?: string; summary?: string;
+  fullReport?: string; sections?: DiarySection[];
+  safetyChecklist?: string[];
+  signedBy?: string; signedAt?: string;
+};
 
 export interface BootstrapData {
   sites: Site[];
@@ -74,6 +86,18 @@ export async function login(email: string, password: string): Promise<{ token: s
 
 export async function fetchBootstrap(): Promise<BootstrapData> {
   return request<BootstrapData>("GET", "/api/projects/bootstrap");
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await request<{ ok: boolean }>("POST", "/api/auth/change-password", { currentPassword, newPassword });
+}
+
+export async function forgotPassword(identifier: string): Promise<void> {
+  await request<{ ok: boolean }>("POST", "/api/auth/forgot-password", { identifier, channel: "email" });
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await request<{ ok: boolean }>("POST", "/api/auth/reset-password", { token, newPassword });
 }
 
 export async function logout() {

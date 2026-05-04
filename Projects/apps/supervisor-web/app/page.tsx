@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { login, isAuthenticated } from "@/lib/api";
+import { analytics } from "@/lib/analytics";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,7 +23,9 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(email.trim().toLowerCase(), password);
+      const data = await login(email.trim().toLowerCase(), password);
+      analytics.identify(data.user.email, data.user.role);
+      analytics.loginSuccess(data.user.role);
       router.replace("/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Sign in failed.");
