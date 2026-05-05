@@ -525,6 +525,33 @@ export async function deleteUserAccount(email: string): Promise<void> {
   await getPgPool().query(`DELETE FROM auth_users WHERE email = $1`, [email]);
 }
 
+// In-memory revocation map for file-backed / dev mode (email → generation)
+const memoryTokenGenerations = new Map<string, number>();
+
+export async function getTokenGeneration(email: string): Promise<number> {
+  if (!useDatabase()) {
+    return memoryTokenGenerations.get(email) ?? 0;
+  }
+  const result = await getPgPool().query<{ token_generation: number }>(
+    `SELECT token_generation FROM auth_users WHERE email = $1`,
+    [email]
+  );
+  return result.rows[0]?.token_generation ?? 0;
+}
+
+export async function incrementTokenGeneration(email: string): Promise<number> {
+  if (!useDatabase()) {
+    const next = (memoryTokenGenerations.get(email) ?? 0) + 1;
+    memoryTokenGenerations.set(email, next);
+    return next;
+  }
+  const result = await getPgPool().query<{ token_generation: number }>(
+    `UPDATE auth_users SET token_generation = token_generation + 1 WHERE email = $1 RETURNING token_generation`,
+    [email]
+  );
+  return result.rows[0]?.token_generation ?? 1;
+}
+
 export async function resetAuthStoreForTests() {
   if (useDatabase()) {
     await getPgPool().query(`DELETE FROM auth_password_reset_tokens`);

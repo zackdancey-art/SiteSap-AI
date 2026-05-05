@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { SkeletonCard } from "@/components/Skeleton";
 import { fetchBootstrap, getSavedUser, isAuthenticated } from "@/lib/api";
 import type { BootstrapData, Site } from "@/lib/api";
 
@@ -89,7 +90,11 @@ export default function SitesPage() {
             />
           </div>
 
-          {loading && <p style={{ color: "var(--text-secondary)" }}>Loading sites…</p>}
+          {loading && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+              {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} rows={3} />)}
+            </div>
+          )}
 
           {/* Site cards grid */}
           {!loading && (

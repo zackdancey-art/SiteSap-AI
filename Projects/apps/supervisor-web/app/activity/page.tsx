@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { SkeletonTable } from "@/components/Skeleton";
 import { fetchBootstrap, getSavedUser, isAuthenticated } from "@/lib/api";
 import type { BootstrapData, Entry } from "@/lib/api";
 
@@ -88,7 +89,7 @@ export default function ActivityPage() {
             )}
           </div>
 
-          {loading && <p style={{ color: "var(--text-secondary)" }}>Loading activity…</p>}
+          {loading && <SkeletonTable rows={6} />}
 
           {!loading && grouped.length === 0 && (
             <div className="empty-state card" style={{ padding: 48, textAlign: "center" }}>

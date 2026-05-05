@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { SkeletonMetrics, SkeletonTable } from "@/components/Skeleton";
 import { fetchBootstrap, getSavedUser, isAuthenticated } from "@/lib/api";
 import type { BootstrapData, Site, Entry, Diary } from "@/lib/api";
 
@@ -113,7 +114,7 @@ export default function DashboardPage() {
           </div>
 
           {/* KPIs */}
-          {loading && <p style={{ color: "var(--text-secondary)" }}>Loading portfolio data…</p>}
+          {loading && <><SkeletonMetrics count={4} /><SkeletonTable rows={4} /></>}
           {error   && <p style={{ color: "var(--error)" }}>{error}</p>}
 
           {metrics && (

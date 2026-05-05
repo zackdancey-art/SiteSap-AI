@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
-import { getSavedUser, isAuthenticated, clearToken, changePassword } from "@/lib/api";
+import { getSavedUser, isAuthenticated, clearToken, changePassword, revokeAllSessions } from "@/lib/api";
 
 type NotifPrefs = {
   weeklyDigest: boolean;
@@ -139,10 +139,13 @@ export default function SettingsPage() {
 
   const handleSignOut = () => { clearToken(); router.replace("/"); };
 
-  const handleSignOutAll = () => {
-    if (confirm("This will sign you out on all devices. Continue?")) {
-      clearToken();
-      router.replace("/");
+  const handleSignOutAll = async () => {
+    if (!confirm("This will sign out all other devices. Your current session will remain active. Continue?")) return;
+    try {
+      await revokeAllSessions();
+      alert("All other sessions have been signed out.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to revoke sessions. Please try again.");
     }
   };
 
@@ -336,6 +339,9 @@ export default function SettingsPage() {
             </SettingRow>
             <SettingRow label="Privacy Policy" sub="How SiteSnap handles your data">
               <a href="/privacy" style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>View →</a>
+            </SettingRow>
+            <SettingRow label="Terms of Service" sub="Usage terms and conditions">
+              <a href="/terms" style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>View →</a>
             </SettingRow>
             <SettingRow label="Data retention" sub="Site diary entries and diaries are retained for 7 years in compliance with Australian WHS record-keeping requirements">
               <span style={{ fontSize: 12, color: "var(--text-tertiary)", maxWidth: 140, textAlign: "right" }}>7 years</span>

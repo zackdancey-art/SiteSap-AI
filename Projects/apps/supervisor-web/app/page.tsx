@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { login, isAuthenticated } from "@/lib/api";
 import { analytics } from "@/lib/analytics";
 
@@ -61,7 +62,12 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="field-label">Password</label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+              <label className="field-label" style={{ margin: 0 }}>Password</label>
+              <Link href="/forgot-password" style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, textDecoration: "none" }}>
+                Forgot password?
+              </Link>
+            </div>
             <input
               type="password"
               placeholder="Enter your password"

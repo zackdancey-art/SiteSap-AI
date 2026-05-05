@@ -11,6 +11,7 @@ import {
   getPasswordResetToken,
   getPendingRegistration,
   incrementPendingAttempts,
+  incrementTokenGeneration,
   purgeExpiredAuthRecords,
   upsertPendingRegistration,
   updateUserProfile,
@@ -158,13 +159,18 @@ async function initiateRegistration(req: Request, res: Response) {
     );
 
     const isDevFallback = warnings.length > 0;
+    const isTest = process.env.NODE_ENV === "test";
+    if (!isProd && isDevFallback) {
+      console.log(`[auth] DEV verification codes for ${email} — email: ${emailCode} | sms: ${smsCode}`);
+    }
     return res.status(200).json({
       ok: true,
       message: isDevFallback
-        ? "Dev mode: provider not configured, using local verification codes."
+        ? "Dev mode: provider not configured. Check server logs for verification codes."
         : "Verification codes sent to your email and phone.",
       warnings: isDevFallback ? warnings : undefined,
-      devCodes: !isProd && isDevFallback ? { emailCode, smsCode } : undefined,
+      // Expose codes in test mode only so integration tests can verify flows without real providers
+      devCodes: isTest && isDevFallback ? { emailCode, smsCode } : undefined,
       expiresInSeconds: Math.floor(verificationTtlMs / 1000),
     });
   } catch (error) {
@@ -368,6 +374,25 @@ router.post("/auth/change-password", requireAuth, async (req: Request, res: Resp
   }
 });
 
+// Revoke all sessions — increment generation so all existing tokens become invalid
+router.post("/auth/revoke-all", requireAuth, async (req: Request, res: Response) => {
+  if (isRateLimited(req, "revoke-all", 5, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: "Too many revocation requests." });
+  }
+  const auth = (req as AuthenticatedRequest).auth;
+  try {
+    const gen = await incrementTokenGeneration(auth.email);
+    const user = await findUserByEmail(auth.email);
+    const fullName = user?.fullName ?? auth.fullName;
+    const role = user?.role ?? auth.role;
+    const token = createAuthToken({ email: auth.email, fullName, role, gen });
+    return res.json({ ok: true, token, message: "All other sessions have been signed out." });
+  } catch (error) {
+    console.error("[auth] revoke-all failed", error);
+    return res.status(500).json({ error: "Failed to revoke sessions." });
+  }
+});
+
 // Refresh a valid (not-expired) token — returns a new token with a fresh expiry
 router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) => {
   const auth = (req as AuthenticatedRequest).auth;
@@ -423,22 +448,12 @@ router.post("/auth/forgot-password", async (req, res) => {
           if (isProd) {
             return res.status(502).json({ error: delivery.error || "Failed to send reset instructions." });
           }
-          return res.json({
-            ok: true,
-            message: "Dev mode: provider not configured, using local reset token.",
-            devResetToken: !isProd ? resetToken : undefined,
-            devResetCode: !isProd ? resetCode : undefined,
-            devResetLink: !isProd ? resetLink : undefined,
-          });
+          console.log(`[auth] DEV reset for ${user.email} — token: ${resetToken} | code: ${resetCode} | link: ${resetLink}`);
+          return res.json({ ok: true, message: "Dev mode: provider not configured. Check server logs for reset details." });
         }
       } else {
-        return res.json({
-          ok: true,
-          message: "Dev mode: provider not configured, using local reset token.",
-          devResetToken: !isProd ? resetToken : undefined,
-          devResetCode: !isProd ? resetCode : undefined,
-          devResetLink: !isProd ? resetLink : undefined,
-        });
+        console.log(`[auth] DEV reset for ${user.email} — token: ${resetToken} | code: ${resetCode} | link: ${resetLink}`);
+        return res.json({ ok: true, message: "Dev mode: provider not configured. Check server logs for reset details." });
       }
     }
 

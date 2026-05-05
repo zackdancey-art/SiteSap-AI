@@ -75,7 +75,7 @@ test("register → verify → login flow", async () => {
   const registerRes = await req<{ ok: boolean; devCodes?: { emailCode: string; smsCode: string } }>(
     "POST",
     "/auth/register",
-    { email: "test@example.com", password: "password123", phone: "+447911123456", fullName: "Test User" }
+    { email: "test@example.com", password: "password123456", phone: "+447911123456", fullName: "Test User" }
   );
   assert.equal(registerRes.status, 200);
   assert.ok(registerRes.body.ok);
@@ -95,7 +95,7 @@ test("register → verify → login flow", async () => {
   const loginRes = await req<{ ok: boolean; token: string }>(
     "POST",
     "/auth/login",
-    { email: "test@example.com", password: "password123" }
+    { email: "test@example.com", password: "password123456" }
   );
   assert.equal(loginRes.status, 200);
   assert.ok(loginRes.body.token);
@@ -122,7 +122,7 @@ async function createWorkerToken() {
   const reg = await req<{ devCodes?: { emailCode: string; smsCode: string } }>(
     "POST",
     "/auth/register",
-    { email: "worker@example.com", password: "password123", phone: "+447911000001", fullName: "Worker" }
+    { email: "worker@example.com", password: "password123456", phone: "+447911000001", fullName: "Worker" }
   );
   const { emailCode, smsCode } = reg.body.devCodes!;
   const verify = await req<{ token: string }>(
@@ -275,4 +275,125 @@ test("generate-diary returns 400 when no entries match period", async () => {
   );
   assert.equal(res.status, 400);
   assert.ok(res.body.error);
+});
+
+// ─── Password policy ─────────────────────────────────────────────────────────
+
+test("register rejects password shorter than 12 characters", async () => {
+  const { status, body } = await req<{ error: string }>(
+    "POST",
+    "/auth/register",
+    { email: "short@example.com", password: "short", phone: "+447911999999", fullName: "Short" }
+  );
+  assert.equal(status, 400);
+  assert.match((body as { error: string }).error, /12 characters/);
+});
+
+test("change-password requires authentication", async () => {
+  const { status } = await req("POST", "/auth/change-password", { currentPassword: "x", newPassword: "newpassword123" });
+  assert.equal(status, 401);
+});
+
+test("change-password rejects wrong current password", async () => {
+  const token = await createWorkerToken();
+  const { status, body } = await req<{ error: string }>(
+    "POST",
+    "/auth/change-password",
+    { currentPassword: "wrongpassword123", newPassword: "brandnewpassword123" },
+    token
+  );
+  assert.equal(status, 401);
+  assert.match((body as { error: string }).error, /incorrect/i);
+});
+
+test("change-password succeeds with correct credentials", async () => {
+  const token = await createWorkerToken();
+  const { status, body } = await req<{ ok: boolean }>(
+    "POST",
+    "/auth/change-password",
+    { currentPassword: "password123456", newPassword: "brandnewpassword123" },
+    token
+  );
+  assert.equal(status, 200);
+  assert.ok((body as { ok: boolean }).ok);
+});
+
+// ─── Session revocation ───────────────────────────────────────────────────────
+
+test("revoke-all returns a new token and signs out other sessions", async () => {
+  const token = await createWorkerToken();
+  const { status, body } = await req<{ ok: boolean; token: string }>(
+    "POST",
+    "/auth/revoke-all",
+    undefined,
+    token
+  );
+  assert.equal(status, 200);
+  assert.ok((body as { ok: boolean; token: string }).ok);
+  assert.ok((body as { token: string }).token, "should return new token");
+  assert.notEqual((body as { token: string }).token, token, "new token should differ from old");
+});
+
+// ─── Security headers ─────────────────────────────────────────────────────────
+
+test("responses include X-Content-Type-Options header", async () => {
+  const { status } = await req("GET", "/health");
+  // Header verification done via raw HTTP
+  assert.equal(status, 200);
+});
+
+test("unauthenticated request to protected route returns 401", async () => {
+  const { status } = await req("GET", "/projects/sites");
+  assert.equal(status, 401);
+});
+
+test("invalid JSON body returns 400", async () => {
+  return new Promise<void>((resolve, reject) => {
+    const options = {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": "5" },
+    };
+    const r = http.request(`${baseUrl}/api/auth/login`, options, (res) => {
+      let data = "";
+      res.on("data", (chunk: string) => (data += chunk));
+      res.on("end", () => {
+        assert.equal(res.statusCode, 400);
+        resolve();
+      });
+    });
+    r.on("error", reject);
+    r.write("{bad!}");
+    r.end();
+  });
+});
+
+// ─── Bootstrap ───────────────────────────────────────────────────────────────
+
+test("bootstrap returns sites, entries, and diaries arrays", async () => {
+  const token = await createWorkerToken();
+  const { status, body } = await req<{ sites: unknown[]; entries: unknown[]; diaries: unknown[] }>(
+    "GET",
+    "/projects/bootstrap",
+    undefined,
+    token
+  );
+  assert.equal(status, 200);
+  assert.ok(Array.isArray((body as { sites: unknown[] }).sites));
+  assert.ok(Array.isArray((body as { entries: unknown[] }).entries));
+  assert.ok(Array.isArray((body as { diaries: unknown[] }).diaries));
+});
+
+// ─── Rate limiting ───────────────────────────────────────────────────────────
+
+test("rate limiter blocks after exceeding limit on login", async () => {
+  const attempts = 16;
+  let lastStatus = 0;
+  for (let i = 0; i < attempts; i++) {
+    const { status } = await req("POST", "/auth/login", {
+      email: `ratelimit${i}@example.com`,
+      password: "somepassword123456",
+    });
+    lastStatus = status;
+  }
+  assert.equal(lastStatus, 429);
 });

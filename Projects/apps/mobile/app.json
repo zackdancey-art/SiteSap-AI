@@ -10,8 +10,18 @@
       "web"
     ],
     "jsEngine": "hermes",
+    "updates": {
+      "url": "https://u.expo.dev/sitesnap-app-id",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "plugins": [
       "expo-router",
+      "expo-updates",
       [
         "expo-location",
         {

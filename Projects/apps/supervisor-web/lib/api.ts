@@ -92,6 +92,12 @@ export async function changePassword(currentPassword: string, newPassword: strin
   await request<{ ok: boolean }>("POST", "/api/auth/change-password", { currentPassword, newPassword });
 }
 
+export async function revokeAllSessions(): Promise<string> {
+  const data = await request<{ token: string }>("POST", "/api/auth/revoke-all");
+  saveToken(data.token);
+  return data.token;
+}
+
 export async function forgotPassword(identifier: string): Promise<void> {
   await request<{ ok: boolean }>("POST", "/api/auth/forgot-password", { identifier, channel: "email" });
 }

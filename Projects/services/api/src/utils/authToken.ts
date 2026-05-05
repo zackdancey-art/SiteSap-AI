@@ -8,6 +8,7 @@ export type AuthClaims = {
   role: UserRole;
   iat: number;
   exp: number;
+  gen?: number;
 };
 
 const TOKEN_TTL_SECONDS = Number(process.env.AUTH_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 7);
@@ -41,7 +42,7 @@ function signPayload(payloadBase64: string) {
   return crypto.createHmac("sha256", getTokenSecret()).update(payloadBase64).digest("base64url");
 }
 
-export function createAuthToken(input: { email: string; fullName: string; role: UserRole }) {
+export function createAuthToken(input: { email: string; fullName: string; role: UserRole; gen?: number }) {
   const now = Math.floor(Date.now() / 1000);
   const claims: AuthClaims = {
     email: input.email,
@@ -49,6 +50,7 @@ export function createAuthToken(input: { email: string; fullName: string; role: 
     role: input.role,
     iat: now,
     exp: now + TOKEN_TTL_SECONDS,
+    gen: input.gen ?? 0,
   };
   const payload = base64UrlEncode(JSON.stringify(claims));
   const signature = signPayload(payload);

@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import { fetchBootstrap, getSavedUser, isAuthenticated } from "@/lib/api";
 import type { BootstrapData, Diary, Site } from "@/lib/api";
 import { analytics } from "@/lib/analytics";
+import { SkeletonTable } from "@/components/Skeleton";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -396,7 +397,7 @@ export default function ReportsPage() {
               <span className="card-count">{visibleDiaries.length}</span>
             </div>
             {loading ? (
-              <div style={{ padding: 24, color: "var(--text-secondary)" }}>Loading reports…</div>
+              <SkeletonTable rows={5} />
             ) : visibleDiaries.length === 0 ? (
               <div className="empty-state"><p>No diaries match your filters.</p></div>
             ) : (

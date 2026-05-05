@@ -7,8 +7,9 @@
     "development": {
       "distribution": "internal",
       "developmentClient": true,
+      "channel": "development",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "http://localhost:4000"
+        "EXPO_PUBLIC_API_URL": "http://localhost:4001"
       },
       "ios": {
         "simulator": true
@@ -21,7 +22,7 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://api-staging.yourdomain.com"
+        "EXPO_PUBLIC_API_URL": "https://api-staging.getsitesnapai.com"
       },
       "ios": {
         "enterpriseProvisioning": "adhoc"
@@ -34,7 +35,7 @@
       "distribution": "store",
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://api.yourdomain.com"
+        "EXPO_PUBLIC_API_URL": "https://api.getsitesnapai.com"
       },
       "ios": {
         "autoIncrement": true
@@ -44,6 +45,9 @@
         "autoIncrement": true
       }
     }
+  },
+  "update": {
+    "channel": "production"
   },
   "submit": {
     "production": {

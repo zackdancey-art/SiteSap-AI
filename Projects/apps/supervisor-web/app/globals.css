@@ -336,6 +336,26 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .settings-sub   { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 .settings-row input { max-width: 320px; }
 
+/* ── Skeleton loader ── */
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-secondary) 25%, #e8ecf0 50%, var(--surface-secondary) 75%);
+  background-size: 800px 100%;
+  animation: skeleton-shimmer 1.4s infinite linear;
+  border-radius: 8px;
+}
+.skeleton-text  { height: 14px; width: 100%; }
+.skeleton-title { height: 20px; width: 60%; }
+.skeleton-badge { height: 22px; width: 80px; border-radius: 20px; }
+.skeleton-card  {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
 /* ── Responsive ── */
 @media (max-width: 900px) {
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
