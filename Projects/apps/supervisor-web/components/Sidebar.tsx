@@ -8,6 +8,7 @@ import { logout } from "@/lib/api";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: GridIcon },
   { href: "/sites",     label: "Sites",     icon: BuildingIcon },
+  { href: "/locations", label: "Live Map",  icon: MapPinIcon },
   { href: "/reports",   label: "Reports",   icon: ReportIcon },
   { href: "/activity",  label: "Activity",  icon: ActivityIcon },
   { href: "/settings",  label: "Settings",  icon: GearIcon },
@@ -60,6 +61,15 @@ export default function Sidebar({ userName }: { userName: string }) {
         </button>
       </div>
     </aside>
+  );
+}
+
+function MapPinIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+      <circle cx="12" cy="10" r="3"/>
+    </svg>
   );
 }
 

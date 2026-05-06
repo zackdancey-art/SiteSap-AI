@@ -10,6 +10,7 @@ import { incidentsRouter } from "./incidents";
 import { inspectionsRouter } from "./inspections";
 import { deliveriesRouter } from "./deliveries";
 import { templatesRouter } from "./templates";
+import { locationRouter } from "./location";
 
 const apiRouter: Router = Router();
 
@@ -24,5 +25,6 @@ apiRouter.use(incidentsRouter);
 apiRouter.use(inspectionsRouter);
 apiRouter.use(deliveriesRouter);
 apiRouter.use(templatesRouter);
+apiRouter.use(locationRouter);
 
 export { apiRouter };

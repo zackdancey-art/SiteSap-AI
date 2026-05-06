@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export const metadata = { title: "Terms of Service — SiteSnap AI" };
 
-const LAST_UPDATED = "5 May 2026";
+const LAST_UPDATED = "6 May 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -65,12 +65,12 @@ export default function TermsPage() {
             <p>SiteSnap may offer free and paid tiers. Subscriptions are billed in advance in Australian Dollars (AUD). Refunds are provided at our discretion in accordance with Australian Consumer Law. We reserve the right to change pricing with 30 days' notice.</p>
           </Section>
 
-          <Section title="8. Work Health & Safety Disclaimer">
-            <p>SiteSnap is a record-keeping tool and is not a substitute for professional WHS advice or compliance assessments. You must ensure all records comply with applicable Australian WHS legislation. AI-generated safety checklists do not constitute professional WHS advice. SiteSnap accepts no liability for WHS incidents or fines arising from use of the Service.</p>
+          <Section title="8. Work Health &amp; Safety Disclaimer">
+            <p>SiteSnap is a record-keeping tool and is not a substitute for professional WHS or H&amp;S advice or compliance assessments. You must ensure all records comply with applicable legislation — including the Model WHS Act (Australia), Work Health and Safety Act 2011 in each state/territory, and the New Zealand Health and Safety at Work Act 2015 (HSWA). AI-generated safety checklists do not constitute professional WHS/H&amp;S advice. SiteSnap accepts no liability for WHS/HSWA incidents, breaches, or fines arising from use of the Service.</p>
           </Section>
 
           <Section title="9. Limitation of Liability">
-            <p>To the maximum extent permitted by Australian law, SiteSnap provides the Service "as is" without warranty. We are not liable for indirect, incidental, or consequential loss. Our total liability shall not exceed fees you paid in the preceding 12 months. Nothing limits your rights under the Australian Consumer Law.</p>
+            <p>To the maximum extent permitted by applicable law, SiteSnap provides the Service "as is" without warranty. We are not liable for indirect, incidental, or consequential loss. Our total liability shall not exceed fees you paid in the preceding 12 months. Nothing limits your rights under the Australian Consumer Law, or the New Zealand Consumer Guarantees Act 1993 or Fair Trading Act 1986.</p>
           </Section>
 
           <Section title="10. Termination">
@@ -78,7 +78,7 @@ export default function TermsPage() {
           </Section>
 
           <Section title="11. Governing Law">
-            <p>These Terms are governed by the laws of New South Wales, Australia. Disputes shall be resolved in the courts of New South Wales.</p>
+            <p>These Terms are governed by the laws of New South Wales, Australia. Disputes shall be resolved in the courts of New South Wales. For users accessing the Service from New Zealand, mandatory consumer and privacy protections under New Zealand law apply and are not excluded by this clause.</p>
           </Section>
 
           <Section title="12. Changes">

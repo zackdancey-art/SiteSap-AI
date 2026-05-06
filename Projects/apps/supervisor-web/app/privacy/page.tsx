@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export const metadata = { title: "Privacy Policy — SiteSnap AI" };
 
-const LAST_UPDATED = "5 May 2026";
+const LAST_UPDATED = "6 May 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -24,7 +24,7 @@ export default function PrivacyPage() {
           <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Privacy Policy</h1>
           <p style={{ opacity: 0.7, fontSize: 13 }}>Last updated: {LAST_UPDATED}</p>
           <p style={{ marginTop: 16, opacity: 0.85, lineHeight: 1.7, fontSize: 14 }}>
-            SiteSnap AI Pty Ltd is committed to protecting your personal information in accordance with the Australian Privacy Act 1988 (Cth) and the Australian Privacy Principles (APPs).
+            SiteSnap AI Pty Ltd is committed to protecting your personal information in accordance with the Australian Privacy Act 1988 (Cth) and the Australian Privacy Principles (APPs), and the New Zealand Privacy Act 2020 and its Information Privacy Principles (IPPs).
           </p>
         </div>
 
@@ -49,7 +49,7 @@ export default function PrivacyPage() {
               <li>Sending verification codes, password resets, and notifications</li>
               <li>Analysing photos and notes to generate AI diary content (via OpenAI)</li>
               <li>Improving the product through aggregate, anonymised analytics</li>
-              <li>Complying with Australian WHS record-keeping requirements</li>
+              <li>Complying with Australian WHS and New Zealand HSWA record-keeping requirements</li>
             </ul>
           </Section>
 
@@ -66,11 +66,11 @@ export default function PrivacyPage() {
           </Section>
 
           <Section title="5. Data Retention">
-            <p>We retain data as long as your account is active or as required by law. Site diary records may be subject to a 7-year minimum under Australian WHS legislation. Deleted account data is permanently purged within 30 days.</p>
+            <p>We retain data as long as your account is active or as required by law. Site diary records may be subject to a minimum 7-year retention under Australian WHS legislation and the New Zealand Health and Safety at Work Act 2015 (HSWA). Deleted account data is permanently purged within 30 days.</p>
           </Section>
 
           <Section title="6. Your Rights">
-            <p style={{ marginBottom: 8 }}>Under the Australian Privacy Act and, where applicable, the GDPR, you have the right to:</p>
+            <p style={{ marginBottom: 8 }}>Under the Australian Privacy Act 1988, the New Zealand Privacy Act 2020, and where applicable the GDPR, you have the right to:</p>
             <ul style={{ paddingLeft: 20, display: "flex", flexDirection: "column", gap: 6 }}>
               <li><strong>Access</strong> — request a copy of personal information we hold about you</li>
               <li><strong>Correction</strong> — ask us to correct inaccurate information</li>
@@ -78,14 +78,14 @@ export default function PrivacyPage() {
               <li><strong>Portability</strong> — request a machine-readable data export</li>
               <li><strong>Opt-out</strong> — withdraw consent for non-essential communications via Settings &gt; Notifications</li>
             </ul>
-            <p style={{ marginTop: 8 }}>Email <a href="mailto:support@getsitesnapai.com" style={{ color: "#E8731A" }}>support@getsitesnapai.com</a> with subject "Privacy Request". We respond within 30 days.</p>
+            <p style={{ marginTop: 8 }}>Email <a href="mailto:support@getsitesnapai.com" style={{ color: "#E8731A" }}>support@getsitesnapai.com</a> with subject "Privacy Request". Australian users: we respond within 30 days. New Zealand users: we respond within 20 working days as required by the NZ Privacy Act 2020.</p>
           </Section>
 
           <Section title="7. Security">
-            <p>Passwords are hashed with scrypt. API communications use HTTPS with HSTS. Auth tokens use HMAC-SHA256. Despite these measures, no internet transmission is completely secure. We will notify affected users of any data breach as required by Australian law.</p>
+            <p>Passwords are hashed with scrypt. API communications use HTTPS with HSTS. Auth tokens use HMAC-SHA256. Despite these measures, no internet transmission is completely secure. We will notify affected users and relevant authorities of any data breach as required by Australian and New Zealand law (including notifiable privacy breach obligations under both Acts).</p>
           </Section>
 
-          <Section title="8. Children's Privacy">
+          <Section title="8. Children&apos;s Privacy">
             <p>SiteSnap is intended for construction professionals aged 18 and over. We do not knowingly collect information from minors.</p>
           </Section>
 
@@ -95,7 +95,8 @@ export default function PrivacyPage() {
 
           <Section title="10. Contact & Complaints">
             <p>Privacy Officer — <a href="mailto:support@getsitesnapai.com" style={{ color: "#E8731A" }}>support@getsitesnapai.com</a></p>
-            <p style={{ marginTop: 8 }}>Complaints unresolved by us may be lodged with the <a href="https://www.oaic.gov.au" target="_blank" rel="noopener noreferrer" style={{ color: "#E8731A" }}>Office of the Australian Information Commissioner (OAIC)</a>.</p>
+            <p style={{ marginTop: 8 }}><strong>Australia:</strong> Complaints unresolved by us may be lodged with the <a href="https://www.oaic.gov.au" target="_blank" rel="noopener noreferrer" style={{ color: "#E8731A" }}>Office of the Australian Information Commissioner (OAIC)</a> at oaic.gov.au.</p>
+            <p style={{ marginTop: 8 }}><strong>New Zealand:</strong> You may contact the <a href="https://www.privacy.org.nz" target="_blank" rel="noopener noreferrer" style={{ color: "#E8731A" }}>Office of the Privacy Commissioner (OPC)</a> at privacy.org.nz or 0800 803 909.</p>
           </Section>
         </div>
       </div>

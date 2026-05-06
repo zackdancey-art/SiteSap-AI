@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,11 @@ import Constants from "expo-constants";
 import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
 import { DEFAULT_PROFILE, getLocalProfile } from "@/lib/profile-store";
+import {
+  isLocationTrackingEnabled,
+  requestPermissionAndStart,
+  setLocationTrackingEnabled,
+} from "@/lib/location-service";
 
 interface SettingRowProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -67,6 +72,10 @@ export default function SettingsScreen() {
   const [notifications, setNotifications] = useState(true);
   const [autoSave, setAutoSave] = useState(true);
   const [locationTracking, setLocationTracking] = useState(false);
+
+  useEffect(() => {
+    isLocationTrackingEnabled().then(setLocationTracking).catch(() => {});
+  }, []);
   const [deletingAccount, setDeletingAccount] = useState(false);
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -188,7 +197,19 @@ export default function SettingsScreen() {
               label="Location Tracking"
               toggle
               toggleValue={locationTracking}
-              onToggle={setLocationTracking}
+              onToggle={async (val) => {
+                if (val) {
+                  const granted = await requestPermissionAndStart();
+                  if (!granted) {
+                    Alert.alert("Permission required", "Please allow location access in your device settings to enable tracking.");
+                    return;
+                  }
+                  setLocationTracking(true);
+                } else {
+                  await setLocationTrackingEnabled(false);
+                  setLocationTracking(false);
+                }
+              }}
             />
           </View>
         </View>

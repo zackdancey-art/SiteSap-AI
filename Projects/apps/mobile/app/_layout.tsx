@@ -9,6 +9,7 @@ import { queryClient } from "@/lib/query-client";
 import { AuthProvider } from "@/lib/auth-context";
 import { DataProvider } from "@/lib/data-context";
 import { logResolvedApiBaseUrlOnce } from "@/lib/api-base-url";
+import { resumeTrackingIfEnabled } from "@/lib/location-service";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
@@ -156,6 +157,7 @@ function RootLayoutNav() {
 function RootLayout() {
   useEffect(() => {
     logResolvedApiBaseUrlOnce();
+    void resumeTrackingIfEnabled();
     SplashScreen.hideAsync();
     AsyncStorage.getItem(ONBOARDING_COMPLETE_KEY).then((val) => {
       if (!val) router.replace("/onboarding");

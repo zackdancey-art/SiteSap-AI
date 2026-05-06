@@ -15,14 +15,14 @@ const cspDirectives = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // unsafe-eval needed for Next.js dev HMR; tighten in prod if possible
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  `connect-src 'self' ${apiOrigin(API_URL)}`,
+  // img-src already defined above with tile server
+  `connect-src 'self' ${apiOrigin(API_URL)} https://*.tile.openstreetmap.org`,
+  "img-src 'self' data: blob: https://*.tile.openstreetmap.org",
   "font-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  "upgrade-insecure-requests",
 ].join("; ");
 
 /** @type {import('next').NextConfig} */

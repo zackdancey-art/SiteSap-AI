@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import { SkeletonCard } from "@/components/Skeleton";
 import { fetchBootstrap, getSavedUser, isAuthenticated } from "@/lib/api";
@@ -108,7 +109,8 @@ export default function SitesPage() {
                 const approved = diaries.filter((d) => d.status === "approved").length;
                 const rate = diaries.length > 0 ? Math.round((approved / diaries.length) * 100) : 0;
                 return (
-                  <div key={site.id} className="card" style={{ display: "flex", flexDirection: "column" }}>
+                  <Link key={site.id} href={`/sites/${site.id}`} style={{ textDecoration: "none" }}>
+                  <div className="card" style={{ display: "flex", flexDirection: "column", cursor: "pointer", transition: "box-shadow 0.15s" }}>
                     <div style={{ padding: "16px 18px", flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
                         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, flex: 1 }}>{site.name}</h3>
@@ -151,11 +153,13 @@ export default function SitesPage() {
                       )}
                     </div>
                     {site.startDate && (
-                      <div style={{ padding: "10px 18px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-tertiary)" }}>
-                        Started {new Date(site.startDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+                      <div style={{ padding: "10px 18px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-tertiary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>Started {new Date(site.startDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</span>
+                        <span style={{ color: "var(--accent)", fontWeight: 600, fontSize: 12 }}>View details →</span>
                       </div>
                     )}
                   </div>
+                  </Link>
                 );
               })}
             </div>

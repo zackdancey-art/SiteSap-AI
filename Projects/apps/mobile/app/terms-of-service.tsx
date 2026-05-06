@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 
-const LAST_UPDATED = "5 May 2026";
+const LAST_UPDATED = "6 May 2026";
 
 export default function TermsOfServiceScreen() {
   const insets = useSafeAreaInsets();
@@ -64,12 +64,12 @@ export default function TermsOfServiceScreen() {
 
         <TermsCard
           title="8. Work Health & Safety Disclaimer"
-          body={"SiteSnap is a record-keeping and reporting tool. It is not a substitute for professional Work Health and Safety (WHS) advice, site inspections, or compliance assessments.\n\nYou must:\n\n• Ensure all diary entries and safety records comply with applicable Australian WHS legislation and your organisation's safety management system\n• Not rely solely on AI-generated safety checklists or observations to fulfil your WHS obligations\n• Consult a qualified WHS professional for specific compliance advice\n\nSiteSnap accepts no liability for WHS incidents, breaches, or fines arising from use of the Service."}
+          body={"SiteSnap is a record-keeping and reporting tool. It is not a substitute for professional Work Health and Safety advice, site inspections, or compliance assessments.\n\nYou must:\n\n• Ensure all diary entries and safety records comply with applicable Work Health and Safety legislation — including the Model WHS Act (Australia), Work Health and Safety Act 2011 (Qld/NSW/ACT/SA/Tas/NT), and the Health and Safety at Work Act 2015 (New Zealand)\n• Not rely solely on AI-generated safety checklists or observations to fulfil your WHS/HSWA obligations\n• Consult a qualified WHS/H&S professional for specific compliance advice\n\nSiteSnap accepts no liability for WHS or HSWA incidents, breaches, or fines arising from use of the Service."}
         />
 
         <TermsCard
           title="9. Limitation of Liability"
-          body={"To the maximum extent permitted by Australian law:\n\n• SiteSnap provides the Service 'as is' without warranty of any kind\n• We are not liable for any indirect, incidental, special, or consequential loss arising from your use of the Service\n• Our total liability to you for any claim shall not exceed the fees you paid to us in the 12 months preceding the claim\n\nNothing in these terms limits any rights you have under the Australian Consumer Law."}
+          body={"To the maximum extent permitted by applicable law:\n\n• SiteSnap provides the Service 'as is' without warranty of any kind\n• We are not liable for any indirect, incidental, special, or consequential loss arising from your use of the Service\n• Our total liability to you for any claim shall not exceed the fees you paid to us in the 12 months preceding the claim\n\nNothing in these terms limits any rights you have under the Australian Consumer Law, or the New Zealand Consumer Guarantees Act 1993 or Fair Trading Act 1986."}
         />
 
         <TermsCard
@@ -79,7 +79,7 @@ export default function TermsOfServiceScreen() {
 
         <TermsCard
           title="11. Governing Law"
-          body="These Terms are governed by the laws of New South Wales, Australia. Any disputes arising from these Terms shall be resolved in the courts of New South Wales."
+          body={"These Terms are governed by the laws of New South Wales, Australia. Any disputes arising from these Terms shall be resolved in the courts of New South Wales.\n\nFor users accessing the Service from New Zealand: where mandatory provisions of New Zealand law apply (including the Consumer Guarantees Act 1993, Fair Trading Act 1986, and Privacy Act 2020), those provisions are not excluded by this clause. New Zealand users may elect to resolve disputes under New Zealand jurisdiction if required by applicable law."}
         />
 
         <TermsCard

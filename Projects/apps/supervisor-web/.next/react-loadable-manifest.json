@@ -1,1 +1,21 @@
-{}
+{
+  "app/locations/page.tsx -> @/components/WorkerMap": {
+    "id": "app/locations/page.tsx -> @/components/WorkerMap",
+    "files": [
+      "static/chunks/_app-pages-browser_components_WorkerMap_tsx.js"
+    ]
+  },
+  "components/WorkerMap.tsx -> leaflet": {
+    "id": "components/WorkerMap.tsx -> leaflet",
+    "files": [
+      "static/chunks/_app-pages-browser_node_modules_pnpm_leaflet_1_9_4_node_modules_leaflet_dist_leaflet-src_js.js"
+    ]
+  },
+  "components/WorkerMap.tsx -> leaflet/dist/leaflet.css": {
+    "id": "components/WorkerMap.tsx -> leaflet/dist/leaflet.css",
+    "files": [
+      "static/css/_app-pages-browser_node_modules_pnpm_leaflet_1_9_4_node_modules_leaflet_dist_leaflet_css.css",
+      "static/chunks/_app-pages-browser_node_modules_pnpm_leaflet_1_9_4_node_modules_leaflet_dist_leaflet_css.js"
+    ]
+  }
+}

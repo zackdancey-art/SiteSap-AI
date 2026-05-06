@@ -9,6 +9,9 @@ export type TimecardRecord = {
   entryId: string | null;
   workerName: string;
   date: string;
+  startTime?: string;
+  endTime?: string;
+  breakMinutes?: number;
   hoursRegular: number;
   hoursOvertime: number;
   trade: string;
@@ -32,13 +35,18 @@ const memoryTimecards = new Map<string, TimecardRecord>();
 
 function mapRow(row: {
   id: string; owner_email: string; site_id: string; entry_id: string | null;
-  worker_name: string; date: string; hours_regular: number; hours_overtime: number;
+  worker_name: string; date: string;
+  start_time?: string | null; end_time?: string | null; break_minutes?: number | null;
+  hours_regular: number; hours_overtime: number;
   trade: string | null; notes: string | null; created_at: Date;
   updated_at?: Date | null; deleted_at?: Date | null;
 }): TimecardRecord {
   return {
     id: row.id, ownerEmail: row.owner_email, siteId: row.site_id, entryId: row.entry_id,
     workerName: row.worker_name, date: row.date,
+    startTime: row.start_time ?? undefined,
+    endTime: row.end_time ?? undefined,
+    breakMinutes: row.break_minutes ?? undefined,
     hoursRegular: Number(row.hours_regular), hoursOvertime: Number(row.hours_overtime),
     trade: row.trade || "", notes: row.notes || "",
     createdAt: row.created_at.toISOString(),
@@ -70,9 +78,10 @@ export async function createTimecard(actor: Actor, payload: Omit<TimecardRecord,
   const record: TimecardRecord = { id: uuidv4(), ownerEmail: actor.email, createdAt: new Date().toISOString(), ...payload };
   if (!useDatabase()) { memoryTimecards.set(record.id, record); return record; }
   const result = await getPgPool().query(
-    `INSERT INTO crew_timecards (id,owner_email,site_id,entry_id,worker_name,date,hours_regular,hours_overtime,trade,notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    `INSERT INTO crew_timecards (id,owner_email,site_id,entry_id,worker_name,date,start_time,end_time,break_minutes,hours_regular,hours_overtime,trade,notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
     [record.id, actor.email, record.siteId, record.entryId ?? null, record.workerName, record.date,
+     record.startTime ?? null, record.endTime ?? null, record.breakMinutes ?? null,
      record.hoursRegular, record.hoursOvertime, record.trade || null, record.notes || null]
   );
   return mapRow(result.rows[0]);

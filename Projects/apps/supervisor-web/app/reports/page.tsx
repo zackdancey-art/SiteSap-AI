@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
-import { fetchBootstrap, getSavedUser, isAuthenticated } from "@/lib/api";
+import EmailServicePicker from "@/components/EmailServicePicker";
+import { fetchBootstrap, getSavedUser, isAuthenticated, generateDiary, approveDiary } from "@/lib/api";
 import type { BootstrapData, Diary, Site } from "@/lib/api";
 import { analytics } from "@/lib/analytics";
 import { SkeletonTable } from "@/components/Skeleton";
@@ -165,8 +167,13 @@ function DiaryModal({ diary, site, orgName, onClose }: {
   const filename = `sitediary-${site.name.replace(/\s+/g, "-").toLowerCase()}-${diary.generatedAt.slice(0, 10)}`;
   const html = buildHtml(diary, site, orgName);
   const sections = diary.sections ?? [];
+  const [showEmailPicker, setShowEmailPicker] = useState(false);
+
+  const emailSubject = `Site Diary — ${site.name} (${diary.reportPeriod ?? "Daily"} — ${fmtDateShort(diary.generatedAt)})`;
+  const emailBody = `Site Diary Report\n\nSite: ${site.name}\nClient: ${site.client ?? "—"}\nPeriod: ${diary.reportPeriod ?? "Daily"}\nGenerated: ${fmtDate(diary.generatedAt)}\nStatus: ${diary.status === "approved" ? "Approved" : "Pending Review"}\n\n${diary.summary ?? "No summary available."}\n\n---\nSent from SiteSnap AI`;
 
   return (
+    <>
     <div style={{
       position: "fixed", inset: 0, zIndex: 1000,
       background: "rgba(15,43,70,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "flex-end",
@@ -194,7 +201,7 @@ function DiaryModal({ diary, site, orgName, onClose }: {
               { label: "🖨️ Print / PDF", action: () => { analytics.reportExported("pdf", diary.siteId); exportPdf(html, filename); } },
               { label: "📄 Word (.doc)", action: () => { analytics.reportExported("word", diary.siteId); exportWord(html, filename); } },
               { label: "🌐 HTML file",   action: () => { analytics.reportExported("html", diary.siteId); exportHtml(html, filename); } },
-              { label: "📧 Email",       action: () => { analytics.reportExported("email", diary.siteId); emailDiary(diary, site); } },
+              { label: "📧 Email",       action: () => { analytics.reportExported("email", diary.siteId); setShowEmailPicker(true); } },
             ].map(({ label, action }) => (
               <button key={label} onClick={action} style={{
                 background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
@@ -294,25 +301,81 @@ function DiaryModal({ diary, site, orgName, onClose }: {
         </div>
       </div>
     </div>
+
+    {showEmailPicker && (
+      <EmailServicePicker
+        subject={emailSubject}
+        body={emailBody}
+        onClose={() => setShowEmailPicker(false)}
+      />
+    )}
+    </>
   );
 }
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 
-export default function ReportsPage() {
+function ReportsPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const user = getSavedUser();
   const [data, setData] = useState<BootstrapData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedSite, setSelectedSite] = useState<string>("all");
+  const [selectedSite, setSelectedSite] = useState<string>(() => searchParams?.get("siteId") ?? "all");
   const [statusFilter, setStatusFilter] = useState<"all" | "approved" | "pending">("all");
   const [activeDiary, setActiveDiary] = useState<Diary | null>(null);
   const [orgName] = useState(() => typeof window !== "undefined" ? (localStorage.getItem("sitesnap.orgName") ?? "") : "");
 
+  // ── Generate panel state ──
+  const [genSiteId, setGenSiteId]   = useState<string>("");
+  const [genPeriod, setGenPeriod]   = useState<"daily" | "weekly" | "monthly">("daily");
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError]     = useState("");
+  const [genSuccess, setGenSuccess] = useState("");
+  const [approving, setApproving]   = useState<string | null>(null);
+
   useEffect(() => {
     if (!isAuthenticated()) { router.replace("/"); return; }
-    fetchBootstrap().then(setData).catch(console.error).finally(() => setLoading(false));
+    fetchBootstrap().then((boot) => {
+      setData(boot);
+      if (boot.sites.length > 0 && !genSiteId) setGenSiteId(boot.sites[0].id);
+      const diaryId = searchParams?.get("diaryId");
+      if (diaryId) {
+        const d = boot.diaries.find((d) => d.id === diaryId);
+        if (d) setActiveDiary(d);
+      }
+    }).catch(console.error).finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
+
+  const handleGenerate = async () => {
+    if (!genSiteId) { setGenError("Please select a site."); return; }
+    const siteEntries = data?.entries.filter((e) => e.siteId === genSiteId) ?? [];
+    if (siteEntries.length === 0) { setGenError("This site has no entries to generate a report from."); return; }
+    setGenerating(true); setGenError(""); setGenSuccess("");
+    try {
+      const diary = await generateDiary({ siteId: genSiteId, period: genPeriod, entries: siteEntries });
+      setData((prev) => prev ? { ...prev, diaries: [diary, ...prev.diaries] } : prev);
+      setGenSuccess(`✓ ${genPeriod.charAt(0).toUpperCase() + genPeriod.slice(1)} report generated successfully. Scroll down to view it.`);
+      setSelectedSite(genSiteId);
+      setActiveDiary(diary);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : "Failed to generate report.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleApprove = async (diary: Diary) => {
+    if (diary.status === "approved") return;
+    setApproving(diary.id);
+    try {
+      const updated = await approveDiary(diary.id);
+      setData((prev) => prev ? { ...prev, diaries: prev.diaries.map((d) => d.id === updated.id ? updated : d) } : prev);
+      if (activeDiary?.id === diary.id) setActiveDiary(updated);
+    } catch (e) { console.error(e); }
+    finally { setApproving(null); }
+  };
 
   const visibleDiaries = useMemo(() => {
     if (!data) return [];
@@ -389,6 +452,63 @@ export default function ReportsPage() {
             )}
           </div>
 
+          {/* Generate Report Panel */}
+          <div className="card">
+            <div className="card-header">
+              <span style={{ fontSize: 16 }}>⚡</span>
+              <span className="card-title">Generate New Report</span>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 14 }}>
+                Select a site and reporting period. The AI will analyse all logged entries, timecards, photos and observations to produce an engineering-grade site diary.
+              </p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 180px" }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Site</label>
+                  <select
+                    value={genSiteId}
+                    onChange={(e) => setGenSiteId(e.target.value)}
+                    style={{ height: 38, fontSize: 13, borderRadius: 8, border: "1.5px solid var(--border)", padding: "0 10px", background: "var(--surface)", color: "var(--text)" }}
+                  >
+                    {data?.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: "0 0 160px" }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Period</label>
+                  <select
+                    value={genPeriod}
+                    onChange={(e) => setGenPeriod(e.target.value as "daily" | "weekly" | "monthly")}
+                    style={{ height: 38, fontSize: 13, borderRadius: 8, border: "1.5px solid var(--border)", padding: "0 10px", background: "var(--surface)", color: "var(--text)" }}
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating || !data}
+                  style={{
+                    height: 38, padding: "0 20px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                    background: generating ? "var(--border)" : "var(--accent)",
+                    color: generating ? "var(--text-secondary)" : "#fff",
+                    border: "none", cursor: generating ? "not-allowed" : "pointer",
+                    flexShrink: 0, display: "flex", alignItems: "center", gap: 8,
+                  }}
+                >
+                  {generating ? (
+                    <>
+                      <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+                      Generating…
+                    </>
+                  ) : "⚡ Generate Report"}
+                </button>
+              </div>
+              {genError   && <p style={{ marginTop: 10, fontSize: 13, color: "#EF4444", fontWeight: 600 }}>{genError}</p>}
+              {genSuccess && <p style={{ marginTop: 10, fontSize: 13, color: "#22C55E", fontWeight: 600 }}>{genSuccess}</p>}
+            </div>
+          </div>
+
           {/* Table */}
           <div className="card">
             <div className="card-header">
@@ -409,7 +529,7 @@ export default function ReportsPage() {
                     <th>Generated</th>
                     <th>Summary</th>
                     <th>Status</th>
-                    <th style={{ width: 80 }}>Actions</th>
+                    <th style={{ width: 140 }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -434,17 +554,33 @@ export default function ReportsPage() {
                         <span className="badge" style={diary.status === "approved"
                           ? { background: "#F0FDF4", color: "#22C55E" }
                           : { background: "#FFFBEB", color: "#F59E0B" }}>
-                          {diary.status === "approved" ? "Approved" : "Pending"}
+                          {diary.status === "approved" ? "✓ Approved" : "⏳ Pending"}
                         </span>
                       </td>
                       <td>
-                        <button
-                          className="btn-ghost"
-                          style={{ fontSize: 12, padding: "4px 10px" }}
-                          onClick={() => setActiveDiary(diary)}
-                        >
-                          View →
-                        </button>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            className="btn-ghost"
+                            style={{ fontSize: 12, padding: "4px 10px" }}
+                            onClick={() => setActiveDiary(diary)}
+                          >
+                            View →
+                          </button>
+                          {diary.status !== "approved" && (
+                            <button
+                              disabled={approving === diary.id}
+                              style={{
+                                fontSize: 12, padding: "4px 10px", borderRadius: 8,
+                                background: approving === diary.id ? "var(--border)" : "#F0FDF4",
+                                color: approving === diary.id ? "var(--text-secondary)" : "#22C55E",
+                                border: "1.5px solid #22C55E", fontWeight: 600, cursor: approving === diary.id ? "not-allowed" : "pointer",
+                              }}
+                              onClick={() => handleApprove(diary)}
+                            >
+                              {approving === diary.id ? "…" : "✓ Approve"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -465,5 +601,13 @@ export default function ReportsPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function ReportsPage() {
+  return (
+    <Suspense fallback={<div className="app-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh" }}><p>Loading…</p></div>}>
+      <ReportsPageInner />
+    </Suspense>
   );
 }

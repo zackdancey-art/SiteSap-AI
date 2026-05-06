@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 
-const LAST_UPDATED = "5 May 2026";
+const LAST_UPDATED = "6 May 2026";
 
 export default function PrivacyPolicyScreen() {
   const insets = useSafeAreaInsets();
@@ -22,7 +22,7 @@ export default function PrivacyPolicyScreen() {
         <View style={styles.hero}>
           <Text style={styles.heroTitle}>Privacy Policy</Text>
           <Text style={styles.heroText}>
-            SiteSnap AI Pty Ltd ("SiteSnap", "we", "us") is committed to protecting your personal information in accordance with the Australian Privacy Act 1988 (Cth) and the Australian Privacy Principles (APPs).
+            SiteSnap AI Pty Ltd ("SiteSnap", "we", "us") is committed to protecting your personal information in accordance with the Australian Privacy Act 1988 (Cth) and the Australian Privacy Principles (APPs), and the New Zealand Privacy Act 2020 and its Information Privacy Principles (IPPs).
           </Text>
           <Text style={[styles.heroText, { marginTop: 8, opacity: 0.7 }]}>Last updated: {LAST_UPDATED}</Text>
         </View>
@@ -49,12 +49,12 @@ export default function PrivacyPolicyScreen() {
 
         <PolicyCard
           title="5. Data Retention"
-          body={"We retain your personal information for as long as your account is active or as required by law.\n\n• Site diary records may be subject to a minimum 7-year retention requirement under Australian Work Health and Safety legislation.\n\n• When you delete your account, your personal account details and project data are scheduled for permanent deletion within 30 days, except where retention is required by law.\n\n• Photos stored in S3 are deleted within 30 days of account deletion.\n\n• Soft-deleted records are permanently purged on a scheduled basis."}
+          body={"We retain your personal information for as long as your account is active or as required by law.\n\n• Site diary records may be subject to a minimum 7-year retention requirement under Australian Work Health and Safety (WHS) legislation and New Zealand Health and Safety at Work Act 2015 (HSWA).\n\n• When you delete your account, your personal account details and project data are scheduled for permanent deletion within 30 days, except where retention is required by law.\n\n• Photos stored in S3 are deleted within 30 days of account deletion.\n\n• Soft-deleted records are permanently purged on a scheduled basis."}
         />
 
         <PolicyCard
           title="6. Your Rights"
-          body={"Under the Australian Privacy Act and, where applicable, the GDPR, you have the right to:\n\n• Access: Request a copy of the personal information we hold about you.\n\n• Correction: Ask us to correct inaccurate or incomplete information.\n\n• Deletion: Request deletion of your account and associated data (subject to legal retention obligations).\n\n• Portability: Request an export of your data in a machine-readable format.\n\n• Opt-out: Withdraw consent for non-essential communications at any time via app Settings > Notifications.\n\nTo exercise any of these rights, email support@getsitesnapai.com with the subject line 'Privacy Request'. We will respond within 30 days."}
+          body={"Under the Australian Privacy Act 1988, the New Zealand Privacy Act 2020, and where applicable the GDPR, you have the right to:\n\n• Access: Request a copy of the personal information we hold about you.\n\n• Correction: Ask us to correct inaccurate or incomplete information.\n\n• Deletion: Request deletion of your account and associated data (subject to legal retention obligations).\n\n• Portability: Request an export of your data in a machine-readable format.\n\n• Opt-out: Withdraw consent for non-essential communications at any time via app Settings > Notifications.\n\nTo exercise any of these rights, email support@getsitesnapai.com with the subject line 'Privacy Request'. We will respond within 20 working days (as required by the NZ Privacy Act 2020) or 30 calendar days for Australian users."}
         />
 
         <PolicyCard
@@ -74,7 +74,7 @@ export default function PrivacyPolicyScreen() {
 
         <PolicyCard
           title="10. Contact & Complaints"
-          body={"For privacy enquiries or complaints, contact:\n\nPrivacy Officer\nemail: support@getsitesnapai.com\n\nIf you are not satisfied with our response, you may lodge a complaint with the Office of the Australian Information Commissioner (OAIC) at oaic.gov.au or, for EU residents, your local data protection authority."}
+          body={"For privacy enquiries or complaints, contact:\n\nPrivacy Officer\nemail: support@getsitesnapai.com\n\nAustralian users: If you are not satisfied with our response, you may lodge a complaint with the Office of the Australian Information Commissioner (OAIC) at oaic.gov.au.\n\nNew Zealand users: You may contact the Office of the Privacy Commissioner (OPC) at privacy.org.nz or by phone 0800 803 909. You may also refer a complaint to the OPC if you are not satisfied with our response within 20 working days.\n\nEU/UK residents: You may contact your local supervisory authority (e.g. ICO in the UK)."}
         />
       </ScrollView>
     </View>
