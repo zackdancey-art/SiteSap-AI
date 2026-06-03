@@ -29,7 +29,7 @@ function getGreeting() {
 }
 
 function formatDate() {
-  return new Date().toLocaleDateString("en-AU", {
+  return new Date().toLocaleDateString(undefined, {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 }

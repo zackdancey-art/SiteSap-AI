@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import {
   Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as Crypto from "expo-crypto";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -26,8 +26,13 @@ import { AddressSuggestion, fetchAddressSuggestions } from "@/lib/geo";
 import { fetchCurrentWeather, formatWeatherString } from "@/lib/weather";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import Svg, { Path as SvgPath } from "react-native-svg";
+import { consumePendingAnnotation } from "@/lib/annotationStore";
 
-type PhotoWithBase64 = Photo & { base64?: string | null };
+type AnnotationPath = { d: string; color: string; width: number };
+type PhotoWithBase64 = Photo & { base64?: string | null; annotationPaths?: AnnotationPath[] };
+
+const TIME_CODE_OPTIONS = ["ST", "OT", "DT", "SL"];
 type EntryTemplate = { id: string; name: string; notes: string; crewCount: string; weather: string };
 
 async function fetchTemplates(): Promise<EntryTemplate[]> {
@@ -84,11 +89,28 @@ export default function NewEntryScreen() {
   const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
   const [crewCount, setCrewCount] = useState("");
+  const [timeCode, setTimeCode] = useState("");
+  const [hoursWorked, setHoursWorked] = useState("");
   const [notes, setNotes] = useState("");
   const [photos, setPhotos] = useState<PhotoWithBase64[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pickingPhoto, setPickingPhoto] = useState(false);
   const isEditing = Boolean(entryId);
+
+  // Consume annotation written by draw-photo screen when we come back into focus
+  useFocusEffect(
+    useCallback(() => {
+      const annotation = consumePendingAnnotation();
+      if (!annotation) return;
+      setPhotos((prev) =>
+        prev.map((p) =>
+          p.id === annotation.photoId
+            ? { ...p, annotationPaths: annotation.paths }
+            : p
+        )
+      );
+    }, [])
+  );
 
   const weatherOptions = ["Sunny", "Partly Cloudy", "Overcast", "Rain", "Storm", "Windy"];
 
@@ -126,6 +148,8 @@ export default function NewEntryScreen() {
     setWeather(existingEntry.weather);
     setLocationAddress(existingEntry.locationAddress ?? "");
     setCrewCount(existingEntry.crewCount);
+    setTimeCode(existingEntry.timeCode ?? "");
+    setHoursWorked(existingEntry.hoursWorked ?? "");
     setNotes(existingEntry.notes);
     setPhotos(existingEntry.photos as PhotoWithBase64[]);
   }, [existingEntry]);
@@ -267,9 +291,10 @@ export default function NewEntryScreen() {
   const handleSave = async () => {
     if (!validate()) return;
     const savedAt = new Date().toISOString();
-    const photosForApi: Photo[] = photos.map((photo) => ({
+    const photosForApi: Photo[] = photos.map(({ annotationPaths, ...photo }) => ({
       ...photo,
       timestamp: photo.timestamp || savedAt,
+      ...(annotationPaths && annotationPaths.length > 0 ? { annotationPaths } : {}),
     }));
     const payload = {
       siteId: existingEntry?.siteId ?? siteId,
@@ -279,6 +304,8 @@ export default function NewEntryScreen() {
       crewCount,
       notes: notes.trim(),
       photos: photosForApi,
+      timeCode: timeCode.trim(),
+      hoursWorked: hoursWorked.trim(),
     };
     try {
       if (isEditing && entryId) {
@@ -444,6 +471,36 @@ export default function NewEntryScreen() {
         </View>
 
         <View style={styles.formGroup}>
+          <Text style={styles.label}>Time Code</Text>
+          <View style={styles.chipRow}>
+            {TIME_CODE_OPTIONS.map((tc) => (
+              <Pressable
+                key={tc}
+                style={[styles.chip, timeCode === tc && styles.chipActive]}
+                onPress={() => setTimeCode(timeCode === tc ? "" : tc)}
+              >
+                <Text style={[styles.chipText, timeCode === tc && styles.chipTextActive]}>{tc}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {timeCode && !TIME_CODE_OPTIONS.includes(timeCode) && (
+            <Text style={{ marginTop: 6, fontSize: 13, color: Colors.textSecondary }}>{timeCode}</Text>
+          )}
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Hours Worked</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. 8"
+            placeholderTextColor={Colors.textTertiary}
+            value={hoursWorked}
+            onChangeText={setHoursWorked}
+            keyboardType="decimal-pad"
+          />
+        </View>
+
+        <View style={styles.formGroup}>
           <Text style={styles.label}>Photos ({photos.length})</Text>
 
           {photos.length > 0 && (
@@ -456,11 +513,37 @@ export default function NewEntryScreen() {
               {photos.map((photo) => (
                 <View key={photo.id} style={styles.photoThumb}>
                   <Image source={{ uri: photo.uri }} style={styles.photoImage} />
+                  {photo.annotationPaths && photo.annotationPaths.length > 0 && (
+                    <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+                      {photo.annotationPaths.map((p, i) => (
+                        <SvgPath
+                          key={i}
+                          d={p.d}
+                          stroke={p.color}
+                          strokeWidth={p.width}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                        />
+                      ))}
+                    </Svg>
+                  )}
                   <Pressable
                     style={styles.photoRemove}
                     onPress={() => removePhoto(photo.id)}
                   >
                     <Ionicons name="close" size={14} color={Colors.white} />
+                  </Pressable>
+                  <Pressable
+                    style={styles.photoDraw}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/draw-photo",
+                        params: { uri: encodeURIComponent(photo.uri), photoId: photo.id },
+                      })
+                    }
+                  >
+                    <Ionicons name="pencil" size={12} color={Colors.white} />
                   </Pressable>
                 </View>
               ))}
@@ -690,6 +773,17 @@ const styles = StyleSheet.create({
   photoRemove: {
     position: "absolute",
     top: 4,
+    right: 4,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  photoDraw: {
+    position: "absolute",
+    bottom: 4,
     right: 4,
     width: 24,
     height: 24,

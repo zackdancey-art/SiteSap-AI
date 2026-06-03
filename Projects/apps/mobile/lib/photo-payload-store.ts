@@ -29,8 +29,10 @@ function evictLruEntries(map: Record<string, StoredPhotoPayload>): Record<string
   const keys = Object.keys(map);
   if (keys.length <= MAX_CACHED_PHOTOS) return map;
   const sorted = keys.sort((a, b) => (map[a].savedAt ?? 0) - (map[b].savedAt ?? 0));
+  const toEvict = sorted.slice(0, keys.length - MAX_CACHED_PHOTOS);
+  console.warn(`[photo-payload-store] Evicting ${toEvict.length} cached photo payload(s) — cache limit (${MAX_CACHED_PHOTOS}) reached. Upload pending entries to avoid data loss.`);
   const evicted = { ...map };
-  sorted.slice(0, keys.length - MAX_CACHED_PHOTOS).forEach((k) => delete evicted[k]);
+  toEvict.forEach((k) => delete evicted[k]);
   return evicted;
 }
 

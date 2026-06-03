@@ -225,6 +225,19 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {(user?.role === "supervisor" || user?.role === "admin") && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Team</Text>
+            <View style={styles.sectionCard}>
+              <SettingRow
+                icon="people-outline"
+                label="Invite Workers"
+                onPress={() => router.push("/invite-team")}
+              />
+            </View>
+          </View>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Security</Text>
           <View style={styles.sectionCard}>

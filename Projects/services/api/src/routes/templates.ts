@@ -117,19 +117,34 @@ templatesRouter.get("/whs-checklists/:id", (req, res) => {
 });
 
 templatesRouter.get("/entry-templates", async (req, res) => {
-  const templates = await listTemplates(getActor(req as unknown as AuthenticatedRequest));
-  return res.json({ templates });
+  try {
+    const templates = await listTemplates(getActor(req as unknown as AuthenticatedRequest));
+    return res.json({ templates });
+  } catch (err) {
+    console.error("[templates] list failed", err);
+    return res.status(500).json({ error: "Failed to list templates." });
+  }
 });
 
 templatesRouter.post("/entry-templates", async (req, res) => {
-  const parsed = TemplateSchema.safeParse(req.body ?? {});
-  if (!parsed.success) return res.status(400).json({ error: "Invalid template payload.", details: parsed.error.flatten() });
-  const template = await createTemplate(getActor(req as unknown as AuthenticatedRequest), parsed.data);
-  return res.status(201).json({ template });
+  try {
+    const parsed = TemplateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Invalid template payload.", details: parsed.error.flatten() });
+    const template = await createTemplate(getActor(req as unknown as AuthenticatedRequest), parsed.data);
+    return res.status(201).json({ template });
+  } catch (err) {
+    console.error("[templates] create failed", err);
+    return res.status(500).json({ error: "Failed to create template." });
+  }
 });
 
 templatesRouter.delete("/entry-templates/:id", async (req, res) => {
-  const removed = await deleteTemplate(getActor(req as unknown as AuthenticatedRequest), req.params.id);
-  if (!removed) return res.status(404).json({ error: "Template not found." });
-  return res.json({ ok: true });
+  try {
+    const removed = await deleteTemplate(getActor(req as unknown as AuthenticatedRequest), req.params.id);
+    if (!removed) return res.status(404).json({ error: "Template not found." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[templates] delete failed", err);
+    return res.status(500).json({ error: "Failed to delete template." });
+  }
 });

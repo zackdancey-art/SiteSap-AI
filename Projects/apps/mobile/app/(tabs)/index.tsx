@@ -53,7 +53,7 @@ function SiteCard({ site }: { site: Site }) {
           <View style={styles.cardDetail}>
             <Ionicons name="calendar-outline" size={14} color={Colors.textTertiary} />
             <Text style={styles.cardDetailText}>
-              {new Date(site.startDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+              {new Date(site.startDate).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
             </Text>
           </View>
           <View style={styles.cardDetail}>

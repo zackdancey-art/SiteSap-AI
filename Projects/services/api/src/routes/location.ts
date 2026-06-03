@@ -20,16 +20,25 @@ const UpdateSchema = z.object({
 });
 
 locationRouter.post("/location/update", requireAuth, async (req, res) => {
-  const parsed = UpdateSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "Invalid location payload.", details: parsed.error.flatten() });
+  try {
+    const parsed = UpdateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid location payload.", details: parsed.error.flatten() });
+    }
+    const location = await upsertLocation(getActor(req), parsed.data);
+    return res.json({ ok: true, location });
+  } catch (err) {
+    console.error("[location] update failed", err);
+    return res.status(500).json({ error: "Failed to update location." });
   }
-  const location = await upsertLocation(getActor(req), parsed.data);
-  return res.json({ ok: true, location });
 });
 
 locationRouter.get("/location/workers", requireAuth, async (req, res) => {
-  const actor = getActor(req);
-  const locations = await getAllWorkerLocations(actor);
-  return res.json({ locations });
+  try {
+    const locations = await getAllWorkerLocations(getActor(req));
+    return res.json({ locations });
+  } catch (err) {
+    console.error("[location] list workers failed", err);
+    return res.status(500).json({ error: "Failed to list worker locations." });
+  }
 });

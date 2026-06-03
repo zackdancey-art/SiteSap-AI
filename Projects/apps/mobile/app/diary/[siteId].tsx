@@ -30,14 +30,15 @@ const REPORT_OPTIONS: Array<{ key: ReportPeriod; label: string }> = [
 ];
 
 function fallbackSectionFromEntry(entry: DailyEntry): DiarySection {
-  const workNotes = entry.locationAddress
-    ? `${entry.notes || "No notes provided."}\nLocation: ${entry.locationAddress}`
-    : entry.notes || "No notes provided.";
+  const parts: string[] = [entry.notes || "No notes provided."];
+  if (entry.locationAddress) parts.push(`Location: ${entry.locationAddress}`);
+  if (entry.timeCode) parts.push(`Time Code: ${entry.timeCode}`);
+  if (entry.hoursWorked) parts.push(`Hours Worked: ${entry.hoursWorked}`);
   return {
     date: entry.date,
     weather: entry.weather || "Not recorded",
     crewCount: entry.crewCount || "Not recorded",
-    workCompleted: workNotes,
+    workCompleted: parts.join("\n"),
     safetyObservations: "N/A",
     materialsUsed: "N/A",
     issues: "N/A",
@@ -179,7 +180,7 @@ export default function DiaryPreviewScreen() {
   const canApproveDiary = Boolean(user);
   const resolvedSummary =
     currentDiary?.summary?.trim() ||
-    currentDiary?.fullReport?.split("\n").find((line) => line.trim()) ||
+    (currentDiary?.fullReport ?? "").split("\n").find((line) => line.trim()) ||
     `Generated from ${visibleSections.length} entr${visibleSections.length === 1 ? "y" : "ies"}.`;
   const resolvedFullReport = currentDiary?.fullReport?.trim() || "";
   const resolvedChecklist =
@@ -345,7 +346,7 @@ export default function DiaryPreviewScreen() {
       `Client: ${site.client}`,
       `Address: ${site.address}`,
       `Report Period: ${resolvedPeriod.toUpperCase()}`,
-      `Generated: ${new Date(currentDiary.generatedAt).toLocaleString("en-AU")}`,
+      `Generated: ${new Date(currentDiary.generatedAt).toLocaleString(undefined)}`,
       `Status: ${currentDiary.status.toUpperCase()}`,
       "",
       "EXECUTIVE SUMMARY",
@@ -437,7 +438,7 @@ export default function DiaryPreviewScreen() {
           <Text style={styles.diaryAddress}>{site.address}</Text>
           <View style={styles.diaryDateRange}>
             <Text style={styles.diaryDateText}>
-              Started {new Date(site.startDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+              Started {new Date(site.startDate).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
             </Text>
             <View style={styles.diaryDot} />
             <Text style={styles.diaryDateText}>{entries.length} entries</Text>
@@ -511,7 +512,7 @@ export default function DiaryPreviewScreen() {
               </View>
               <Text style={styles.generatedDate}>
                 {resolvedPeriod.toUpperCase()} •{" "}
-                {new Date(currentDiary.generatedAt).toLocaleDateString("en-AU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                {new Date(currentDiary.generatedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
               </Text>
             </View>
 
@@ -658,7 +659,7 @@ export default function DiaryPreviewScreen() {
 
 function EntryCard({ entry, index, total }: { entry: DailyEntry; index: number; total: number }) {
   const dateObj = new Date(`${entry.date}T00:00:00`);
-  const formattedDate = dateObj.toLocaleDateString("en-AU", {
+  const formattedDate = dateObj.toLocaleDateString(undefined, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -701,7 +702,7 @@ function EntryCard({ entry, index, total }: { entry: DailyEntry; index: number; 
 function SectionCard({ section, index }: { section: DiarySection; index: number }) {
   const [expanded, setExpanded] = useState(index === 0);
   const dateObj = new Date(`${section.date}T00:00:00`);
-  const formattedDate = dateObj.toLocaleDateString("en-AU", {
+  const formattedDate = dateObj.toLocaleDateString(undefined, {
     weekday: "short",
     day: "numeric",
     month: "short",

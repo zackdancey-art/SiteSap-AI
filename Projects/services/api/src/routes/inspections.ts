@@ -42,57 +42,92 @@ const InspectionPatchSchema = z.object({
 // ─── Templates ──────────────────────────────────────────────────────────────
 
 inspectionsRouter.get("/inspection-templates", requireAuth, async (req, res) => {
-  const templates = await listTemplates(getActor(req));
-  return res.json({ templates });
+  try {
+    const templates = await listTemplates(getActor(req));
+    return res.json({ templates });
+  } catch (err) {
+    console.error("[inspections] list templates failed", err);
+    return res.status(500).json({ error: "Failed to list inspection templates." });
+  }
 });
 
 inspectionsRouter.post("/inspection-templates", requireAuth, async (req, res) => {
-  const parsed = TemplateSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "Invalid template payload.", details: parsed.error.flatten() });
+  try {
+    const parsed = TemplateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid template payload.", details: parsed.error.flatten() });
+    }
+    const template = await createTemplate(getActor(req), parsed.data.name, parsed.data.items);
+    return res.status(201).json({ template });
+  } catch (err) {
+    console.error("[inspections] create template failed", err);
+    return res.status(500).json({ error: "Failed to create inspection template." });
   }
-  const template = await createTemplate(getActor(req), parsed.data.name, parsed.data.items);
-  return res.status(201).json({ template });
 });
 
 inspectionsRouter.delete("/inspection-templates/:id", requireAuth, async (req, res) => {
-  const removed = await deleteTemplate(getActor(req), req.params.id);
-  if (!removed) return res.status(404).json({ error: "Template not found." });
-  return res.json({ ok: true });
+  try {
+    const removed = await deleteTemplate(getActor(req), req.params.id);
+    if (!removed) return res.status(404).json({ error: "Template not found." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[inspections] delete template failed", err);
+    return res.status(500).json({ error: "Failed to delete inspection template." });
+  }
 });
 
 // ─── Inspections ─────────────────────────────────────────────────────────────
 
 inspectionsRouter.get("/inspections", requireAuth, async (req, res) => {
-  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
-  const inspections = await listInspections(getActor(req), siteId);
-  return res.json({ inspections });
+  try {
+    const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+    const inspections = await listInspections(getActor(req), siteId);
+    return res.json({ inspections });
+  } catch (err) {
+    console.error("[inspections] list failed", err);
+    return res.status(500).json({ error: "Failed to list inspections." });
+  }
 });
 
 inspectionsRouter.post("/inspections", requireAuth, async (req, res) => {
-  const parsed = InspectionSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "Invalid inspection payload.", details: parsed.error.flatten() });
+  try {
+    const parsed = InspectionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid inspection payload.", details: parsed.error.flatten() });
+    }
+    const inspection = await createInspection(getActor(req), {
+      ...parsed.data,
+      templateId: parsed.data.templateId ?? null,
+    });
+    return res.status(201).json({ inspection });
+  } catch (err) {
+    console.error("[inspections] create failed", err);
+    return res.status(500).json({ error: "Failed to create inspection." });
   }
-  const inspection = await createInspection(getActor(req), {
-    ...parsed.data,
-    templateId: parsed.data.templateId ?? null,
-  });
-  return res.status(201).json({ inspection });
 });
 
 inspectionsRouter.patch("/inspections/:id", requireAuth, async (req, res) => {
-  const parsed = InspectionPatchSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "Invalid patch.", details: parsed.error.flatten() });
+  try {
+    const parsed = InspectionPatchSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid patch.", details: parsed.error.flatten() });
+    }
+    const inspection = await updateInspection(getActor(req), req.params.id, parsed.data);
+    if (!inspection) return res.status(404).json({ error: "Inspection not found." });
+    return res.json({ inspection });
+  } catch (err) {
+    console.error("[inspections] update failed", err);
+    return res.status(500).json({ error: "Failed to update inspection." });
   }
-  const inspection = await updateInspection(getActor(req), req.params.id, parsed.data);
-  if (!inspection) return res.status(404).json({ error: "Inspection not found." });
-  return res.json({ inspection });
 });
 
 inspectionsRouter.delete("/inspections/:id", requireAuth, async (req, res) => {
-  const removed = await deleteInspection(getActor(req), req.params.id);
-  if (!removed) return res.status(404).json({ error: "Inspection not found." });
-  return res.json({ ok: true });
+  try {
+    const removed = await deleteInspection(getActor(req), req.params.id);
+    if (!removed) return res.status(404).json({ error: "Inspection not found." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[inspections] delete failed", err);
+    return res.status(500).json({ error: "Failed to delete inspection." });
+  }
 });

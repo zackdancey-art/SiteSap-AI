@@ -16,12 +16,17 @@ import {
   upsertPendingRegistration,
   updateUserProfile,
   updateUserPassword,
+  createInvite,
+  getInviteByToken,
+  deleteInviteByToken,
+  listInvitesByInviter,
 } from "../storage/authStore";
 import { deleteAllUserProjectData } from "../storage/projectsStore";
 import {
   isChannelConfigured,
   sendAccountVerification,
   sendPasswordReset,
+  sendReportEmail,
 } from "../services/notificationService";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { createAuthToken } from "../utils/authToken";
@@ -510,6 +515,130 @@ router.post("/auth/reset-password", async (req, res) => {
   } catch (error) {
     console.error("[auth] reset-password failed", error);
     return res.status(500).json({ error: "Unable to reset password." });
+  }
+});
+
+// --- Invite / bulk employee registration ---
+
+function buildInviteLink(token: string) {
+  const base = process.env.INVITE_URL || "sitesnap://invite";
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}token=${encodeURIComponent(token)}`;
+}
+
+// GET /auth/invite/lookup?token=xxx  (public — used by signup screen to pre-fill fields)
+router.get("/auth/invite/lookup", async (req, res) => {
+  const token = String(req.query.token ?? "").trim();
+  if (!token) return res.status(400).json({ error: "Token is required." });
+  try {
+    await purgeExpiredAuthRecords();
+    const invite = await getInviteByToken(token);
+    if (!invite) return res.status(404).json({ error: "Invite not found or has expired." });
+    if (Date.now() > new Date(invite.expiresAt).getTime()) {
+      await deleteInviteByToken(token);
+      return res.status(400).json({ error: "Invite has expired." });
+    }
+    return res.json({ email: invite.email, fullName: invite.fullName, role: invite.role });
+  } catch (err) {
+    console.error("[auth] invite lookup failed", err);
+    return res.status(500).json({ error: "Unable to look up invite." });
+  }
+});
+
+// GET /auth/invites  (supervisor/admin — list their pending invites)
+router.get("/auth/invites", requireAuth, async (req: Request, res: Response) => {
+  const auth = (req as AuthenticatedRequest).auth;
+  if (auth.role !== "supervisor" && auth.role !== "admin") {
+    return res.status(403).json({ error: "Supervisors and admins only." });
+  }
+  try {
+    const invites = await listInvitesByInviter(auth.email);
+    return res.json({ invites });
+  } catch (err) {
+    console.error("[auth] list invites failed", err);
+    return res.status(500).json({ error: "Unable to list invites." });
+  }
+});
+
+// POST /auth/invite/bulk  (supervisor/admin — send invites to a list of employees)
+router.post(
+  "/auth/invite/bulk",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const auth = (req as AuthenticatedRequest).auth;
+    if (auth.role !== "supervisor" && auth.role !== "admin") {
+      return res.status(403).json({ error: "Supervisors and admins only." });
+    }
+
+    const raw = req.body?.employees;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({ error: "employees must be a non-empty array." });
+    }
+    if (raw.length > 100) {
+      return res.status(400).json({ error: "Maximum 100 invites per request." });
+    }
+
+    const inviteTtlMs = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const emailConfig = isChannelConfigured("email");
+    const appName = "SiteSnap AI";
+
+    await purgeExpiredAuthRecords();
+
+    async function processOne(item: unknown): Promise<{ email: string; ok: boolean; error?: string; inviteLink?: string }> {
+      const email = String((item as Record<string, unknown>)?.email ?? "").trim().toLowerCase();
+      const fullName = String((item as Record<string, unknown>)?.fullName ?? (item as Record<string, unknown>)?.name ?? "").trim() || "Team Member";
+      const roleRaw = String((item as Record<string, unknown>)?.role ?? "worker").toLowerCase();
+      const role: "worker" | "supervisor" = roleRaw === "supervisor" ? "supervisor" : "worker";
+
+      if (!email || !isValidEmail(email)) {
+        return { email: email || "(blank)", ok: false, error: "Invalid email address." };
+      }
+      try {
+        const existingUser = await findUserByEmail(email);
+        if (existingUser) {
+          return { email, ok: false, error: "Account already exists for this email." };
+        }
+        const token = randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + inviteTtlMs);
+        await createInvite(token, email, fullName, role, auth.email, expiresAt);
+        const inviteLink = buildInviteLink(token);
+
+        if (emailConfig.ok) {
+          const html = `<p>Hi ${fullName},</p><p>${auth.fullName} has invited you to join <strong>${appName}</strong> as a ${role}.</p><p>Click the link below to create your account (valid for 7 days):</p><p><a href="${inviteLink}">${inviteLink}</a></p><p>If you have any trouble, open the ${appName} app and tap <em>Have an invite?</em> on the sign-up screen.</p>`;
+          const text = `Hi ${fullName},\n\n${auth.fullName} has invited you to join ${appName} as a ${role}.\n\nCreate your account (valid 7 days):\n${inviteLink}\n`;
+          const delivery = await sendReportEmail(email, `You've been invited to join ${appName}`, html, text);
+          if (!delivery.ok) {
+            console.error(`[auth] invite email failed for ${email}: ${delivery.error}`);
+          }
+        }
+        if (!emailConfig.ok || !isProd) {
+          console.log(`[auth] DEV invite link for ${email}: ${inviteLink}`);
+        }
+        return { email, ok: true, inviteLink: isProd ? undefined : inviteLink };
+      } catch (err) {
+        console.error(`[auth] invite failed for ${email}`, err);
+        return { email, ok: false, error: "Failed to create invite." };
+      }
+    }
+
+    const results = await Promise.all(raw.map(processOne));
+    const sent = results.filter((r) => r.ok).length;
+    return res.json({ ok: true, sent, total: raw.length, results });
+  }
+);
+
+// DELETE /auth/invites/:token  (supervisor/admin — revoke a pending invite)
+router.delete("/auth/invites/:token", requireAuth, async (req: Request, res: Response) => {
+  const auth = (req as AuthenticatedRequest).auth;
+  if (auth.role !== "supervisor" && auth.role !== "admin") {
+    return res.status(403).json({ error: "Supervisors and admins only." });
+  }
+  try {
+    await deleteInviteByToken(req.params.token);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[auth] delete invite failed", err);
+    return res.status(500).json({ error: "Unable to revoke invite." });
   }
 });
 

@@ -21,7 +21,8 @@
     "ci": "pnpm run lint && pnpm run typecheck && pnpm run test",
     "lint": "eslint \"{apps,services,shared}/**/*.{ts,tsx,js,jsx}\" --ext .ts,.tsx,.js --ignore-path .eslintignore",
     "lint:fix": "eslint \"{apps,services,shared}/**/*.{ts,tsx,js,jsx}\" --ext .ts,.tsx,.js --ignore-path .eslintignore --fix",
-    "build:ts": "tsc -b"
+    "build:ts": "tsc -b",
+    "setup-hooks": "bash scripts/setup-hooks.sh"
   },
   "devDependencies": {
     "@types/node": "^20.5.1",

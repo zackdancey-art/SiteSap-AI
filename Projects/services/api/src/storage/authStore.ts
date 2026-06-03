@@ -27,15 +27,27 @@ export type PasswordResetRecord = {
   expiresAt: string;
 };
 
+export type InviteRecord = {
+  token: string;
+  email: string;
+  fullName: string;
+  role: "worker" | "supervisor";
+  invitedBy: string;
+  expiresAt: string;
+  createdAt: string;
+};
+
 type AuthMemoryJson = {
   users: AuthUser[];
   pending: PendingRegistration[];
   resetTokens: PasswordResetRecord[];
+  invites: InviteRecord[];
 };
 
 const memoryUsers = new Map<string, AuthUser>();
 const memoryPending = new Map<string, PendingRegistration>();
 const memoryResetTokens = new Map<string, PasswordResetRecord>();
+const memoryInvites = new Map<string, InviteRecord>(); // keyed by token
 
 function useDatabase() {
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
@@ -57,11 +69,15 @@ const store = new FileBackedStore<Partial<AuthMemoryJson>>(
     for (const token of Array.isArray(parsed.resetTokens) ? parsed.resetTokens : []) {
       memoryResetTokens.set(token.token, token);
     }
+    for (const invite of Array.isArray(parsed.invites) ? parsed.invites : []) {
+      memoryInvites.set(invite.token, invite);
+    }
   },
   () => ({
     users: Array.from(memoryUsers.values()),
     pending: Array.from(memoryPending.values()),
     resetTokens: Array.from(memoryResetTokens.values()),
+    invites: Array.from(memoryInvites.values()),
   })
 );
 
@@ -128,6 +144,19 @@ export async function initAuthSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  await getPgPool().query(`
+    CREATE TABLE IF NOT EXISTS auth_invites (
+      token TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      full_name TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'worker',
+      invited_by TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await getPgPool().query(`CREATE UNIQUE INDEX IF NOT EXISTS auth_invites_email_idx ON auth_invites(email)`);
 }
 
 function mapUser(row: {
@@ -499,6 +528,12 @@ export async function purgeExpiredAuthRecords() {
         changed = true;
       }
     }
+    for (const [token, invite] of memoryInvites.entries()) {
+      if (new Date(invite.expiresAt).getTime() < now) {
+        memoryInvites.delete(token);
+        changed = true;
+      }
+    }
     if (changed) {
       await persistMemory();
     }
@@ -507,6 +542,7 @@ export async function purgeExpiredAuthRecords() {
 
   await getPgPool().query(`DELETE FROM auth_pending_registrations WHERE expires_at < NOW()`);
   await getPgPool().query(`DELETE FROM auth_password_reset_tokens WHERE expires_at < NOW()`);
+  await getPgPool().query(`DELETE FROM auth_invites WHERE expires_at < NOW()`);
 }
 
 export async function deleteUserAccount(email: string): Promise<void> {
@@ -552,6 +588,74 @@ export async function incrementTokenGeneration(email: string): Promise<number> {
   return result.rows[0]?.token_generation ?? 1;
 }
 
+export async function createInvite(
+  token: string,
+  email: string,
+  fullName: string,
+  role: "worker" | "supervisor",
+  invitedBy: string,
+  expiresAt: Date
+): Promise<void> {
+  const now = new Date().toISOString();
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    memoryInvites.set(token, { token, email, fullName, role, invitedBy, expiresAt: expiresAt.toISOString(), createdAt: now });
+    await persistMemory();
+    return;
+  }
+  await getPgPool().query(
+    `INSERT INTO auth_invites (token, email, full_name, role, invited_by, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (email) DO UPDATE SET token=EXCLUDED.token, full_name=EXCLUDED.full_name, role=EXCLUDED.role, invited_by=EXCLUDED.invited_by, expires_at=EXCLUDED.expires_at`,
+    [token, email, fullName, role, invitedBy, expiresAt.toISOString()]
+  );
+}
+
+export async function getInviteByToken(token: string): Promise<InviteRecord | null> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    return memoryInvites.get(token) ?? null;
+  }
+  const result = await getPgPool().query<{
+    token: string; email: string; full_name: string; role: "worker" | "supervisor";
+    invited_by: string; expires_at: Date; created_at: Date;
+  }>(
+    `SELECT token, email, full_name, role, invited_by, expires_at, created_at FROM auth_invites WHERE token = $1`,
+    [token]
+  );
+  if (result.rowCount === 0) return null;
+  const r = result.rows[0];
+  return { token: r.token, email: r.email, fullName: r.full_name, role: r.role, invitedBy: r.invited_by, expiresAt: r.expires_at.toISOString(), createdAt: r.created_at.toISOString() };
+}
+
+export async function deleteInviteByToken(token: string): Promise<void> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    memoryInvites.delete(token);
+    await persistMemory();
+    return;
+  }
+  await getPgPool().query(`DELETE FROM auth_invites WHERE token = $1`, [token]);
+}
+
+export async function listInvitesByInviter(invitedBy: string): Promise<InviteRecord[]> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const now = Date.now();
+    return Array.from(memoryInvites.values())
+      .filter((inv) => inv.invitedBy === invitedBy && new Date(inv.expiresAt).getTime() > now)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  const result = await getPgPool().query<{
+    token: string; email: string; full_name: string; role: "worker" | "supervisor";
+    invited_by: string; expires_at: Date; created_at: Date;
+  }>(
+    `SELECT token, email, full_name, role, invited_by, expires_at, created_at FROM auth_invites WHERE invited_by = $1 AND expires_at > NOW() ORDER BY created_at DESC`,
+    [invitedBy]
+  );
+  return result.rows.map((r) => ({ token: r.token, email: r.email, fullName: r.full_name, role: r.role, invitedBy: r.invited_by, expiresAt: r.expires_at.toISOString(), createdAt: r.created_at.toISOString() }));
+}
+
 export async function resetAuthStoreForTests() {
   if (useDatabase()) {
     await getPgPool().query(`DELETE FROM auth_password_reset_tokens`);
@@ -562,5 +666,6 @@ export async function resetAuthStoreForTests() {
   memoryUsers.clear();
   memoryPending.clear();
   memoryResetTokens.clear();
+  memoryInvites.clear();
   store.resetForTests();
 }

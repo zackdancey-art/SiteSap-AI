@@ -30,53 +30,73 @@ const IncidentPatchSchema = z.object({
 });
 
 incidentsRouter.get("/incidents", requireAuth, async (req, res) => {
-  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
-  const incidents = await listIncidents(getActor(req), siteId);
-  return res.json({ incidents });
+  try {
+    const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+    const incidents = await listIncidents(getActor(req), siteId);
+    return res.json({ incidents });
+  } catch (err) {
+    console.error("[incidents] list failed", err);
+    return res.status(500).json({ error: "Failed to list incidents." });
+  }
 });
 
 incidentsRouter.post("/incidents", requireAuth, async (req, res) => {
-  const parsed = IncidentSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "Invalid incident payload.", details: parsed.error.flatten() });
-  }
-  const actor = getActor(req);
-  const incident = await createIncident(actor, parsed.data);
-
-  // Notify supervisors for major/critical incidents
-  if (["major", "critical"].includes(parsed.data.severity)) {
-    try {
-      const tokens = await getAllTokensForEmails([actor.email]);
-      const pushTokens = tokens.map((t) => t.token).filter((t) => t.startsWith("ExponentPushToken"));
-      if (pushTokens.length > 0) {
-        await sendExpoPushNotifications([{
-          to: pushTokens,
-          title: `${parsed.data.severity.toUpperCase()} Incident Reported`,
-          body: parsed.data.description.slice(0, 100),
-          data: { incidentId: incident.id, siteId: incident.siteId },
-          sound: "default",
-        }]);
-      }
-    } catch (err) {
-      console.error("[incidents] push notification failed", err);
+  try {
+    const parsed = IncidentSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid incident payload.", details: parsed.error.flatten() });
     }
-  }
+    const actor = getActor(req);
+    const incident = await createIncident(actor, parsed.data);
 
-  return res.status(201).json({ incident });
+    // Notify supervisors for major/critical incidents
+    if (["major", "critical"].includes(parsed.data.severity)) {
+      try {
+        const tokens = await getAllTokensForEmails([actor.email]);
+        const pushTokens = tokens.map((t) => t.token).filter((t) => t.startsWith("ExponentPushToken"));
+        if (pushTokens.length > 0) {
+          await sendExpoPushNotifications([{
+            to: pushTokens,
+            title: `${parsed.data.severity.toUpperCase()} Incident Reported`,
+            body: parsed.data.description.slice(0, 100),
+            data: { incidentId: incident.id, siteId: incident.siteId },
+            sound: "default",
+          }]);
+        }
+      } catch (pushErr) {
+        console.error("[incidents] push notification failed", pushErr);
+      }
+    }
+
+    return res.status(201).json({ incident });
+  } catch (err) {
+    console.error("[incidents] create failed", err);
+    return res.status(500).json({ error: "Failed to create incident." });
+  }
 });
 
 incidentsRouter.patch("/incidents/:id", requireAuth, async (req, res) => {
-  const parsed = IncidentPatchSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "Invalid patch.", details: parsed.error.flatten() });
+  try {
+    const parsed = IncidentPatchSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid patch.", details: parsed.error.flatten() });
+    }
+    const incident = await updateIncident(getActor(req), req.params.id, parsed.data);
+    if (!incident) return res.status(404).json({ error: "Incident not found." });
+    return res.json({ incident });
+  } catch (err) {
+    console.error("[incidents] update failed", err);
+    return res.status(500).json({ error: "Failed to update incident." });
   }
-  const incident = await updateIncident(getActor(req), req.params.id, parsed.data);
-  if (!incident) return res.status(404).json({ error: "Incident not found." });
-  return res.json({ incident });
 });
 
 incidentsRouter.delete("/incidents/:id", requireAuth, async (req, res) => {
-  const removed = await deleteIncident(getActor(req), req.params.id);
-  if (!removed) return res.status(404).json({ error: "Incident not found." });
-  return res.json({ ok: true });
+  try {
+    const removed = await deleteIncident(getActor(req), req.params.id);
+    if (!removed) return res.status(404).json({ error: "Incident not found." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[incidents] delete failed", err);
+    return res.status(500).json({ error: "Failed to delete incident." });
+  }
 });

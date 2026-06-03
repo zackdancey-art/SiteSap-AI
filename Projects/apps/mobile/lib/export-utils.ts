@@ -241,6 +241,8 @@ async function shareNativeFile(uri: string, mimeType: string, dialogTitle: strin
   await Share.share({ title: dialogTitle, message: uri });
 }
 
+const MAX_EXPORT_HTML_BYTES = 8 * 1024 * 1024; // 8 MB — protects expo-print from OOM
+
 export async function exportReportDocument(args: {
   filenameBase: string;
   html: string;
@@ -248,6 +250,10 @@ export async function exportReportDocument(args: {
   fallbackText?: string;
 }) {
   const filenameBase = normalizeFilename(args.filenameBase) || "sitesnap-report";
+
+  if (args.html.length > MAX_EXPORT_HTML_BYTES) {
+    console.warn(`[export] HTML payload is ${(args.html.length / 1024 / 1024).toFixed(1)} MB — truncation may occur`);
+  }
 
   if (Platform.OS === "web") {
     if (args.format === "doc") {

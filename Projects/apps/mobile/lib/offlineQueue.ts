@@ -1,6 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiBaseUrl } from "./api-base-url";
-import AsyncStorageLib from "@react-native-async-storage/async-storage";
 
 const QUEUE_KEY = "sitesnap.offlineQueue";
 const MAX_QUEUE_SIZE = 100;
@@ -70,10 +69,15 @@ export async function flushQueue(getToken: () => Promise<string | null>): Promis
         },
         body: action.body ? JSON.stringify(action.body) : undefined,
       });
-      if (res.ok || res.status === 404) {
+
+      if (res.ok) {
+        flushed++;
+      } else if (res.status === 404 && action.method === "DELETE") {
+        // Resource already gone — DELETE is idempotent, treat as success
         flushed++;
       } else if (res.status >= 400 && res.status < 500) {
-        // Client error — drop the action, don't retry
+        // Client error — drop, don't retry
+        console.warn(`[offlineQueue] Dropping ${action.method} ${action.path} — client error ${res.status}`);
         failed++;
       } else {
         // Server error — keep for retry
@@ -83,6 +87,7 @@ export async function flushQueue(getToken: () => Promise<string | null>): Promis
       if (action.retries < 5) {
         remaining.push({ ...action, retries: action.retries + 1 });
       } else {
+        console.warn(`[offlineQueue] Dropping ${action.method} ${action.path} after ${action.retries} retries`);
         failed++;
       }
     }
@@ -93,5 +98,5 @@ export async function flushQueue(getToken: () => Promise<string | null>): Promis
 }
 
 export async function clearQueue(): Promise<void> {
-  await AsyncStorageLib.removeItem(QUEUE_KEY);
+  await AsyncStorage.removeItem(QUEUE_KEY);
 }

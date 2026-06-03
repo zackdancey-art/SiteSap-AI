@@ -25,6 +25,7 @@ export default function CreateSiteScreen() {
   const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
   const [client, setClient] = useState("");
+  const [jobNumber, setJobNumber] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().split("T")[0]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateDraft, setDateDraft] = useState(new Date(`${new Date().toISOString().split("T")[0]}T00:00:00`));
@@ -82,6 +83,7 @@ export default function CreateSiteScreen() {
         client: client.trim(),
         startDate,
         status: "active",
+        jobNumber: jobNumber.trim(),
       });
       router.back();
     } catch (error) {
@@ -192,6 +194,18 @@ export default function CreateSiteScreen() {
             onChangeText={(t) => { setClient(t); setErrors((e) => ({ ...e, client: "" })); }}
           />
           {!!errors.client && <Text style={styles.errorText}>{errors.client}</Text>}
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={styles.label}>Job Number</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. JOB-2024-001 (for timesheets)"
+            placeholderTextColor={Colors.textTertiary}
+            value={jobNumber}
+            onChangeText={setJobNumber}
+            autoCapitalize="characters"
+          />
         </View>
 
         <View style={styles.formGroup}>

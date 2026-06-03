@@ -32,6 +32,7 @@ const SiteSchema = z.object({
   startDate: z.string().min(1),
   status: z.enum(["active", "completed", "on-hold"]),
   progressPercent: z.number().min(0).max(100).int().default(0),
+  jobNumber: z.string().default(""),
 });
 
 const EntrySchema = z.object({
@@ -42,6 +43,8 @@ const EntrySchema = z.object({
   crewCount: z.string().default(""),
   notes: z.string().default(""),
   photos: z.array(z.record(z.unknown())).default([]),
+  timeCode: z.string().default(""),
+  hoursWorked: z.string().default(""),
 });
 
 const EntryPatchSchema = EntrySchema.omit({ siteId: true }).partial();

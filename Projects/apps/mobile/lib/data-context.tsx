@@ -453,7 +453,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const addDiary = (diaryData: Omit<GeneratedDiary, "id" | "generatedAt">) => {
     const optimisticDiary: GeneratedDiary = {
       ...diaryData,
-      id: Date.now().toString(),
+      id: `optimistic-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       generatedAt: new Date().toISOString(),
     };
     setDiaries((prev) => {

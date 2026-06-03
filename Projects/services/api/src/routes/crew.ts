@@ -26,25 +26,40 @@ const TimecardSchema = z.object({
 });
 
 crewRouter.get("/crew/timecards", requireAuth, async (req, res) => {
-  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
-  const timecards = await listTimecards(getActor(req), siteId);
-  return res.json({ timecards });
+  try {
+    const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+    const timecards = await listTimecards(getActor(req), siteId);
+    return res.json({ timecards });
+  } catch (err) {
+    console.error("[crew] list timecards failed", err);
+    return res.status(500).json({ error: "Failed to list timecards." });
+  }
 });
 
 crewRouter.post("/crew/timecards", requireAuth, async (req, res) => {
-  const parsed = TimecardSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "Invalid timecard payload.", details: parsed.error.flatten() });
+  try {
+    const parsed = TimecardSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid timecard payload.", details: parsed.error.flatten() });
+    }
+    const timecard = await createTimecard(getActor(req), {
+      ...parsed.data,
+      entryId: parsed.data.entryId ?? null,
+    });
+    return res.status(201).json({ timecard });
+  } catch (err) {
+    console.error("[crew] create timecard failed", err);
+    return res.status(500).json({ error: "Failed to create timecard." });
   }
-  const timecard = await createTimecard(getActor(req), {
-    ...parsed.data,
-    entryId: parsed.data.entryId ?? null,
-  });
-  return res.status(201).json({ timecard });
 });
 
 crewRouter.delete("/crew/timecards/:id", requireAuth, async (req, res) => {
-  const removed = await deleteTimecard(getActor(req), req.params.id);
-  if (!removed) return res.status(404).json({ error: "Timecard not found." });
-  return res.json({ ok: true });
+  try {
+    const removed = await deleteTimecard(getActor(req), req.params.id);
+    if (!removed) return res.status(404).json({ error: "Timecard not found." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[crew] delete timecard failed", err);
+    return res.status(500).json({ error: "Failed to delete timecard." });
+  }
 });

@@ -23,28 +23,48 @@ const DeliverySchema = z.object({
 const DeliveryPatchSchema = DeliverySchema.omit({ siteId: true }).partial();
 
 deliveriesRouter.get("/deliveries", async (req, res) => {
-  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
-  const deliveries = await listDeliveries(getActor(req as unknown as AuthenticatedRequest), siteId);
-  return res.json({ deliveries });
+  try {
+    const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+    const deliveries = await listDeliveries(getActor(req as unknown as AuthenticatedRequest), siteId);
+    return res.json({ deliveries });
+  } catch (err) {
+    console.error("[deliveries] list failed", err);
+    return res.status(500).json({ error: "Failed to list deliveries." });
+  }
 });
 
 deliveriesRouter.post("/deliveries", rateLimit("deliveries-post", 60, 60 * 60 * 1000), async (req, res) => {
-  const parsed = DeliverySchema.safeParse(req.body ?? {});
-  if (!parsed.success) return res.status(400).json({ error: "Invalid delivery payload.", details: parsed.error.flatten() });
-  const delivery = await createDelivery(getActor(req as unknown as AuthenticatedRequest), parsed.data);
-  return res.status(201).json({ delivery });
+  try {
+    const parsed = DeliverySchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Invalid delivery payload.", details: parsed.error.flatten() });
+    const delivery = await createDelivery(getActor(req as unknown as AuthenticatedRequest), parsed.data);
+    return res.status(201).json({ delivery });
+  } catch (err) {
+    console.error("[deliveries] create failed", err);
+    return res.status(500).json({ error: "Failed to create delivery." });
+  }
 });
 
 deliveriesRouter.patch("/deliveries/:id", async (req, res) => {
-  const parsed = DeliveryPatchSchema.safeParse(req.body ?? {});
-  if (!parsed.success) return res.status(400).json({ error: "Invalid delivery patch.", details: parsed.error.flatten() });
-  const delivery = await updateDelivery(getActor(req as unknown as AuthenticatedRequest), req.params.id, parsed.data);
-  if (!delivery) return res.status(404).json({ error: "Delivery not found." });
-  return res.json({ delivery });
+  try {
+    const parsed = DeliveryPatchSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: "Invalid delivery patch.", details: parsed.error.flatten() });
+    const delivery = await updateDelivery(getActor(req as unknown as AuthenticatedRequest), req.params.id, parsed.data);
+    if (!delivery) return res.status(404).json({ error: "Delivery not found." });
+    return res.json({ delivery });
+  } catch (err) {
+    console.error("[deliveries] update failed", err);
+    return res.status(500).json({ error: "Failed to update delivery." });
+  }
 });
 
 deliveriesRouter.delete("/deliveries/:id", async (req, res) => {
-  const removed = await deleteDelivery(getActor(req as unknown as AuthenticatedRequest), req.params.id);
-  if (!removed) return res.status(404).json({ error: "Delivery not found." });
-  return res.json({ ok: true });
+  try {
+    const removed = await deleteDelivery(getActor(req as unknown as AuthenticatedRequest), req.params.id);
+    if (!removed) return res.status(404).json({ error: "Delivery not found." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[deliveries] delete failed", err);
+    return res.status(500).json({ error: "Failed to delete delivery." });
+  }
 });

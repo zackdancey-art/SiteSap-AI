@@ -26,6 +26,8 @@ const DiaryEntrySchema = z.object({
   weather: z.string().optional(),
   crewCount: z.string().optional(),
   notes: z.string().optional(),
+  timeCode: z.string().optional(),
+  hoursWorked: z.string().optional(),
   photos: z.array(DiaryPhotoSchema).optional(),
   timestamp: z.string().optional(),
 });
@@ -112,6 +114,8 @@ function normalizeEntry(entry: GenerateDiaryEntry): DiarySection {
   const workParts: string[] = [];
   if (entry.notes?.trim()) workParts.push(entry.notes.trim());
   if (entry.locationAddress?.trim()) workParts.push(`Location: ${entry.locationAddress.trim()}`);
+  if (entry.timeCode?.trim()) workParts.push(`Time Code: ${entry.timeCode.trim()}`);
+  if (entry.hoursWorked?.trim()) workParts.push(`Hours Worked: ${entry.hoursWorked.trim()}`);
   const workCompleted = workParts.join("\n") || "Site activities recorded. See photo observations for detail.";
 
   const photoAnalysis =
@@ -444,6 +448,8 @@ async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutp
       weather: entry.weather || "",
       crewCount: entry.crewCount || "",
       notes: entry.notes || "",
+      timeCode: entry.timeCode || "",
+      hoursWorked: entry.hoursWorked || "",
       photoCount: (entry.photos || []).length,
       photoCaptions: (entry.photos || [])
         .map((p) => p.caption || "")
@@ -555,6 +561,8 @@ async function resolveDiaryRequest(req: AuthenticatedRequest, body: GenerateDiar
             storageKey: typeof photo.storageKey === "string" ? photo.storageKey : undefined,
           }))
         : [],
+      timeCode: entry.timeCode,
+      hoursWorked: entry.hoursWorked,
       timestamp: entry.timestamp,
     })),
     period

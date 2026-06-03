@@ -33,11 +33,10 @@ export function getRateLimitKey(req: Request, action: string): string {
 export function isRateLimited(req: Request, action: string, maxRequests: number, windowMs: number): boolean {
   // Shed load if the store is abnormally large (e.g. under a scan attack)
   if (store.size >= MAX_STORE_SIZE) {
-    // Evict a batch of 1000 oldest-looking entries
-    let evicted = 0;
-    for (const key of store.keys()) {
+    // Evict the 1000 entries whose window expires soonest (already expired or about to)
+    const sorted = [...store.entries()].sort((a, b) => a[1].resetAt - b[1].resetAt);
+    for (const [key] of sorted.slice(0, 1000)) {
       store.delete(key);
-      if (++evicted >= 1000) break;
     }
   }
 

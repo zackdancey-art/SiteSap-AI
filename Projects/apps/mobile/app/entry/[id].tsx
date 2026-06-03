@@ -18,6 +18,7 @@ import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { Photo } from "@/lib/types";
 import { buildEntryPhotosReportHtml, exportReportDocument } from "@/lib/export-utils";
+import Svg, { Path as SvgPath } from "react-native-svg";
 
 export default function EntryDetailScreen() {
   const insets = useSafeAreaInsets();
@@ -77,7 +78,7 @@ export default function EntryDetailScreen() {
   };
 
   const dateObj = new Date(entry.date + "T00:00:00");
-  const formattedDate = dateObj.toLocaleDateString("en-AU", {
+  const formattedDate = dateObj.toLocaleDateString(undefined, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -158,6 +159,20 @@ export default function EntryDetailScreen() {
               <Text style={styles.infoValue}>{entry.crewCount} workers</Text>
             </View>
           )}
+          {!!entry.timeCode && (
+            <View style={styles.infoCard}>
+              <Ionicons name="time" size={24} color={Colors.accent} />
+              <Text style={styles.infoLabel}>Time Code</Text>
+              <Text style={styles.infoValue}>{entry.timeCode}</Text>
+            </View>
+          )}
+          {!!entry.hoursWorked && (
+            <View style={styles.infoCard}>
+              <Ionicons name="timer-outline" size={24} color={Colors.accent} />
+              <Text style={styles.infoLabel}>Hours</Text>
+              <Text style={styles.infoValue}>{entry.hoursWorked}h</Text>
+            </View>
+          )}
           <View style={styles.infoCard}>
             <Ionicons name="camera" size={24} color={Colors.accent} />
             <Text style={styles.infoLabel}>Photos</Text>
@@ -202,15 +217,25 @@ export default function EntryDetailScreen() {
             </View>
           ) : (
             <View style={styles.photoGrid}>
-              {entry.photos.map((photo) => (
-                <Pressable
-                  key={photo.id}
-                  style={styles.photoThumb}
-                  onPress={() => setPreviewPhoto(photo)}
-                >
-                  <Image source={{ uri: photo.uri }} style={styles.photoImage} />
-                </Pressable>
-              ))}
+              {entry.photos.map((photo) => {
+                const paths = (photo as Photo & { annotationPaths?: Array<{ d: string; color: string; width: number }> }).annotationPaths;
+                return (
+                  <Pressable
+                    key={photo.id}
+                    style={styles.photoThumb}
+                    onPress={() => setPreviewPhoto(photo)}
+                  >
+                    <Image source={{ uri: photo.uri }} style={styles.photoImage} />
+                    {paths && paths.length > 0 && (
+                      <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+                        {paths.map((p, i) => (
+                          <SvgPath key={i} d={p.d} stroke={p.color} strokeWidth={p.width} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                        ))}
+                      </Svg>
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
           )}
         </View>

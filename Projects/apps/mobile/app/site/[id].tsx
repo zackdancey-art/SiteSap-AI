@@ -21,9 +21,9 @@ import { getApiBaseUrl } from "@/lib/api-base-url";
 
 function EntryCard({ entry }: { entry: DailyEntry }) {
   const dateObj = new Date(entry.date + "T00:00:00");
-  const dayName = dateObj.toLocaleDateString("en-AU", { weekday: "short" });
+  const dayName = dateObj.toLocaleDateString(undefined, { weekday: "short" });
   const dayNum = dateObj.getDate();
-  const month = dateObj.toLocaleDateString("en-AU", { month: "short" });
+  const month = dateObj.toLocaleDateString(undefined, { month: "short" });
 
   return (
     <Pressable
@@ -48,6 +48,12 @@ function EntryCard({ entry }: { entry: DailyEntry }) {
             <View style={styles.metaChip}>
               <Ionicons name="people-outline" size={12} color={Colors.accent} />
               <Text style={styles.metaText}>{entry.crewCount} crew</Text>
+            </View>
+          )}
+          {!!entry.timeCode && (
+            <View style={styles.metaChip}>
+              <Ionicons name="time-outline" size={12} color={Colors.accent} />
+              <Text style={styles.metaText}>{entry.timeCode}{entry.hoursWorked ? ` · ${entry.hoursWorked}h` : ""}</Text>
             </View>
           )}
         </View>
@@ -165,6 +171,12 @@ export default function SiteDetailScreen() {
             <Ionicons name="location-outline" size={14} color="rgba(255,255,255,0.6)" />
             <Text style={styles.headerDetailText}>{site.address}</Text>
           </View>
+          {!!site.jobNumber && (
+            <View style={styles.headerDetail}>
+              <Ionicons name="pricetag-outline" size={14} color="rgba(255,255,255,0.6)" />
+              <Text style={styles.headerDetailText}>Job #{site.jobNumber}</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.statsRow}>
@@ -180,7 +192,7 @@ export default function SiteDetailScreen() {
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statValue}>
-              {new Date(site.startDate).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}
+              {new Date(site.startDate).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
             </Text>
             <Text style={styles.statLabel}>Start</Text>
           </View>

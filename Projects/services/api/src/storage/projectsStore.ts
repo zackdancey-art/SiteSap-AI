@@ -18,6 +18,7 @@ export type SiteRecord = {
   startDate: string;
   status: SiteStatus;
   progressPercent?: number;
+  jobNumber?: string;
   createdAt: string;
   updatedAt?: string;
   deletedAt?: string | null;
@@ -33,6 +34,8 @@ export type EntryRecord = {
   crewCount: string;
   notes: string;
   photos: Array<Record<string, unknown>>;
+  timeCode?: string;
+  hoursWorked?: string;
   timestamp: string;
   updatedAt?: string;
   deletedAt?: string | null;
@@ -178,6 +181,7 @@ function mapSite(row: {
   start_date: string;
   status: SiteStatus;
   progress_percent?: number;
+  job_number?: string;
   created_at: Date;
   updated_at?: Date | null;
   deleted_at?: Date | null;
@@ -191,6 +195,7 @@ function mapSite(row: {
     startDate: row.start_date,
     status: row.status,
     progressPercent: row.progress_percent ?? 0,
+    jobNumber: row.job_number ?? "",
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
     deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
@@ -207,6 +212,8 @@ function mapEntry(row: {
   crew_count: string;
   notes: string;
   photos_json: Array<Record<string, unknown>>;
+  time_code?: string;
+  hours_worked?: string;
   timestamp: Date;
   updated_at?: Date | null;
   deleted_at?: Date | null;
@@ -221,6 +228,8 @@ function mapEntry(row: {
     crewCount: row.crew_count,
     notes: row.notes,
     photos: row.photos_json,
+    timeCode: row.time_code ?? "",
+    hoursWorked: row.hours_worked ?? "",
     timestamp: row.timestamp.toISOString(),
     updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
     deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
@@ -311,13 +320,13 @@ export async function createSite(
   }
   const result = await getPgPool().query<{
     id: string; owner_email: string; name: string; address: string; client: string;
-    start_date: string; status: SiteStatus; progress_percent: number;
+    start_date: string; status: SiteStatus; progress_percent: number; job_number: string;
     created_at: Date; updated_at: Date; deleted_at: Date | null;
   }>(
-    `INSERT INTO project_sites (id, owner_email, name, address, client, start_date, status, progress_percent)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `INSERT INTO project_sites (id, owner_email, name, address, client, start_date, status, progress_percent, job_number)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING *`,
-    [site.id, actor.email, site.name, site.address, site.client, site.startDate, site.status, site.progressPercent]
+    [site.id, actor.email, site.name, site.address, site.client, site.startDate, site.status, site.progressPercent, site.jobNumber ?? ""]
   );
   return mapSite(result.rows[0]);
 }
@@ -409,8 +418,8 @@ export async function listEntries(actor: Actor, siteId?: string, limit = 200, of
   const result = await getPgPool().query<{
     id: string; owner_email: string; site_id: string; date: string;
     location_address: string; weather: string; crew_count: string; notes: string;
-    photos_json: Array<Record<string, unknown>>; timestamp: Date;
-    updated_at: Date | null; deleted_at: Date | null;
+    photos_json: Array<Record<string, unknown>>; time_code: string; hours_worked: string;
+    timestamp: Date; updated_at: Date | null; deleted_at: Date | null;
   }>(`SELECT * FROM project_entries ${where} ORDER BY timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return result.rows.map(mapEntry);
 }
@@ -441,10 +450,12 @@ export async function createEntry(
     crew_count: string;
     notes: string;
     photos_json: Array<Record<string, unknown>>;
+    time_code: string;
+    hours_worked: string;
     timestamp: Date;
   }>(
-    `INSERT INTO project_entries (id, owner_email, site_id, date, location_address, weather, crew_count, notes, photos_json)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+    `INSERT INTO project_entries (id, owner_email, site_id, date, location_address, weather, crew_count, notes, photos_json, time_code, hours_worked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
      RETURNING *`,
     [
       entry.id,
@@ -456,6 +467,8 @@ export async function createEntry(
       entry.crewCount,
       entry.notes,
       JSON.stringify(entry.photos),
+      entry.timeCode ?? "",
+      entry.hoursWorked ?? "",
     ]
   );
   return mapEntry(result.rows[0]);
@@ -497,6 +510,8 @@ export async function updateEntry(
     crew_count: string;
     notes: string;
     photos_json: Array<Record<string, unknown>>;
+    time_code: string;
+    hours_worked: string;
     timestamp: Date;
   }>(
     `UPDATE project_entries
@@ -507,6 +522,8 @@ export async function updateEntry(
        crew_count = COALESCE($5, crew_count),
        notes = COALESCE($6, notes),
        photos_json = COALESCE($7::jsonb, photos_json),
+       time_code = COALESCE($8, time_code),
+       hours_worked = COALESCE($9, hours_worked),
        timestamp = NOW()
      WHERE id = $1
      RETURNING *`,
@@ -518,6 +535,8 @@ export async function updateEntry(
       patch.crewCount ?? null,
       patch.notes ?? null,
       patch.photos ? JSON.stringify(patch.photos) : null,
+      patch.timeCode ?? null,
+      patch.hoursWorked ?? null,
     ]
   );
   if (result.rowCount === 0) return null;
