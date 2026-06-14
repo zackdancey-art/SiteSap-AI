@@ -31,11 +31,15 @@ function isLocalhostUrl(url: string) {
   return /localhost|127\.0\.0\.1/i.test(url);
 }
 
+function isLanUrl(url: string) {
+  return /^http:\/\//i.test(url);
+}
+
 function normalizeUrl(url: string) {
   return url.trim().replace(/\/$/, "");
 }
 
-export function resolveApiBaseUrl() {
+export function resolveApiBaseUrl(): string {
   const expoExtra = Constants.expoConfig?.extra as ExpoExtra | undefined;
   const envBase =
     process.env.EXPO_PUBLIC_API_BASE_URL ||
@@ -45,6 +49,14 @@ export function resolveApiBaseUrl() {
   const candidate = normalizeUrl(envBase || expoExtra?.apiUrl || "");
 
   if (!candidate) {
+    if (!__DEV__) {
+      // A release build with no API URL configured is non-functional.
+      // Throw early rather than silently hitting a LAN address that won't exist in the field.
+      throw new Error(
+        "[api] Production build is missing EXPO_PUBLIC_API_BASE_URL. " +
+        "Set it in your EAS build profile (eas.json) and rebuild."
+      );
+    }
     const host = getHostFromExpoRuntime();
     if (host) {
       const runtimeGuess = `http://${host}:4001`;
@@ -53,6 +65,13 @@ export function resolveApiBaseUrl() {
     }
     console.warn(`[api] Missing API base URL; using fallback ${DEFAULT_LAN_API_URL}`);
     return DEFAULT_LAN_API_URL;
+  }
+
+  if (!__DEV__ && (isLocalhostUrl(candidate) || isLanUrl(candidate))) {
+    throw new Error(
+      `[api] Production build has an invalid API URL: "${candidate}". ` +
+      "Release builds must use an HTTPS URL. Set EXPO_PUBLIC_API_BASE_URL in eas.json and rebuild."
+    );
   }
 
   if (isLocalhostUrl(candidate)) {
@@ -70,4 +89,8 @@ export function logResolvedApiBaseUrlOnce() {
   logged = true;
   const base = resolveApiBaseUrl();
   console.log(`[api] Resolved base URL: ${base}`);
+}
+
+export function getApiBaseUrl() {
+  return resolveApiBaseUrl();
 }
