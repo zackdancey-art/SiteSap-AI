@@ -5,7 +5,7 @@ import { buildDiaryFromEntries } from "./ai";
 test("buildDiaryFromEntries creates defaults for missing fields", () => {
   const result = buildDiaryFromEntries([{ notes: "Installed framing" }]);
 
-  assert.match(result.summary, /Compiled from 1 entry/i);
+  assert.match(result.summary, /This daily site diary covers 1 work record/i);
   assert.equal(result.sections.length, 1);
   assert.equal(result.sections[0].workCompleted, "Installed framing");
   assert.equal(result.sections[0].weather, "Not recorded");
@@ -18,7 +18,7 @@ test("buildDiaryFromEntries creates defaults for missing fields", () => {
 
 test("buildDiaryFromEntries pluralizes summary", () => {
   const result = buildDiaryFromEntries([{ notes: "A" }, { notes: "B" }]);
-  assert.match(result.summary, /Compiled from 2 entries/i);
+  assert.match(result.summary, /This daily site diary covers 2 work records/i);
 });
 
 test("buildDiaryFromEntries keeps safety checklist to explicit observations only", () => {

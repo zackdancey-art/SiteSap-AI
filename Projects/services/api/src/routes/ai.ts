@@ -117,16 +117,14 @@ function normalizeEntry(entry: GenerateDiaryEntry): DiarySection {
   const photoAnalysis =
     captionNotes.length > 0
       ? captionNotes.map((c, i) => `Photo ${i + 1}: ${c}`).join("\n")
-      : photos.length > 0
-        ? `${photos.length} photo(s) uploaded. Review images for site conditions and progress.`
-        : "No photos attached for this entry.";
+      : "N/A";
 
   return {
     date: String(entry.date ?? new Date().toISOString().slice(0, 10)),
     weather: String(entry.weather ?? "Not recorded"),
     crewCount: String(entry.crewCount ?? "Not recorded"),
     workCompleted,
-    safetyObservations: "To be completed by site supervisor.",
+    safetyObservations: "N/A",
     materialsUsed: "Refer to site records.",
     issues: "None reported.",
     photoAnalysis,
@@ -348,15 +346,18 @@ export function buildDiaryFromEntries(entries: GenerateDiaryEntry[], period: Rep
   summaryParts.push("Full activity details are recorded in the daily activity section below.");
 
   const summary = summaryParts.join(" ");
-  const safetyChecklist = [
-    "All operatives to wear appropriate PPE at all times (hard hat, hi-vis vest, safety footwear)",
-    "Site induction completed for all new personnel prior to commencing work",
-    "Daily briefing conducted and hazards communicated to all operatives",
-    "Work area properly demarcated and public exclusion zones maintained",
-    "Plant and equipment pre-use inspections completed and records retained",
-    "Manual handling risks assessed and appropriate controls in place",
-    "Emergency procedures and first aid provisions confirmed on site",
-  ];
+  // Collect explicit safety observations verbatim — never invent checklist items.
+  // Notes are included only when photos accompany them (crew is documenting safety with evidence).
+  // Photo captions are always included when present. AI mode generates a richer, context-specific list.
+  const safetyChecklist: string[] = [];
+  for (const entry of entries) {
+    const photos = entry.photos ?? [];
+    if (entry.notes?.trim() && photos.length > 0) safetyChecklist.push(entry.notes.trim());
+    for (const photo of photos) {
+      const caption = (photo as { caption?: string }).caption?.trim();
+      if (caption) safetyChecklist.push(caption);
+    }
+  }
 
   return {
     summary,
