@@ -1,12 +1,25 @@
 {
   "permissions": {
+    "defaultMode": "auto",
     "allow": [
-      "Bash(git add *)",
-      "Bash(git rm *)",
-      "Bash(git commit -m ' *)",
-      "Bash(git push *)",
-      "Bash(xargs ls *)",
-      "Bash(awk -F: '{sum+=$2} END {print sum}')"
+      "Bash(git:*)",
+      "Bash(pnpm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(xargs:*)",
+      "Bash(awk:*)",
+      "Bash(python3:*)",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)",
+      "Read(./.env)",
+      "Read(./.env.*)"
     ]
   }
 }
