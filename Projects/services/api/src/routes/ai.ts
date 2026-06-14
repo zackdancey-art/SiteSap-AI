@@ -41,7 +41,7 @@ const GenerateDiaryBodySchema = z.object({
     })
     .optional(),
   period: z.enum(["daily", "weekly", "monthly"]).optional(),
-  entries: z.array(DiaryEntrySchema).optional(),
+  entries: z.array(DiaryEntrySchema).max(50).optional(),
 });
 
 type GenerateDiaryPhoto = z.infer<typeof DiaryPhotoSchema>;
