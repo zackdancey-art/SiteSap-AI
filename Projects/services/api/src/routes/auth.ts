@@ -1,4 +1,5 @@
 import { Request, Response, Router } from "express";
+import { randomBytes, randomInt } from "crypto";
 import {
   createPasswordResetToken,
   createUser,
@@ -49,12 +50,12 @@ function normalizePhone(phone: string) {
   return `${hasPlus ? "+" : ""}${digits}`;
 }
 
-function makeResetToken(email: string) {
-  return Buffer.from(`${email}:${Date.now()}:${Math.random()}`).toString("base64url");
+function makeResetToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
-function makeCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+function makeCode(): string {
+  return String(randomInt(100000, 1000000));
 }
 
 function buildResetLink(resetToken: string) {
@@ -366,7 +367,7 @@ router.post("/auth/forgot-password", async (req, res) => {
     const user = await findUserByIdentifier(normalizedIdentifier, normalizedPhone);
 
     if (user) {
-      const resetToken = makeResetToken(user.email);
+      const resetToken = makeResetToken();
       const resetLink = buildResetLink(resetToken);
       const resetCode = resetToken.slice(0, 8).toUpperCase();
       await createPasswordResetToken(resetToken, user.email, new Date(Date.now() + 1000 * 60 * 30));

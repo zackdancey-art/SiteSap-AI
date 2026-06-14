@@ -14,6 +14,20 @@ export function initSentry() {
     environment: process.env.NODE_ENV || "development",
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
     sendDefaultPii: false,
+    beforeSend(event) {
+      // Strip auth headers and sensitive query params from every reported event
+      if (event.request?.headers) {
+        delete event.request.headers["authorization"];
+        delete event.request.headers["cookie"];
+      }
+      if (typeof event.request?.query_string === "string") {
+        event.request.query_string = event.request.query_string.replace(
+          /\b(sig|token|key)=[^&]*/gi,
+          "$1=[redacted]"
+        );
+      }
+      return event;
+    },
   });
   console.log("[sentry] initialised");
 }
