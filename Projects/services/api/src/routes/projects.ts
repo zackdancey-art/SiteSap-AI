@@ -38,6 +38,9 @@ const EntrySchema = z.object({
   crewCount: z.string().default(""),
   notes: z.string().default(""),
   photos: z.array(z.record(z.unknown())).default([]),
+  swmsRef: z.string().optional(),
+  hazardNotes: z.string().optional(),
+  toolboxTalk: z.boolean().optional(),
 });
 
 const EntryPatchSchema = EntrySchema.omit({ siteId: true }).partial();
