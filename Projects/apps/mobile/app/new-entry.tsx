@@ -53,9 +53,11 @@ async function createStoredPhoto(asset: ImagePicker.ImagePickerAsset): Promise<P
 
 export default function NewEntryScreen() {
   const { siteId, entryId } = useLocalSearchParams<{ siteId: string; entryId?: string }>();
-  const { addEntry, updateEntry, getSite, getEntry } = useData();
+  const { addEntry, updateEntry, getSite, getEntry, getSiteTemplates } = useData();
   const existingEntry = entryId ? getEntry(entryId) : undefined;
   const site = getSite(existingEntry?.siteId ?? siteId);
+  const activeSiteId = existingEntry?.siteId ?? siteId;
+  const siteTemplates = getSiteTemplates(activeSiteId);
   const [date, setDate] = useState(existingEntry?.date ?? new Date().toISOString().split("T")[0]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateDraft, setDateDraft] = useState(new Date(`${new Date().toISOString().split("T")[0]}T00:00:00`));
@@ -68,6 +70,7 @@ export default function NewEntryScreen() {
   const [photos, setPhotos] = useState<PhotoWithBase64[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pickingPhoto, setPickingPhoto] = useState(false);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const isEditing = Boolean(entryId);
 
   const weatherOptions = ["Sunny", "Partly Cloudy", "Overcast", "Rain", "Storm", "Windy"];
@@ -218,6 +221,13 @@ export default function NewEntryScreen() {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
   };
 
+  const applyTemplate = (tmpl: { weather: string; crewCount: string; notesTemplate: string }) => {
+    if (tmpl.weather) setWeather(tmpl.weather);
+    if (tmpl.crewCount) setCrewCount(tmpl.crewCount);
+    if (tmpl.notesTemplate) setNotes(tmpl.notesTemplate);
+    setShowTemplatePicker(false);
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
     const savedAt = new Date().toISOString();
@@ -268,6 +278,55 @@ export default function NewEntryScreen() {
             </View>
           </View>
         )}
+
+        {!isEditing && siteTemplates.length > 0 && (
+          <Pressable style={styles.templateButton} onPress={() => setShowTemplatePicker(true)}>
+            <Ionicons name="copy-outline" size={18} color={Colors.accent} />
+            <Text style={styles.templateButtonText}>Apply Template</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.textSecondary} />
+          </Pressable>
+        )}
+
+        <Modal
+          visible={showTemplatePicker}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowTemplatePicker(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Choose a Template</Text>
+              <Text style={styles.templatePickerHint}>Pre-fills weather, crew count, and notes</Text>
+              <ScrollView style={styles.templateList} showsVerticalScrollIndicator={false}>
+                {siteTemplates.map((tmpl) => (
+                  <Pressable
+                    key={tmpl.id}
+                    style={styles.templateRow}
+                    onPress={() => applyTemplate(tmpl)}
+                  >
+                    <View style={styles.templateRowIcon}>
+                      <Ionicons name="document-text-outline" size={18} color={Colors.accent} />
+                    </View>
+                    <View style={styles.templateRowText}>
+                      <Text style={styles.templateRowName}>{tmpl.name}</Text>
+                      {(tmpl.weather || tmpl.crewCount) ? (
+                        <Text style={styles.templateRowMeta} numberOfLines={1}>
+                          {[tmpl.weather, tmpl.crewCount ? `${tmpl.crewCount} crew` : ""].filter(Boolean).join(" · ")}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={Colors.textSecondary} />
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <View style={styles.modalActions}>
+                <Pressable style={styles.modalSecondary} onPress={() => setShowTemplatePicker(false)}>
+                  <Text style={styles.modalSecondaryText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         <View style={styles.formGroup}>
           <Text style={styles.label}>Date</Text>
@@ -730,6 +789,62 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: Colors.textSecondary,
     marginTop: 1,
+  },
+  templateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  templateButtonText: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: Colors.accent,
+  },
+  templatePickerHint: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  templateList: {
+    maxHeight: 280,
+  },
+  templateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  templateRowIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.accent + "14",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  templateRowText: {
+    flex: 1,
+  },
+  templateRowName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+  },
+  templateRowMeta: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   textArea: {
     backgroundColor: Colors.surface,

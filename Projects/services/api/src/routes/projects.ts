@@ -5,15 +5,19 @@ import {
   createDiary,
   createEntry,
   createSite,
+  createTemplate,
   deleteEntry,
   deleteSite,
+  deleteTemplate,
   getScopedBootstrap,
   getSupervisorReport,
   listDiaries,
   listEntries,
   listSites,
+  listTemplates,
   updateDiary,
   updateEntry,
+  updateTemplate,
 } from "../storage/projectsStore";
 
 function parsePagination(query: Record<string, unknown>) {
@@ -60,6 +64,16 @@ const DiaryPatchSchema = z.object({
   safetyChecklist: z.array(z.string()).optional(),
   sections: z.array(z.record(z.unknown())).optional(),
 });
+
+const TemplateSchema = z.object({
+  siteId: z.string().min(1),
+  name: z.string().min(1).default("Default"),
+  weather: z.string().default(""),
+  crewCount: z.string().default(""),
+  notesTemplate: z.string().default(""),
+});
+
+const TemplatePatchSchema = TemplateSchema.omit({ siteId: true }).partial();
 
 export const projectsRouter: Router = Router();
 
@@ -182,4 +196,39 @@ projectsRouter.patch("/projects/diaries/:id", async (req, res) => {
 projectsRouter.get("/projects/reports/supervisor", requireRole("supervisor", "admin"), async (req, res) => {
   const perSite = await getSupervisorReport();
   return res.json({ generatedAt: new Date().toISOString(), perSite });
+});
+
+projectsRouter.get("/projects/templates", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const siteId = typeof req.query.siteId === "string" ? req.query.siteId : undefined;
+  const templates = await listTemplates(actor, siteId);
+  return res.json({ templates });
+});
+
+projectsRouter.post("/projects/templates", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const parsed = TemplateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid template payload.", details: parsed.error.flatten() });
+  }
+  const template = await createTemplate(actor, parsed.data);
+  return res.status(201).json({ template });
+});
+
+projectsRouter.patch("/projects/templates/:id", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const parsed = TemplatePatchSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid template patch.", details: parsed.error.flatten() });
+  }
+  const template = await updateTemplate(actor, req.params.id, parsed.data);
+  if (!template) return res.status(404).json({ error: "Template not found." });
+  return res.json({ template });
+});
+
+projectsRouter.delete("/projects/templates/:id", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const removed = await deleteTemplate(actor, req.params.id);
+  if (!removed) return res.status(404).json({ error: "Template not found." });
+  return res.json({ ok: true });
 });

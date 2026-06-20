@@ -45,24 +45,38 @@ export type DiaryRecord = {
   sections: Array<Record<string, unknown>>;
 };
 
+export type TemplateRecord = {
+  id: string;
+  ownerEmail: string;
+  siteId: string;
+  name: string;
+  weather: string;
+  crewCount: string;
+  notesTemplate: string;
+  createdAt: string;
+};
+
 type Actor = { email: string; role: UserRole };
 
 type MemoryState = {
   sites: Map<string, SiteRecord>;
   entries: Map<string, EntryRecord>;
   diaries: Map<string, DiaryRecord>;
+  templates: Map<string, TemplateRecord>;
 };
 
 type MemoryJson = {
   sites: SiteRecord[];
   entries: EntryRecord[];
   diaries: DiaryRecord[];
+  templates: TemplateRecord[];
 };
 
 const memory: MemoryState = {
   sites: new Map<string, SiteRecord>(),
   entries: new Map<string, EntryRecord>(),
   diaries: new Map<string, DiaryRecord>(),
+  templates: new Map<string, TemplateRecord>(),
 };
 
 function useDatabase() {
@@ -85,11 +99,15 @@ const store = new FileBackedStore<Partial<MemoryJson>>(
     for (const diary of Array.isArray(parsed.diaries) ? parsed.diaries : []) {
       memory.diaries.set(diary.id, diary);
     }
+    for (const tmpl of Array.isArray(parsed.templates) ? parsed.templates : []) {
+      memory.templates.set(tmpl.id, tmpl);
+    }
   },
   () => ({
     sites: Array.from(memory.sites.values()),
     entries: Array.from(memory.entries.values()),
     diaries: Array.from(memory.diaries.values()),
+    templates: Array.from(memory.templates.values()),
   })
 );
 
@@ -716,24 +734,167 @@ export async function deleteAllUserProjectData(email: string): Promise<void> {
     for (const [id, diary] of memory.diaries.entries()) {
       if (diary.ownerEmail === email) memory.diaries.delete(id);
     }
+    for (const [id, tmpl] of memory.templates.entries()) {
+      if (tmpl.ownerEmail === email) memory.templates.delete(id);
+    }
     await persistMemory();
     return;
   }
-  // CASCADE constraints handle entries/diaries automatically on site delete
+  // CASCADE constraints handle entries/diaries/templates automatically on site delete
   await getPgPool().query(`DELETE FROM project_sites WHERE owner_email = $1`, [email]);
   await getPgPool().query(`DELETE FROM project_entries WHERE owner_email = $1`, [email]);
   await getPgPool().query(`DELETE FROM project_diaries WHERE owner_email = $1`, [email]);
+  await getPgPool().query(`DELETE FROM project_templates WHERE owner_email = $1`, [email]);
 }
 
 export async function resetProjectStoreForTests() {
   if (useDatabase()) {
     await getPgPool().query(`DELETE FROM project_diaries`);
     await getPgPool().query(`DELETE FROM project_entries`);
+    await getPgPool().query(`DELETE FROM project_templates`);
     await getPgPool().query(`DELETE FROM project_sites`);
     return;
   }
   memory.sites.clear();
   memory.entries.clear();
   memory.diaries.clear();
+  memory.templates.clear();
   store.resetForTests();
+}
+
+// ─── Templates ───────────────────────────────────────────────────────────────
+
+function mapTemplate(row: {
+  id: string;
+  owner_email: string;
+  site_id: string;
+  name: string;
+  weather: string;
+  crew_count: string;
+  notes_template: string;
+  created_at: Date;
+}): TemplateRecord {
+  return {
+    id: row.id,
+    ownerEmail: row.owner_email,
+    siteId: row.site_id,
+    name: row.name,
+    weather: row.weather,
+    crewCount: row.crew_count,
+    notesTemplate: row.notes_template,
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+export async function listTemplates(actor: Actor, siteId?: string): Promise<TemplateRecord[]> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    return Array.from(memory.templates.values())
+      .filter((t) => canAccessOwner(actor, t.ownerEmail))
+      .filter((t) => (siteId ? t.siteId === siteId : true))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  const queryParts: string[] = [];
+  const params: unknown[] = [];
+  if (!isElevatedRole(actor.role)) {
+    params.push(actor.email);
+    queryParts.push(`owner_email = $${params.length}`);
+  }
+  if (siteId) {
+    params.push(siteId);
+    queryParts.push(`site_id = $${params.length}`);
+  }
+  const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; site_id: string; name: string;
+    weather: string; crew_count: string; notes_template: string; created_at: Date;
+  }>(`SELECT * FROM project_templates ${where} ORDER BY created_at DESC`, params);
+  return result.rows.map(mapTemplate);
+}
+
+export async function createTemplate(
+  actor: Actor,
+  payload: Pick<TemplateRecord, "siteId" | "name" | "weather" | "crewCount" | "notesTemplate">
+): Promise<TemplateRecord> {
+  const tmpl: TemplateRecord = {
+    id: uuidv4(),
+    ownerEmail: actor.email,
+    createdAt: new Date().toISOString(),
+    ...payload,
+  };
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    memory.templates.set(tmpl.id, tmpl);
+    await persistMemory();
+    return tmpl;
+  }
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; site_id: string; name: string;
+    weather: string; crew_count: string; notes_template: string; created_at: Date;
+  }>(
+    `INSERT INTO project_templates (id, owner_email, site_id, name, weather, crew_count, notes_template)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING *`,
+    [tmpl.id, actor.email, tmpl.siteId, tmpl.name, tmpl.weather, tmpl.crewCount, tmpl.notesTemplate]
+  );
+  return mapTemplate(result.rows[0]);
+}
+
+export async function updateTemplate(
+  actor: Actor,
+  templateId: string,
+  patch: Partial<Pick<TemplateRecord, "name" | "weather" | "crewCount" | "notesTemplate">>
+): Promise<TemplateRecord | null> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const current = memory.templates.get(templateId);
+    if (!current || !canAccessOwner(actor, current.ownerEmail)) return null;
+    const updated = { ...current, ...patch };
+    memory.templates.set(templateId, updated);
+    await persistMemory();
+    return updated;
+  }
+  const existing = await getPgPool().query<{ owner_email: string }>(
+    `SELECT owner_email FROM project_templates WHERE id = $1 LIMIT 1`,
+    [templateId]
+  );
+  if (existing.rowCount === 0) return null;
+  if (!canAccessOwner(actor, existing.rows[0].owner_email)) return null;
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; site_id: string; name: string;
+    weather: string; crew_count: string; notes_template: string; created_at: Date;
+  }>(
+    `UPDATE project_templates
+     SET name = COALESCE($2, name),
+         weather = COALESCE($3, weather),
+         crew_count = COALESCE($4, crew_count),
+         notes_template = COALESCE($5, notes_template)
+     WHERE id = $1
+     RETURNING *`,
+    [templateId, patch.name ?? null, patch.weather ?? null, patch.crewCount ?? null, patch.notesTemplate ?? null]
+  );
+  if (result.rowCount === 0) return null;
+  return mapTemplate(result.rows[0]);
+}
+
+export async function deleteTemplate(actor: Actor, templateId: string): Promise<boolean> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const tmpl = memory.templates.get(templateId);
+    if (!tmpl || !canAccessOwner(actor, tmpl.ownerEmail)) return false;
+    memory.templates.delete(templateId);
+    await persistMemory();
+    return true;
+  }
+  const existing = await getPgPool().query<{ owner_email: string }>(
+    `SELECT owner_email FROM project_templates WHERE id = $1 LIMIT 1`,
+    [templateId]
+  );
+  if (existing.rowCount === 0) return false;
+  if (!canAccessOwner(actor, existing.rows[0].owner_email)) return false;
+  const result = await getPgPool().query(
+    `DELETE FROM project_templates WHERE id = $1`,
+    [templateId]
+  );
+  return (result.rowCount ?? 0) > 0;
 }
