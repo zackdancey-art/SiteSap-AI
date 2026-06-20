@@ -1,5 +1,5 @@
 // Expo evaluates this file in Node, so runtime metadata can be derived here.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const pkg = require("./package.json");
 const buildStamp = new Date().toISOString().replace("T", " ").slice(0, 16);
 

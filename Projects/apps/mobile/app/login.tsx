@@ -77,6 +77,7 @@ export default function LoginScreen() {
           <View style={styles.logoSection}>
             <View style={styles.logoContainer}>
               <Image
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
                 source={require("../../../assets/images/splash-icon.png")}
                 style={styles.logoImage}
                 resizeMode="contain"
