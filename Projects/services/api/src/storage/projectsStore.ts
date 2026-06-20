@@ -32,6 +32,13 @@ export type EntryRecord = {
   timestamp: string;
 };
 
+export type DiaryEditLogEntry = {
+  at: string;
+  action: "approved" | "reverted" | "edited";
+  by: string;
+  note?: string;
+};
+
 export type DiaryRecord = {
   id: string;
   ownerEmail: string;
@@ -43,6 +50,7 @@ export type DiaryRecord = {
   fullReport: string;
   safetyChecklist: string[];
   sections: Array<Record<string, unknown>>;
+  editLog: DiaryEditLogEntry[];
 };
 
 type Actor = { email: string; role: UserRole };
@@ -218,6 +226,7 @@ function mapDiary(row: {
   full_report: string;
   safety_checklist_json: string[] | null;
   sections_json: Array<Record<string, unknown>>;
+  edit_log?: DiaryEditLogEntry[] | null;
 }): DiaryRecord {
   const period: ReportPeriod =
     row.report_period === "weekly" || row.report_period === "monthly" ? row.report_period : "daily";
@@ -232,6 +241,7 @@ function mapDiary(row: {
     fullReport: row.full_report || "",
     safetyChecklist: Array.isArray(row.safety_checklist_json) ? row.safety_checklist_json : [],
     sections: row.sections_json,
+    editLog: Array.isArray(row.edit_log) ? row.edit_log : [],
   };
 }
 
@@ -524,12 +534,13 @@ export async function listDiaries(actor: Actor, siteId?: string, limit = 200, of
 
 export async function createDiary(
   actor: Actor,
-  payload: Omit<DiaryRecord, "id" | "ownerEmail" | "generatedAt">
+  payload: Omit<DiaryRecord, "id" | "ownerEmail" | "generatedAt" | "editLog">
 ): Promise<DiaryRecord> {
   const diary: DiaryRecord = {
     id: uuidv4(),
     ownerEmail: actor.email,
     generatedAt: new Date().toISOString(),
+    editLog: [],
     ...payload,
   };
   if (!useDatabase()) {
@@ -570,28 +581,76 @@ export async function createDiary(
   return mapDiary(result.rows[0]);
 }
 
+function buildAuditEntry(
+  current: DiaryRecord,
+  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections">>,
+  actor: Actor,
+  note?: string
+): DiaryEditLogEntry | null {
+  if (patch.status && patch.status !== current.status) {
+    const action = patch.status === "approved" ? "approved" : "reverted";
+    const entry: DiaryEditLogEntry = { at: new Date().toISOString(), action, by: actor.email };
+    if (note) entry.note = note;
+    return entry;
+  }
+  const contentChanged =
+    (patch.summary !== undefined && patch.summary !== current.summary) ||
+    (patch.fullReport !== undefined && patch.fullReport !== current.fullReport);
+  if (contentChanged) {
+    return { at: new Date().toISOString(), action: "edited", by: actor.email };
+  }
+  return null;
+}
+
 export async function updateDiary(
   actor: Actor,
   diaryId: string,
-  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections">>
+  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections">>,
+  note?: string
 ): Promise<DiaryRecord | null> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const current = memory.diaries.get(diaryId);
     if (!current || !canAccessOwner(actor, current.ownerEmail)) return null;
-    const updated = { ...current, ...patch };
+    const auditEntry = buildAuditEntry(current, patch, actor, note);
+    const updated: DiaryRecord = {
+      ...current,
+      ...patch,
+      editLog: auditEntry ? [...current.editLog, auditEntry] : current.editLog,
+    };
     memory.diaries.set(diaryId, updated);
     await persistMemory();
     return updated;
   }
 
-  const existingResult = await getPgPool().query<{ owner_email: string }>(
-    `SELECT owner_email FROM project_diaries WHERE id = $1 LIMIT 1`,
+  const existingResult = await getPgPool().query<{
+    owner_email: string;
+    status: DiaryStatus;
+    summary: string;
+    full_report: string;
+    edit_log: DiaryEditLogEntry[] | null;
+  }>(
+    `SELECT owner_email, status, summary, full_report, edit_log FROM project_diaries WHERE id = $1 LIMIT 1`,
     [diaryId]
   );
   if (existingResult.rowCount === 0) return null;
-  const ownerEmail = existingResult.rows[0].owner_email;
-  if (!canAccessOwner(actor, ownerEmail)) return null;
+  const existing = existingResult.rows[0];
+  if (!canAccessOwner(actor, existing.owner_email)) return null;
+
+  const currentForAudit: DiaryRecord = {
+    id: diaryId,
+    ownerEmail: existing.owner_email,
+    siteId: "",
+    generatedAt: "",
+    status: existing.status,
+    summary: existing.summary,
+    reportPeriod: "daily",
+    fullReport: existing.full_report,
+    safetyChecklist: [],
+    sections: [],
+    editLog: Array.isArray(existing.edit_log) ? existing.edit_log : [],
+  };
+  const auditEntry = buildAuditEntry(currentForAudit, patch, actor, note);
 
   const result = await getPgPool().query<{
     id: string;
@@ -604,6 +663,7 @@ export async function updateDiary(
     full_report: string;
     safety_checklist_json: string[] | null;
     sections_json: Array<Record<string, unknown>>;
+    edit_log: DiaryEditLogEntry[] | null;
   }>(
     `UPDATE project_diaries
      SET
@@ -612,7 +672,8 @@ export async function updateDiary(
        report_period = COALESCE($4, report_period),
        full_report = COALESCE($5, full_report),
        safety_checklist_json = COALESCE($6::jsonb, safety_checklist_json),
-       sections_json = COALESCE($7::jsonb, sections_json)
+       sections_json = COALESCE($7::jsonb, sections_json),
+       edit_log = CASE WHEN $8::jsonb IS NOT NULL THEN edit_log || $8::jsonb ELSE edit_log END
      WHERE id = $1
      RETURNING *`,
     [
@@ -623,6 +684,7 @@ export async function updateDiary(
       patch.fullReport ?? null,
       patch.safetyChecklist ? JSON.stringify(patch.safetyChecklist) : null,
       patch.sections ? JSON.stringify(patch.sections) : null,
+      auditEntry ? JSON.stringify([auditEntry]) : null,
     ]
   );
   if (result.rowCount === 0) return null;
