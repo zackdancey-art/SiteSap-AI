@@ -332,12 +332,6 @@ export function buildDiaryFromEntries(entries: GenerateDiaryEntry[], period: Rep
   const sections = entries.map((entry) => normalizeEntry(entry));
   const siteName = "";
 
-  const totalPhotos = entries.reduce((n, e) => n + (e.photos?.length ?? 0), 0);
-  const totalCrew = entries
-    .map((e) => parseInt(e.crewCount || "0", 10))
-    .filter((n) => !isNaN(n) && n > 0);
-  const avgCrew = totalCrew.length > 0 ? Math.round(totalCrew.reduce((a, b) => a + b, 0) / totalCrew.length) : null;
-
   const summary = `Compiled from ${entries.length} ${entries.length === 1 ? "entry" : "entries"} for the reporting period.`;
 
   const safetyChecklist: string[] = [];
