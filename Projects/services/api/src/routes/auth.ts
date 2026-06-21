@@ -101,6 +101,17 @@ async function initiateRegistration(req: Request, res: Response) {
     return res.status(400).json({ error: "Password must be at least 8 characters." });
   }
 
+  // OTP send limits checked after field validation so only real-looking addresses consume quota
+  if (await isRateLimitedByAccount(email, "otp-send", LIMITS.otpSendPerAccount.max, LIMITS.otpSendPerAccount.windowMs)) {
+    return res.status(429).json({ error: "Too many verification codes requested for this account. Please try again shortly." });
+  }
+  if (await isRateLimitedByAccount(email, "otp-send-daily", LIMITS.otpSendPerAccountDaily.max, LIMITS.otpSendPerAccountDaily.windowMs)) {
+    return res.status(429).json({ error: "Daily verification code limit reached for this account. Please try again tomorrow." });
+  }
+  if (await isRateLimitedByIp(req, "otp-send", LIMITS.otpSendPerIp.max, LIMITS.otpSendPerIp.windowMs)) {
+    return res.status(429).json({ error: "Too many verification requests from this network. Please try again shortly." });
+  }
+
   try {
     await purgeExpiredAuthRecords();
     const existingUser = await findUserByEmail(email);
@@ -203,7 +214,7 @@ router.post("/auth/register/verify", async (req, res) => {
 
     if (pending.emailCode !== emailCode || pending.smsCode !== smsCode) {
       const attempts = await incrementPendingAttempts(email);
-      if (attempts >= 5) {
+      if (attempts >= LIMITS.otpVerifyMaxAttempts) {
         await deletePendingRegistration(email);
         return res.status(429).json({ error: "Too many invalid verification attempts. Please register again." });
       }
@@ -351,7 +362,7 @@ router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) =>
 });
 
 router.post("/auth/forgot-password", async (req, res) => {
-  if (await isRateLimitedByIp(req, "forgot-password", 8, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "forgot-password", LIMITS.forgotPasswordPerIp.max, LIMITS.forgotPasswordPerIp.windowMs)) {
     return res.status(429).json({ error: "Too many reset requests. Please try again shortly." });
   }
 
@@ -426,7 +437,7 @@ router.post("/auth/forgot-password", async (req, res) => {
 });
 
 router.post("/auth/reset-password", async (req, res) => {
-  if (await isRateLimitedByIp(req, "reset-password", 12, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "reset-password", LIMITS.resetPasswordPerIp.max, LIMITS.resetPasswordPerIp.windowMs)) {
     return res.status(429).json({ error: "Too many reset attempts. Please try again shortly." });
   }
 

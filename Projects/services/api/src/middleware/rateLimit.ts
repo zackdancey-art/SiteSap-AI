@@ -2,6 +2,7 @@
  * Rate limiter with:
  * - Per-account (email) primary limit for login — so a crew on one shared IP each gets their own budget
  * - Per-IP generous backstop — blocks bots/scanners without throttling legitimate crews
+ * - OTP send limits — prevents verification code spam against any one address
  * - All thresholds configurable via env vars (no code change needed to tune)
  * - Redis backend when REDIS_URL is set; in-memory fallback otherwise
  * - Test-mode bypass: only when NODE_ENV === "test" AND RATE_LIMIT_DISABLE === "1"
@@ -21,22 +22,49 @@ export const LIMITS = {
   // Login: per-account (primary brute-force protection)
   loginPerAccount: {
     max: envInt("RATE_LIMIT_LOGIN_PER_ACCOUNT", 10),
-    windowMs: envInt("RATE_LIMIT_LOGIN_PER_ACCOUNT_WINDOW_MS", 10 * 60 * 1000),
+    windowMs: envInt("RATE_LIMIT_LOGIN_PER_ACCOUNT_WINDOW_MS", 15 * 60 * 1000),
   },
   // Login: per-IP (generous backstop — stops scanners, not crews)
   loginPerIp: {
-    max: envInt("RATE_LIMIT_LOGIN_PER_IP", 200),
-    windowMs: envInt("RATE_LIMIT_LOGIN_PER_IP_WINDOW_MS", 10 * 60 * 1000),
+    max: envInt("RATE_LIMIT_LOGIN_PER_IP", 300),
+    windowMs: envInt("RATE_LIMIT_LOGIN_PER_IP_WINDOW_MS", 15 * 60 * 1000),
   },
   // Registration initiate: per-IP (one network can onboard a whole crew)
   registerPerIp: {
     max: envInt("RATE_LIMIT_REGISTER_PER_IP", 30),
-    windowMs: envInt("RATE_LIMIT_REGISTER_PER_IP_WINDOW_MS", 10 * 60 * 1000),
+    windowMs: envInt("RATE_LIMIT_REGISTER_PER_IP_WINDOW_MS", 60 * 60 * 1000),
   },
   // Registration verify: per-IP (slightly higher — retries are common)
   registerVerifyPerIp: {
     max: envInt("RATE_LIMIT_REGISTER_VERIFY_PER_IP", 60),
     windowMs: envInt("RATE_LIMIT_REGISTER_VERIFY_PER_IP_WINDOW_MS", 10 * 60 * 1000),
+  },
+  // OTP send: per-account burst — prevents an address from being repeatedly spammed
+  otpSendPerAccount: {
+    max: envInt("RATE_LIMIT_OTP_SEND_PER_ACCOUNT", 5),
+    windowMs: envInt("RATE_LIMIT_OTP_SEND_PER_ACCOUNT_WINDOW_MS", 15 * 60 * 1000),
+  },
+  // OTP send: per-account daily ceiling — belt-and-suspenders against sustained abuse
+  otpSendPerAccountDaily: {
+    max: envInt("RATE_LIMIT_OTP_SEND_PER_ACCOUNT_DAILY", 20),
+    windowMs: envInt("RATE_LIMIT_OTP_SEND_PER_ACCOUNT_DAILY_WINDOW_MS", 24 * 60 * 60 * 1000),
+  },
+  // OTP send: per-IP — stops a bot cycling through addresses from one host
+  otpSendPerIp: {
+    max: envInt("RATE_LIMIT_OTP_SEND_PER_IP", 20),
+    windowMs: envInt("RATE_LIMIT_OTP_SEND_PER_IP_WINDOW_MS", 60 * 60 * 1000),
+  },
+  // OTP verify: max failed attempts before the pending registration is invalidated
+  otpVerifyMaxAttempts: envInt("RATE_LIMIT_OTP_VERIFY_MAX_ATTEMPTS", 5),
+  // Password reset send: per-IP
+  forgotPasswordPerIp: {
+    max: envInt("RATE_LIMIT_FORGOT_PASSWORD_PER_IP", 8),
+    windowMs: envInt("RATE_LIMIT_FORGOT_PASSWORD_PER_IP_WINDOW_MS", 10 * 60 * 1000),
+  },
+  // Password reset confirm: per-IP
+  resetPasswordPerIp: {
+    max: envInt("RATE_LIMIT_RESET_PASSWORD_PER_IP", 12),
+    windowMs: envInt("RATE_LIMIT_RESET_PASSWORD_PER_IP_WINDOW_MS", 10 * 60 * 1000),
   },
 };
 
@@ -160,7 +188,7 @@ export async function isRateLimitedByAccount(
   windowMs: number
 ): Promise<boolean> {
   if (isTestBypassActive()) return false;
-  // Normalise to lowercase and hash-prefix to avoid storing raw email in store key
+  // Normalise to lowercase to avoid storing duplicate counters per email casing.
   const key = `rl:${action}:acct:${identifier.toLowerCase()}`;
   const count = await increment(key, windowMs);
   return count > max;
@@ -180,7 +208,7 @@ export async function isRateLimited(
 }
 
 /**
- * Express middleware factory (used by ai.ts route).
+ * Express middleware factory (used by ai.ts and uploads.ts routes).
  */
 export function rateLimit(action: string, maxRequests: number, windowMs: number) {
   return async (req: Request, res: Response, next: NextFunction) => {
