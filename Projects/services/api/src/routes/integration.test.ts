@@ -4,6 +4,7 @@ import http from "node:http";
 import { createApp } from "../server";
 import { resetAuthStoreForTests } from "../storage/authStore";
 import { resetProjectStoreForTests } from "../storage/projectsStore";
+import { resetRateLimitStoreForTests } from "../middleware/rateLimit";
 
 // Use in-memory mode for all tests
 delete process.env.DATABASE_URL;
@@ -61,6 +62,7 @@ after(async () => {
 beforeEach(async () => {
   await resetAuthStoreForTests();
   await resetProjectStoreForTests();
+  resetRateLimitStoreForTests();
 });
 
 // ─── Auth ────────────────────────────────────────────────────────────────────

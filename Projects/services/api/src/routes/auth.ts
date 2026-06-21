@@ -23,7 +23,7 @@ import {
 } from "../services/notificationService";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { createAuthToken } from "../utils/authToken";
-import { isRateLimited } from "../middleware/rateLimit";
+import { isRateLimitedByIp, isRateLimitedByAccount, LIMITS } from "../middleware/rateLimit";
 import { hashPassword, verifyPassword } from "../utils/password";
 
 const router: Router = Router();
@@ -74,8 +74,8 @@ function isUniqueViolation(err: unknown) {
 }
 
 async function initiateRegistration(req: Request, res: Response) {
-  if (isRateLimited(req, "register-initiate", 8, 10 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many signup attempts. Please try again shortly." });
+  if (await isRateLimitedByIp(req, "register-initiate", LIMITS.registerPerIp.max, LIMITS.registerPerIp.windowMs)) {
+    return res.status(429).json({ error: "Too many signup attempts from this network. Please try again shortly." });
   }
 
   const email = String(req.body?.email ?? "").trim().toLowerCase();
@@ -176,7 +176,7 @@ router.post("/auth/register", initiateRegistration);
 router.post("/auth/register/initiate", initiateRegistration);
 
 router.post("/auth/register/verify", async (req, res) => {
-  if (isRateLimited(req, "register-verify", 12, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "register-verify", LIMITS.registerVerifyPerIp.max, LIMITS.registerVerifyPerIp.windowMs)) {
     return res.status(429).json({ error: "Too many verification attempts. Please try again shortly." });
   }
 
@@ -243,14 +243,21 @@ router.post("/auth/register/verify", async (req, res) => {
 });
 
 async function loginHandler(req: Request, res: Response) {
-  if (isRateLimited(req, "login", 15, 10 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many login attempts. Please try again shortly." });
-  }
-
   const email = String(req.body?.email ?? "").trim().toLowerCase();
   const password = String(req.body?.password ?? "").trim();
   if (!email || !password) {
     return res.status(400).json({ error: "Email and password are required." });
+  }
+
+  // Per-account check first: protects individual accounts from brute-force, regardless of IP.
+  // A crew sharing one network gets per-person limits, not a shared pool.
+  if (await isRateLimitedByAccount(email, "login", LIMITS.loginPerAccount.max, LIMITS.loginPerAccount.windowMs)) {
+    return res.status(429).json({ error: "Too many login attempts for this account. Please try again shortly." });
+  }
+
+  // Per-IP backstop: only fires for extremely high volume from a single IP (bots/scanners).
+  if (await isRateLimitedByIp(req, "login", LIMITS.loginPerIp.max, LIMITS.loginPerIp.windowMs)) {
+    return res.status(429).json({ error: "Too many login attempts from this network. Please try again shortly." });
   }
 
   try {
@@ -316,7 +323,7 @@ router.patch("/auth/profile", requireAuth, async (req: Request, res: Response) =
 
 // Permanently delete the authenticated user's account and all their data
 router.delete("/auth/account", requireAuth, async (req: Request, res: Response) => {
-  if (isRateLimited(req, "delete-account", 3, 60 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "delete-account", 3, 60 * 60 * 1000)) {
     return res.status(429).json({ error: "Too many account deletion attempts." });
   }
   const auth = (req as AuthenticatedRequest).auth;
@@ -343,7 +350,7 @@ router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) =>
 });
 
 router.post("/auth/forgot-password", async (req, res) => {
-  if (isRateLimited(req, "forgot-password", 8, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "forgot-password", 8, 10 * 60 * 1000)) {
     return res.status(429).json({ error: "Too many reset requests. Please try again shortly." });
   }
 
@@ -418,7 +425,7 @@ router.post("/auth/forgot-password", async (req, res) => {
 });
 
 router.post("/auth/reset-password", async (req, res) => {
-  if (isRateLimited(req, "reset-password", 12, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "reset-password", 12, 10 * 60 * 1000)) {
     return res.status(429).json({ error: "Too many reset attempts. Please try again shortly." });
   }
 

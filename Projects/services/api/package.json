@@ -8,7 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node ./dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && node --test dist/**/*.test.js"
+    "test": "pnpm run build && node --test dist/**/*.test.js",
+    "load-test": "NODE_ENV=test RATE_LIMIT_DISABLE=1 ts-node-dev --transpile-only --exit-child load-test.ts",
+    "teardown-loadtest": "ts-node-dev --transpile-only --exit-child teardown-loadtest.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1004.0",
@@ -17,6 +19,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^4.22.1",
+    "ioredis": "^5.4.2",
     "morgan": "^1.10.1",
     "multer": "^1.4.5-lts.1",
     "openai": "^6.22.0",

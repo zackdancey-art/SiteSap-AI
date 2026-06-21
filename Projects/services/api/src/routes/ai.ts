@@ -117,16 +117,14 @@ function normalizeEntry(entry: GenerateDiaryEntry): DiarySection {
   const photoAnalysis =
     captionNotes.length > 0
       ? captionNotes.map((c, i) => `Photo ${i + 1}: ${c}`).join("\n")
-      : photos.length > 0
-        ? `${photos.length} photo(s) uploaded. Review images for site conditions and progress.`
-        : "No photos attached for this entry.";
+      : "N/A";
 
   return {
     date: String(entry.date ?? new Date().toISOString().slice(0, 10)),
     weather: String(entry.weather ?? "Not recorded"),
     crewCount: String(entry.crewCount ?? "Not recorded"),
     workCompleted,
-    safetyObservations: "To be completed by site supervisor.",
+    safetyObservations: "N/A",
     materialsUsed: "Refer to site records.",
     issues: "None reported.",
     photoAnalysis,
@@ -340,23 +338,19 @@ export function buildDiaryFromEntries(entries: GenerateDiaryEntry[], period: Rep
     .filter((n) => !isNaN(n) && n > 0);
   const avgCrew = totalCrew.length > 0 ? Math.round(totalCrew.reduce((a, b) => a + b, 0) / totalCrew.length) : null;
 
-  const summaryParts = [
-    `This ${period} site diary covers ${entries.length} work record${entries.length !== 1 ? "s" : ""} for the reporting period.`,
-  ];
-  if (avgCrew) summaryParts.push(`An average crew of ${avgCrew} operatives was deployed on site.`);
-  if (totalPhotos > 0) summaryParts.push(`${totalPhotos} site photograph${totalPhotos !== 1 ? "s" : ""} were recorded.`);
-  summaryParts.push("Full activity details are recorded in the daily activity section below.");
+  const summary = `Compiled from ${entries.length} ${entries.length === 1 ? "entry" : "entries"} for the reporting period.`;
 
-  const summary = summaryParts.join(" ");
-  const safetyChecklist = [
-    "All operatives to wear appropriate PPE at all times (hard hat, hi-vis vest, safety footwear)",
-    "Site induction completed for all new personnel prior to commencing work",
-    "Daily briefing conducted and hazards communicated to all operatives",
-    "Work area properly demarcated and public exclusion zones maintained",
-    "Plant and equipment pre-use inspections completed and records retained",
-    "Manual handling risks assessed and appropriate controls in place",
-    "Emergency procedures and first aid provisions confirmed on site",
-  ];
+  const safetyChecklist: string[] = [];
+  for (const entry of entries) {
+    const entryPhotos = Array.isArray(entry.photos) ? entry.photos : [];
+    if (entryPhotos.length > 0 && entry.notes?.trim()) {
+      safetyChecklist.push(entry.notes.trim());
+    }
+    for (const photo of entryPhotos) {
+      const cap = String(photo.caption || "").trim();
+      if (cap) safetyChecklist.push(cap);
+    }
+  }
 
   return {
     summary,
