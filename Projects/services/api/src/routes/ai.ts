@@ -332,17 +332,30 @@ export function buildDiaryFromEntries(entries: GenerateDiaryEntry[], period: Rep
   const sections = entries.map((entry) => normalizeEntry(entry));
   const siteName = "";
 
-  const summary = `Compiled from ${entries.length} ${entries.length === 1 ? "entry" : "entries"} for the reporting period.`;
+  const totalPhotos = entries.reduce((n, e) => n + (e.photos?.length ?? 0), 0);
+  const totalCrew = entries
+    .map((e) => parseInt(e.crewCount || "0", 10))
+    .filter((n) => !isNaN(n) && n > 0);
+  const avgCrew = totalCrew.length > 0 ? Math.round(totalCrew.reduce((a, b) => a + b, 0) / totalCrew.length) : null;
 
+  const summaryParts = [
+    `This ${period} site diary covers ${entries.length} work record${entries.length !== 1 ? "s" : ""} for the reporting period.`,
+  ];
+  if (avgCrew) summaryParts.push(`An average crew of ${avgCrew} operatives was deployed on site.`);
+  if (totalPhotos > 0) summaryParts.push(`${totalPhotos} site photograph${totalPhotos !== 1 ? "s" : ""} were recorded.`);
+  summaryParts.push("Full activity details are recorded in the daily activity section below.");
+
+  const summary = summaryParts.join(" ");
+  // Collect explicit safety observations verbatim — never invent checklist items.
+  // Notes are included only when photos accompany them (crew is documenting safety with evidence).
+  // Photo captions are always included when present. AI mode generates a richer, context-specific list.
   const safetyChecklist: string[] = [];
   for (const entry of entries) {
-    const entryPhotos = Array.isArray(entry.photos) ? entry.photos : [];
-    if (entryPhotos.length > 0 && entry.notes?.trim()) {
-      safetyChecklist.push(entry.notes.trim());
-    }
-    for (const photo of entryPhotos) {
-      const cap = String(photo.caption || "").trim();
-      if (cap) safetyChecklist.push(cap);
+    const photos = entry.photos ?? [];
+    if (entry.notes?.trim() && photos.length > 0) safetyChecklist.push(entry.notes.trim());
+    for (const photo of photos) {
+      const caption = (photo as { caption?: string }).caption?.trim();
+      if (caption) safetyChecklist.push(caption);
     }
   }
 

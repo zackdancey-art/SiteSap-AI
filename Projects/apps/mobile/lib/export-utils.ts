@@ -2,6 +2,7 @@ import { Platform, Share } from "react-native";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
+import { Paths } from "expo-file-system";
 import type { DiarySection, GeneratedDiary, Photo, Site } from "@/lib/types";
 
 export type ReportExportFormat = "pdf" | "doc";
@@ -257,9 +258,9 @@ export async function exportReportDocument(args: {
     return;
   }
 
-  const docUri = `${FileSystem.cacheDirectory || FileSystem.documentDirectory || ""}${filenameBase}.doc`;
+  const docUri = `${Paths.cache.uri || Paths.document.uri || ""}${filenameBase}.doc`;
   await FileSystem.writeAsStringAsync(docUri, args.html, {
-    encoding: FileSystem.EncodingType.UTF8,
+    encoding: 'utf8',
   });
   await shareNativeFile(docUri, "application/msword", "Export Word Document");
 }
