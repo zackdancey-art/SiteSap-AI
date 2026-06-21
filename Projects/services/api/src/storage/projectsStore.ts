@@ -30,6 +30,9 @@ export type EntryRecord = {
   notes: string;
   photos: Array<Record<string, unknown>>;
   timestamp: string;
+  swmsRef?: string;
+  hazardNotes?: string;
+  toolboxTalk?: boolean;
 };
 
 export type DiaryEditLogEntry = {
@@ -200,6 +203,9 @@ function mapEntry(row: {
   notes: string;
   photos_json: Array<Record<string, unknown>>;
   timestamp: Date;
+  swms_ref?: string | null;
+  hazard_notes?: string | null;
+  toolbox_talk?: boolean | null;
 }): EntryRecord {
   return {
     id: row.id,
@@ -212,6 +218,9 @@ function mapEntry(row: {
     notes: row.notes,
     photos: row.photos_json,
     timestamp: row.timestamp.toISOString(),
+    swmsRef: row.swms_ref ?? undefined,
+    hazardNotes: row.hazard_notes ?? undefined,
+    toolboxTalk: row.toolbox_talk ?? undefined,
   };
 }
 
@@ -399,9 +408,13 @@ export async function createEntry(
     notes: string;
     photos_json: Array<Record<string, unknown>>;
     timestamp: Date;
+    swms_ref: string | null;
+    hazard_notes: string | null;
+    toolbox_talk: boolean | null;
   }>(
-    `INSERT INTO project_entries (id, owner_email, site_id, date, location_address, weather, crew_count, notes, photos_json)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+    `INSERT INTO project_entries
+       (id, owner_email, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
      RETURNING *`,
     [
       entry.id,
@@ -413,6 +426,9 @@ export async function createEntry(
       entry.crewCount,
       entry.notes,
       JSON.stringify(entry.photos),
+      entry.swmsRef ?? "",
+      entry.hazardNotes ?? "",
+      entry.toolboxTalk ?? false,
     ]
   );
   return mapEntry(result.rows[0]);
@@ -455,6 +471,9 @@ export async function updateEntry(
     notes: string;
     photos_json: Array<Record<string, unknown>>;
     timestamp: Date;
+    swms_ref: string | null;
+    hazard_notes: string | null;
+    toolbox_talk: boolean | null;
   }>(
     `UPDATE project_entries
      SET
@@ -464,6 +483,9 @@ export async function updateEntry(
        crew_count = COALESCE($5, crew_count),
        notes = COALESCE($6, notes),
        photos_json = COALESCE($7::jsonb, photos_json),
+       swms_ref = COALESCE($8, swms_ref),
+       hazard_notes = COALESCE($9, hazard_notes),
+       toolbox_talk = COALESCE($10, toolbox_talk),
        timestamp = NOW()
      WHERE id = $1
      RETURNING *`,
@@ -475,6 +497,9 @@ export async function updateEntry(
       patch.crewCount ?? null,
       patch.notes ?? null,
       patch.photos ? JSON.stringify(patch.photos) : null,
+      patch.swmsRef ?? null,
+      patch.hazardNotes ?? null,
+      patch.toolboxTalk ?? null,
     ]
   );
   if (result.rowCount === 0) return null;
