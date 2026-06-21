@@ -1,6 +1,6 @@
 import type { ExpoConfig, ConfigContext } from "expo/config";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const pkg = require("./package.json") as { version?: string };
 
 // APP_ENV is set per EAS build profile (see eas.json).

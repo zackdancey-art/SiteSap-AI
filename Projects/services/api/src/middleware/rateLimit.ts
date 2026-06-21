@@ -116,7 +116,7 @@ async function getRedisClient(): Promise<unknown | null> {
 
   try {
     // Dynamic import so ioredis is optional — falls back to in-memory if not installed
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { default: Redis } = require("ioredis") as {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       default: new (url: string) => any;
