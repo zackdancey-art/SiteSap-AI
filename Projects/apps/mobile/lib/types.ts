@@ -68,3 +68,14 @@ export interface DiarySection {
 
 // Backwards-compatible alias expected by some modules
 export type Entry = DailyEntry;
+
+export interface SiteTemplate {
+  id: string;
+  ownerEmail: string;
+  siteId: string;
+  name: string;
+  weather: string;
+  crewCount: string;
+  notesTemplate: string;
+  createdAt: string;
+}

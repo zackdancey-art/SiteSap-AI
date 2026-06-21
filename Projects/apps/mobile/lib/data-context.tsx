@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Site, Entry, GeneratedDiary } from "@/lib/types";
+import { Site, Entry, GeneratedDiary, SiteTemplate } from "@/lib/types";
 import { resolveApiBaseUrl } from "@/lib/api-base-url";
 import { useAuth, isTokenExpiringSoon } from "@/lib/auth-context";
 import {
@@ -15,6 +15,7 @@ interface DataContextType {
   sites: Site[];
   entries: Entry[];
   diaries: GeneratedDiary[];
+  templates: SiteTemplate[];
   syncStatus: "idle" | "syncing" | "offline" | "error";
   lastSyncError: string | null;
   pendingCount: number;
@@ -29,6 +30,7 @@ interface DataContextType {
   getEntry: (id?: string) => Entry | undefined;
   getSiteEntries: (siteId?: string) => Entry[];
   getSiteDiaries: (siteId?: string) => GeneratedDiary[];
+  getSiteTemplates: (siteId?: string) => SiteTemplate[];
   loading: boolean;
   refresh: () => Promise<void>;
 }
@@ -303,6 +305,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [sites, setSites] = useState<Site[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [diaries, setDiaries] = useState<GeneratedDiary[]>([]);
+  const [templates, setTemplates] = useState<SiteTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "offline" | "error">("idle");
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
@@ -369,7 +372,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setLastSyncError(null);
       // Drain any queued offline writes before pulling fresh data
       await drainOfflineQueue();
-      const bootstrap = await apiJson<{ sites: Site[]; entries: Entry[]; diaries: GeneratedDiary[] }>("/projects/bootstrap");
+      const [bootstrap, templatesResp] = await Promise.all([
+        apiJson<{ sites: Site[]; entries: Entry[]; diaries: GeneratedDiary[] }>("/projects/bootstrap"),
+        apiJson<{ templates: SiteTemplate[] }>("/projects/templates").catch(() => ({ templates: [] })),
+      ]);
       const hydratedEntries = await attachSignedPhotoUris(
         await hydrateEntriesWithPhotoPayloads(bootstrap.entries),
         token
@@ -377,6 +383,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setSites(bootstrap.sites);
       setEntries(hydratedEntries);
       setDiaries(bootstrap.diaries);
+      setTemplates(templatesResp.templates);
       await persistCache(userEmail, bootstrap.sites, hydratedEntries, bootstrap.diaries);
       const remaining = await peekQueue();
       setSyncStatus(remaining.length > 0 ? "offline" : "idle");
@@ -615,12 +622,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     return diaries.filter((d) => d.siteId === siteId).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
   };
 
+  const getSiteTemplates = (siteId?: string) => {
+    if (!siteId) return [];
+    return templates.filter((t) => t.siteId === siteId);
+  };
+
   return (
     <DataContext.Provider
       value={{
         sites,
         entries,
         diaries,
+        templates,
         syncStatus,
         lastSyncError,
         pendingCount,
@@ -635,6 +648,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         getSite,
         getSiteEntries,
         getSiteDiaries,
+        getSiteTemplates,
         loading,
         refresh,
       }}
