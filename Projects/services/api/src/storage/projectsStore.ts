@@ -1,5 +1,5 @@
 import path from "path";
-import { v4 as uuidv4 } from "uuid";
+import { v7 as uuidv7 } from "uuid";
 import { getPgPool } from "./postgres";
 import { UserRole, isElevatedRole } from "../utils/authToken";
 import { FileBackedStore } from "./fileStore";
@@ -285,7 +285,7 @@ export async function createSite(
   payload: Omit<SiteRecord, "id" | "ownerEmail" | "createdAt">
 ): Promise<SiteRecord> {
   const site: SiteRecord = {
-    id: uuidv4(),
+    id: uuidv7(),
     ownerEmail: actor.email,
     createdAt: new Date().toISOString(),
     ...payload,
@@ -377,7 +377,7 @@ export async function createEntry(
   payload: Omit<EntryRecord, "id" | "ownerEmail" | "timestamp">
 ): Promise<EntryRecord> {
   const entry: EntryRecord = {
-    id: uuidv4(),
+    id: uuidv7(),
     ownerEmail: actor.email,
     timestamp: new Date().toISOString(),
     ...payload,
@@ -537,7 +537,7 @@ export async function createDiary(
   payload: Omit<DiaryRecord, "id" | "ownerEmail" | "generatedAt" | "editLog">
 ): Promise<DiaryRecord> {
   const diary: DiaryRecord = {
-    id: uuidv4(),
+    id: uuidv7(),
     ownerEmail: actor.email,
     generatedAt: new Date().toISOString(),
     editLog: [],
