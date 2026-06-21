@@ -59,6 +59,7 @@ const DiaryPatchSchema = z.object({
   fullReport: z.string().optional(),
   safetyChecklist: z.array(z.string()).optional(),
   sections: z.array(z.record(z.unknown())).optional(),
+  note: z.string().optional(),
 });
 
 export const projectsRouter: Router = Router();
@@ -174,7 +175,8 @@ projectsRouter.patch("/projects/diaries/:id", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid diary patch.", details: parsed.error.flatten() });
   }
-  const diary = await updateDiary(actor, req.params.id, parsed.data);
+  const { note, ...diaryPatch } = parsed.data;
+  const diary = await updateDiary(actor, req.params.id, diaryPatch, note);
   if (!diary) return res.status(404).json({ error: "Diary not found." });
   return res.json({ diary });
 });
