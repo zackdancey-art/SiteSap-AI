@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
+  TextInput,
   ScrollView,
   Pressable,
   StyleSheet,
@@ -16,7 +17,7 @@ import { useData } from "@/lib/data-context";
 import { useAuth } from "@/lib/auth-context";
 import { apiRequest, BASE_URL } from "@/lib/query-client";
 import Colors from "@/constants/colors";
-import { DailyEntry, GeneratedDiary, DiarySection } from "@/lib/types";
+import { DailyEntry, GeneratedDiary, DiarySection, DiaryEditLogEntry } from "@/lib/types";
 import { buildDiaryReportHtml, exportReportDocument, ReportExportFormat } from "@/lib/export-utils";
 
 type ReportPeriod = "daily" | "weekly" | "monthly";
@@ -132,6 +133,9 @@ export default function DiaryPreviewScreen() {
   const [generating, setGenerating] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<ReportPeriod>("daily");
   const [currentDiary, setCurrentDiary] = useState<GeneratedDiary | null>(null);
+  const [isEditingReport, setIsEditingReport] = useState(false);
+  const [editedSummary, setEditedSummary] = useState("");
+  const [editedFullReport, setEditedFullReport] = useState("");
 
   const filteredEntries = useMemo(() => filterEntriesByPeriod(entries, selectedPeriod), [entries, selectedPeriod]);
   const totalPhotos = entries.reduce((sum, entry) => sum + entry.photos.length, 0);
@@ -257,17 +261,79 @@ export default function DiaryPreviewScreen() {
     }
   };
 
+  const appendEditLog = (diary: GeneratedDiary, entry: DiaryEditLogEntry): GeneratedDiary => ({
+    ...diary,
+    editLog: [...(diary.editLog ?? []), entry],
+  });
+
   const handleApprove = () => {
     if (!currentDiary) return;
-    data.updateDiary(currentDiary.id, { status: "approved" });
-    setCurrentDiary({ ...currentDiary, status: "approved" });
-    Alert.alert("Approved", "Diary has been marked as approved.");
+    const logEntry: DiaryEditLogEntry = {
+      at: new Date().toISOString(),
+      action: "approved",
+      by: user?.email,
+    };
+    const updated = appendEditLog({ ...currentDiary, status: "approved" }, logEntry);
+    data.updateDiary(currentDiary.id, { status: "approved", editLog: updated.editLog });
+    setCurrentDiary(updated);
+    Alert.alert("Approved", "Diary has been marked as approved and locked for editing.");
   };
 
   const handleRevertToDraft = () => {
     if (!currentDiary) return;
-    data.updateDiary(currentDiary.id, { status: "draft" });
-    setCurrentDiary({ ...currentDiary, status: "draft" });
+    Alert.prompt(
+      "Revert to Draft",
+      "Approved reports are locked. Enter a reason to re-open this diary for editing (required for audit trail):",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Re-open",
+          onPress: (reason?: string) => {
+            if (!reason?.trim()) {
+              Alert.alert("Reason required", "Please enter a reason to revert this approved diary.");
+              return;
+            }
+            const logEntry: DiaryEditLogEntry = {
+              at: new Date().toISOString(),
+              action: "reverted",
+              by: user?.email,
+              note: reason.trim(),
+            };
+            const updated = appendEditLog({ ...currentDiary, status: "draft" }, logEntry);
+            data.updateDiary(currentDiary.id, { status: "draft", editLog: updated.editLog });
+            setCurrentDiary(updated);
+          },
+        },
+      ],
+      "plain-text"
+    );
+  };
+
+  const handleStartEditReport = () => {
+    if (!currentDiary) return;
+    setEditedSummary(resolvedSummary);
+    setEditedFullReport(resolvedFullReport);
+    setIsEditingReport(true);
+  };
+
+  const handleSaveReportEdits = () => {
+    if (!currentDiary) return;
+    const logEntry: DiaryEditLogEntry = {
+      at: new Date().toISOString(),
+      action: "edited",
+      by: user?.email,
+    };
+    const updated = appendEditLog(
+      { ...currentDiary, summary: editedSummary, fullReport: editedFullReport },
+      logEntry
+    );
+    data.updateDiary(currentDiary.id, {
+      summary: editedSummary,
+      fullReport: editedFullReport,
+      editLog: updated.editLog,
+    });
+    setCurrentDiary(updated);
+    setIsEditingReport(false);
   };
 
   const generateShareText = () => {
@@ -449,17 +515,55 @@ export default function DiaryPreviewScreen() {
               <View style={styles.summaryHeader}>
                 <Ionicons name="analytics" size={16} color={Colors.accent} />
                 <Text style={styles.summaryLabel}>Executive Summary</Text>
+                {currentDiary.status === "draft" && !isEditingReport && (
+                  <Pressable onPress={handleStartEditReport} style={styles.editChip}>
+                    <Ionicons name="create-outline" size={13} color={Colors.accent} />
+                    <Text style={styles.editChipText}>Edit</Text>
+                  </Pressable>
+                )}
               </View>
-              <Text style={styles.summaryText}>{resolvedSummary}</Text>
+              {isEditingReport ? (
+                <TextInput
+                  style={styles.editTextArea}
+                  value={editedSummary}
+                  onChangeText={setEditedSummary}
+                  multiline
+                  textAlignVertical="top"
+                  autoFocus
+                />
+              ) : (
+                <Text style={styles.summaryText}>{resolvedSummary}</Text>
+              )}
             </View>
 
-            {!!resolvedFullReport && (
+            {(!!resolvedFullReport || isEditingReport) && (
               <View style={styles.summaryCard}>
                 <View style={styles.summaryHeader}>
                   <Ionicons name="document-text" size={16} color={Colors.primary} />
                   <Text style={styles.summaryLabel}>Full Report</Text>
                 </View>
-                <Text style={styles.summaryText}>{resolvedFullReport}</Text>
+                {isEditingReport ? (
+                  <>
+                    <TextInput
+                      style={[styles.editTextArea, styles.editTextAreaLarge]}
+                      value={editedFullReport}
+                      onChangeText={setEditedFullReport}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                    <View style={styles.editActions}>
+                      <Pressable style={styles.editCancelBtn} onPress={() => setIsEditingReport(false)}>
+                        <Text style={styles.editCancelText}>Cancel</Text>
+                      </Pressable>
+                      <Pressable style={styles.editSaveBtn} onPress={handleSaveReportEdits}>
+                        <Ionicons name="checkmark" size={15} color={Colors.white} />
+                        <Text style={styles.editSaveText}>Save edits</Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.summaryText}>{resolvedFullReport}</Text>
+                )}
               </View>
             )}
 
@@ -479,6 +583,30 @@ export default function DiaryPreviewScreen() {
             {visibleSections.map((section, idx) => (
               <SectionCard key={`${section.date}-${idx}`} section={section} index={idx} />
             ))}
+
+            {currentDiary.editLog && currentDiary.editLog.length > 0 && (
+              <View style={styles.summaryCard}>
+                <View style={styles.summaryHeader}>
+                  <Ionicons name="time-outline" size={16} color={Colors.textSecondary} />
+                  <Text style={styles.summaryLabel}>Audit Trail</Text>
+                </View>
+                {currentDiary.editLog.map((log, idx) => (
+                  <View key={idx} style={styles.auditRow}>
+                    <View style={styles.auditDot} />
+                    <View style={styles.auditContent}>
+                      <Text style={styles.auditAction}>
+                        {log.action.charAt(0).toUpperCase() + log.action.slice(1)}
+                        {log.by ? ` by ${log.by}` : ""}
+                      </Text>
+                      <Text style={styles.auditTime}>
+                        {new Date(log.at).toLocaleString("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </Text>
+                      {!!log.note && <Text style={styles.auditNote}>{log.note}</Text>}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
 
             <View style={styles.actionRow}>
               {currentDiary.status === "draft" ? (
@@ -806,6 +934,55 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: Colors.warning,
   },
+  editChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginLeft: "auto",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: Colors.accent + "14",
+  },
+  editChipText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.accent },
+  editTextArea: {
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.accent + "60",
+    padding: 12,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.text,
+    lineHeight: 22,
+    minHeight: 80,
+  },
+  editTextAreaLarge: { minHeight: 160 },
+  editActions: { flexDirection: "row", gap: 8, marginTop: 8, justifyContent: "flex-end" },
+  editCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  editCancelText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.textSecondary },
+  editSaveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: Colors.accent,
+  },
+  editSaveText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.white },
+  auditRow: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginTop: 8 },
+  auditDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.textTertiary, marginTop: 5 },
+  auditContent: { flex: 1, gap: 1 },
+  auditAction: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.text },
+  auditTime: { fontSize: 11, fontFamily: "Inter_400Regular", color: Colors.textTertiary },
+  auditNote: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary, fontStyle: "italic", marginTop: 2 },
   rawEntriesHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12, marginTop: 4 },
   rawEntriesLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.textSecondary },
   emptyState: { alignItems: "center", paddingTop: 40, gap: 10 },

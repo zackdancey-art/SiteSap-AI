@@ -260,9 +260,33 @@ export async function exportReportDocument(args: {
 
   const docUri = `${Paths.cache.uri || Paths.document.uri || ""}${filenameBase}.doc`;
   await FileSystem.writeAsStringAsync(docUri, args.html, {
-    encoding: 'utf8',
+    encoding: "utf8",
   });
   await shareNativeFile(docUri, "application/msword", "Export Word Document");
+}
+
+function csvCell(value: string) {
+  return `"${value.replace(/"/g, '""').replace(/\n/g, " ")}"`;
+}
+
+export function buildDiariesCsv(diaries: GeneratedDiary[], sites: Site[]): string {
+  const siteById = new Map(sites.map((s) => [s.id, s]));
+  const header = ["Site", "Client", "Address", "Report Period", "Status", "Generated", "Summary", "Safety Checklist Items", "Sections"];
+  const rows = diaries.map((diary) => {
+    const site = siteById.get(diary.siteId);
+    return [
+      csvCell(site?.name ?? ""),
+      csvCell(site?.client ?? ""),
+      csvCell(site?.address ?? ""),
+      csvCell(diary.reportPeriod ?? "daily"),
+      csvCell(diary.status),
+      csvCell(new Date(diary.generatedAt).toLocaleDateString("en-AU")),
+      csvCell(diary.summary ?? ""),
+      csvCell(String(diary.safetyChecklist?.length ?? 0)),
+      csvCell(String(diary.sections.length)),
+    ].join(",");
+  });
+  return [header.map(csvCell).join(","), ...rows].join("\n");
 }
 
 export async function shareOrDownloadText(filename: string, content: string) {

@@ -17,6 +17,8 @@ export interface Photo {
   mimeType?: string;
   storagePath?: string;
   storageKey?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface DailyEntry {
@@ -30,6 +32,14 @@ export interface DailyEntry {
   photos: Photo[];
   createdAt?: string;
   timestamp: string;
+  isPending?: boolean;
+}
+
+export interface DiaryEditLogEntry {
+  at: string;
+  action: "approved" | "reverted" | "edited";
+  by?: string;
+  note?: string;
 }
 
 export interface GeneratedDiary {
@@ -42,6 +52,7 @@ export interface GeneratedDiary {
   fullReport?: string;
   safetyChecklist?: string[];
   sections: DiarySection[];
+  editLog?: DiaryEditLogEntry[];
 }
 
 export interface DiarySection {
