@@ -79,3 +79,16 @@ export interface SiteTemplate {
   notesTemplate: string;
   createdAt: string;
 }
+
+export interface SiteMember {
+  siteId: string;
+  memberEmail: string;
+  role: "worker" | "supervisor" | "admin";
+  invitedBy: string;
+  joinedAt: string;
+}
+
+export interface InviteResult {
+  email: string;
+  status: "sent" | "resent" | "already_member";
+}

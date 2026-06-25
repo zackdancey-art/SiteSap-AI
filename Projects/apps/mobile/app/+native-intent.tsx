@@ -25,6 +25,17 @@ export function redirectSystemPath({
       }
       return "/reset-password";
     }
+
+    const isInvite =
+      hostname === "invite" ||
+      pathname === "invite";
+
+    if (isInvite) {
+      if (token) {
+        return `/invite?token=${encodeURIComponent(token)}`;
+      }
+      return "/invite";
+    }
   } catch {
     // ignore malformed links and fall back home
   }
