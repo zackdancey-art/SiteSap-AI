@@ -199,6 +199,34 @@ export async function sendPasswordReset(payload: PasswordResetPayload): Promise<
   return sendSms(payload.phone, `SiteSnap reset code: ${payload.resetCode}. Link: ${payload.resetLink}`);
 }
 
+type SiteInvitePayload = {
+  to: string;
+  inviterName: string;
+  siteName: string;
+  role: string;
+  token: string;
+};
+
+export async function sendSiteInvite(payload: SiteInvitePayload): Promise<DeliveryResult> {
+  const inviteUrl = `${process.env.INVITE_URL || "sitesnap://invite"}?token=${payload.token}`;
+  const subject = `You've been invited to join ${payload.siteName} on SiteSnap`;
+  const text =
+    `Hi,\n\n` +
+    `${payload.inviterName} has invited you to collaborate on ${payload.siteName} as a ${payload.role}.\n\n` +
+    `Tap the link below in the SiteSnap app to accept:\n${inviteUrl}\n\n` +
+    `This invitation expires in 7 days.`;
+  const html =
+    `<p>Hi,</p>` +
+    `<p>${payload.inviterName} has invited you to collaborate on <strong>${payload.siteName}</strong> as a ${payload.role}.</p>` +
+    `<p><a href="${inviteUrl}">Accept Invitation →</a></p>` +
+    `<p>This invitation expires in 7 days.</p>`;
+  const result = await sendEmail(payload.to, subject, text, html);
+  if (!result.ok) {
+    console.warn(`[invite] Email delivery failed for ${payload.to}: ${result.error}`);
+  }
+  return result;
+}
+
 export async function sendAccountVerification(payload: VerificationPayload): Promise<DeliveryResult> {
   if (payload.channel === "email") {
     if (!payload.email) return { ok: false, error: "Missing recipient email." };
