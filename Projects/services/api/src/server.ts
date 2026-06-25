@@ -1,6 +1,7 @@
 import { initSentry, Sentry } from "./instrument";
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import dotenv from "dotenv";
 import { httpLogger } from "./middleware/logger";
 import { requestId } from "./middleware/requestId";
@@ -30,6 +31,13 @@ function validateProviderConfig() {
   const hasMediaStorage = isProductionMediaStorageReady();
 
   if (isProd) {
+    const secret = process.env.AUTH_TOKEN_SECRET ?? "";
+    if (secret.length < 32 || /test|dev|secret|example|change.?me/i.test(secret)) {
+      throw new Error(
+        "AUTH_TOKEN_SECRET is too short or looks like a placeholder. " +
+        "Generate 32+ random bytes (openssl rand -hex 32) and set it in production secrets."
+      );
+    }
     const missing = [
       !hasAuthSecret ? "AUTH_TOKEN_SECRET" : null,
       !hasDatabase ? "PostgreSQL DATABASE_URL" : null,
@@ -72,12 +80,22 @@ const allowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS ?? "")
 
 export function createApp(): express.Express {
   const app = express();
+  const isProdMode = process.env.NODE_ENV === "production";
   app.disable("x-powered-by");
+  app.use(
+    helmet({
+      // CSP is intentionally disabled — the API serves JSON, not HTML.
+      // Enable it if the API ever serves HTML pages.
+      contentSecurityPolicy: false,
+      // HSTS only applies over HTTPS; the header is harmless locally but
+      // only set it in production where TLS is actually enforced.
+      hsts: isProdMode ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+    })
+  );
   app.use(requestId);
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
-  const isProdMode = process.env.NODE_ENV === "production";
   app.use(
     cors({
       origin: (origin, cb) => {
@@ -91,14 +109,6 @@ export function createApp(): express.Express {
       },
     })
   );
-  app.use((_req, res, next) => {
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-Frame-Options", "DENY");
-    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-    res.setHeader("Cross-Origin-Resource-Policy", "same-site");
-    next();
-  });
   app.use(express.json({ limit: "25mb" }));
   app.use(httpLogger);
   app.use("/api", apiRouter);

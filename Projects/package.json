@@ -25,11 +25,26 @@
   },
   "devDependencies": {
     "@types/node": "^20.5.1",
-    "@typescript-eslint/eslint-plugin": "^6.9.0",
-    "@typescript-eslint/parser": "^6.9.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
     "babel-plugin-module-resolver": "^5.0.2",
     "eslint": "^8.46.0",
     "eslint-plugin-import": "^2.27.5",
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "shell-quote": ">=1.8.4",
+      "tar": ">=7.5.11",
+      "fast-xml-parser": ">=5.7.0",
+      "node-forge": ">=1.4.0",
+      "qs": ">=6.15.2",
+      "flatted": ">=3.4.2",
+      "@xmldom/xmldom": ">=0.8.13",
+      "yaml": ">=2.8.3",
+      "postcss": ">=8.5.10",
+      "ws": ">=8.20.1",
+      "undici": ">=6.24.0"
+    }
   }
 }

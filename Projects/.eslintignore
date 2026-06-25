@@ -3,3 +3,5 @@ dist
 **/dist
 **/node_modules
 .env
+services/api/load-test.ts
+services/api/teardown-loadtest.ts

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -23,11 +23,25 @@ import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { Photo } from "@/lib/types";
 import { AddressSuggestion, fetchAddressSuggestions } from "@/lib/geo";
+import { saveDraft, loadDraft, clearDraft } from "@/lib/draft-store";
 
 type PhotoWithBase64 = Photo & { base64?: string | null };
 
 function normalizeImageMimeType(_mimeType?: string | null) {
   return "image/jpeg";
+}
+
+function extractGpsFromExif(exif: Record<string, unknown> | undefined | null): { latitude?: number; longitude?: number } {
+  if (!exif) return {};
+  const lat = exif["GPSLatitude"] ?? exif["GPS Latitude"];
+  const lon = exif["GPSLongitude"] ?? exif["GPS Longitude"];
+  const latRef = String(exif["GPSLatitudeRef"] ?? "N");
+  const lonRef = String(exif["GPSLongitudeRef"] ?? "E");
+  if (typeof lat !== "number" || typeof lon !== "number") return {};
+  return {
+    latitude: latRef === "S" ? -lat : lat,
+    longitude: lonRef === "W" ? -lon : lon,
+  };
 }
 
 async function createStoredPhoto(asset: ImagePicker.ImagePickerAsset): Promise<PhotoWithBase64> {
@@ -41,6 +55,8 @@ async function createStoredPhoto(asset: ImagePicker.ImagePickerAsset): Promise<P
     }
   );
 
+  const gps = extractGpsFromExif(asset.exif as Record<string, unknown> | undefined | null);
+
   return {
     id: Crypto.randomUUID(),
     uri: manipulated.uri,
@@ -48,14 +64,17 @@ async function createStoredPhoto(asset: ImagePicker.ImagePickerAsset): Promise<P
     timestamp: new Date().toISOString(),
     base64: manipulated.base64 || asset.base64 || "",
     mimeType: normalizeImageMimeType(asset.mimeType),
+    ...gps,
   };
 }
 
 export default function NewEntryScreen() {
   const { siteId, entryId } = useLocalSearchParams<{ siteId: string; entryId?: string }>();
-  const { addEntry, updateEntry, getSite, getEntry } = useData();
+  const { addEntry, updateEntry, getSite, getEntry, getSiteEntries, getSiteTemplates } = useData();
   const existingEntry = entryId ? getEntry(entryId) : undefined;
   const site = getSite(existingEntry?.siteId ?? siteId);
+  const activeSiteId = existingEntry?.siteId ?? siteId;
+  const siteTemplates = getSiteTemplates(activeSiteId);
   const [date, setDate] = useState(existingEntry?.date ?? new Date().toISOString().split("T")[0]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateDraft, setDateDraft] = useState(new Date(`${new Date().toISOString().split("T")[0]}T00:00:00`));
@@ -68,12 +87,19 @@ export default function NewEntryScreen() {
   const [photos, setPhotos] = useState<PhotoWithBase64[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pickingPhoto, setPickingPhoto] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [showRolloverBanner, setShowRolloverBanner] = useState(false);
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const isEditing = Boolean(entryId);
+  const effectiveSiteId = existingEntry?.siteId ?? siteId;
 
   const weatherOptions = ["Sunny", "Partly Cloudy", "Overcast", "Rain", "Storm", "Windy"];
 
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
 
+  // Populate form when editing an existing entry
   useEffect(() => {
     if (!existingEntry) return;
     setDate(existingEntry.date);
@@ -83,6 +109,67 @@ export default function NewEntryScreen() {
     setNotes(existingEntry.notes);
     setPhotos(existingEntry.photos as PhotoWithBase64[]);
   }, [existingEntry]);
+
+  // On mount for new entries: restore draft or offer roll-over from last entry
+  useEffect(() => {
+    if (isEditing || !effectiveSiteId) return;
+    (async () => {
+      const draft = await loadDraft(effectiveSiteId);
+      if (draft && (draft.notes.trim() || draft.crewCount || draft.locationAddress)) {
+        // Restore fields without photos (photos aren't persisted in draft)
+        setDate(draft.date);
+        setWeather(draft.weather);
+        setLocationAddress(draft.locationAddress);
+        setCrewCount(draft.crewCount);
+        setNotes(draft.notes);
+        setDraftSavedAt(draft.savedAt);
+        setShowDraftBanner(true);
+        return;
+      }
+      // Offer to roll over from the most recent entry for this site
+      const siteEntries = getSiteEntries(effectiveSiteId);
+      if (siteEntries.length > 0) {
+        setShowRolloverBanner(true);
+      }
+    })();
+  }, [isEditing, effectiveSiteId]);
+
+  // Auto-save draft whenever form fields change (debounced 1.5 s), new entries only
+  useEffect(() => {
+    if (isEditing || !effectiveSiteId) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      void saveDraft(effectiveSiteId, { siteId: effectiveSiteId, date, weather, locationAddress, crewCount, notes }).then(() => {
+        setDraftSavedAt(new Date().toISOString());
+      });
+    }, 1500);
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    };
+  }, [isEditing, effectiveSiteId, date, weather, locationAddress, crewCount, notes]);
+
+  const handleDiscardDraft = async () => {
+    setShowDraftBanner(false);
+    setDraftSavedAt(null);
+    await clearDraft(effectiveSiteId);
+    // Reset form to blank
+    setDate(new Date().toISOString().split("T")[0]);
+    setWeather("");
+    setLocationAddress("");
+    setCrewCount("");
+    setNotes("");
+    setPhotos([]);
+  };
+
+  const handleRolloverLastEntry = () => {
+    const siteEntries = getSiteEntries(effectiveSiteId);
+    const last = siteEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+    if (!last) return;
+    setWeather(last.weather ?? "");
+    setLocationAddress(last.locationAddress ?? "");
+    setCrewCount(last.crewCount ?? "");
+    setShowRolloverBanner(false);
+  };
 
   useEffect(() => {
     let isCancelled = false;
@@ -179,6 +266,7 @@ export default function NewEntryScreen() {
         mediaTypes: ["images"],
         quality: 0.35,
         base64: true,
+        exif: true,
         allowsEditing: false,
       });
 
@@ -218,6 +306,13 @@ export default function NewEntryScreen() {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
   };
 
+  const applyTemplate = (tmpl: { weather: string; crewCount: string; notesTemplate: string }) => {
+    if (tmpl.weather) setWeather(tmpl.weather);
+    if (tmpl.crewCount) setCrewCount(tmpl.crewCount);
+    if (tmpl.notesTemplate) setNotes(tmpl.notesTemplate);
+    setShowTemplatePicker(false);
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
     const savedAt = new Date().toISOString();
@@ -239,6 +334,7 @@ export default function NewEntryScreen() {
         await updateEntry(entryId, payload);
       } else {
         await addEntry(payload);
+        await clearDraft(effectiveSiteId);
       }
       router.back();
     } catch (error) {
@@ -257,6 +353,43 @@ export default function NewEntryScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {showDraftBanner && (
+          <View style={styles.draftBanner}>
+            <Ionicons name="save-outline" size={16} color={Colors.warning} />
+            <View style={styles.draftBannerText}>
+              <Text style={styles.draftBannerTitle}>Unsaved draft restored</Text>
+              <Text style={styles.draftBannerSub}>
+                Saved {draftSavedAt ? new Date(draftSavedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "recently"}
+              </Text>
+            </View>
+            <Pressable onPress={() => void handleDiscardDraft()} style={styles.draftBannerDiscard}>
+              <Text style={styles.draftBannerDiscardText}>Discard</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {showRolloverBanner && !showDraftBanner && (
+          <View style={styles.rolloverBanner}>
+            <Ionicons name="copy-outline" size={16} color={Colors.accent} />
+            <Text style={styles.rolloverBannerText}>Copy weather, crew & location from last entry?</Text>
+            <Pressable onPress={handleRolloverLastEntry} style={styles.rolloverBannerBtn}>
+              <Text style={styles.rolloverBannerBtnText}>Copy</Text>
+            </Pressable>
+            <Pressable onPress={() => setShowRolloverBanner(false)} style={styles.rolloverBannerClose}>
+              <Ionicons name="close" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          </View>
+        )}
+
+        {!isEditing && draftSavedAt && !showDraftBanner && (
+          <View style={styles.draftSavedIndicator}>
+            <Ionicons name="checkmark-circle-outline" size={13} color={Colors.textTertiary} />
+            <Text style={styles.draftSavedText}>
+              Draft saved {new Date(draftSavedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+            </Text>
+          </View>
+        )}
+
         {!!site && (
           <View style={styles.siteHeader}>
             <View style={styles.siteHeaderIcon}>
@@ -268,6 +401,55 @@ export default function NewEntryScreen() {
             </View>
           </View>
         )}
+
+        {!isEditing && siteTemplates.length > 0 && (
+          <Pressable style={styles.templateButton} onPress={() => setShowTemplatePicker(true)}>
+            <Ionicons name="copy-outline" size={18} color={Colors.accent} />
+            <Text style={styles.templateButtonText}>Apply Template</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.textSecondary} />
+          </Pressable>
+        )}
+
+        <Modal
+          visible={showTemplatePicker}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowTemplatePicker(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Choose a Template</Text>
+              <Text style={styles.templatePickerHint}>Pre-fills weather, crew count, and notes</Text>
+              <ScrollView style={styles.templateList} showsVerticalScrollIndicator={false}>
+                {siteTemplates.map((tmpl) => (
+                  <Pressable
+                    key={tmpl.id}
+                    style={styles.templateRow}
+                    onPress={() => applyTemplate(tmpl)}
+                  >
+                    <View style={styles.templateRowIcon}>
+                      <Ionicons name="document-text-outline" size={18} color={Colors.accent} />
+                    </View>
+                    <View style={styles.templateRowText}>
+                      <Text style={styles.templateRowName}>{tmpl.name}</Text>
+                      {(tmpl.weather || tmpl.crewCount) ? (
+                        <Text style={styles.templateRowMeta} numberOfLines={1}>
+                          {[tmpl.weather, tmpl.crewCount ? `${tmpl.crewCount} crew` : ""].filter(Boolean).join(" · ")}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={Colors.textSecondary} />
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <View style={styles.modalActions}>
+                <Pressable style={styles.modalSecondary} onPress={() => setShowTemplatePicker(false)}>
+                  <Text style={styles.modalSecondaryText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         <View style={styles.formGroup}>
           <Text style={styles.label}>Date</Text>
@@ -699,6 +881,54 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: Colors.white,
   },
+  draftBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: Colors.warning + "18",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.warning + "40",
+    padding: 12,
+  },
+  draftBannerText: { flex: 1 },
+  draftBannerTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.warning },
+  draftBannerSub: { fontSize: 11, fontFamily: "Inter_400Regular", color: Colors.warning, opacity: 0.8 },
+  draftBannerDiscard: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.warning + "60",
+  },
+  draftBannerDiscardText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.warning },
+  rolloverBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: Colors.accent + "10",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.accent + "30",
+    padding: 12,
+  },
+  rolloverBannerText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", color: Colors.text },
+  rolloverBannerBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: Colors.accent,
+  },
+  rolloverBannerBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.white },
+  rolloverBannerClose: { padding: 2 },
+  draftSavedIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-end",
+    marginTop: -10,
+  },
+  draftSavedText: { fontSize: 11, fontFamily: "Inter_400Regular", color: Colors.textTertiary },
   siteHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -730,6 +960,62 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: Colors.textSecondary,
     marginTop: 1,
+  },
+  templateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  templateButtonText: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: Colors.accent,
+  },
+  templatePickerHint: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  templateList: {
+    maxHeight: 280,
+  },
+  templateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  templateRowIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.accent + "14",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  templateRowText: {
+    flex: 1,
+  },
+  templateRowName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+  },
+  templateRowMeta: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   textArea: {
     backgroundColor: Colors.surface,

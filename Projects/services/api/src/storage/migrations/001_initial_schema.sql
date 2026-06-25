@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS project_entries (
   weather TEXT NOT NULL DEFAULT '',
   crew_count TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
-  photos JSONB NOT NULL DEFAULT '[]',
+  photos_json JSONB NOT NULL DEFAULT '[]',
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

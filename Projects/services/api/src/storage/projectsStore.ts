@@ -1,5 +1,5 @@
 import path from "path";
-import { v4 as uuidv4 } from "uuid";
+import { v7 as uuidv7 } from "uuid";
 import { getPgPool } from "./postgres";
 import { UserRole, isElevatedRole } from "../utils/authToken";
 import { FileBackedStore } from "./fileStore";
@@ -30,6 +30,16 @@ export type EntryRecord = {
   notes: string;
   photos: Array<Record<string, unknown>>;
   timestamp: string;
+  swmsRef?: string;
+  hazardNotes?: string;
+  toolboxTalk?: boolean;
+};
+
+export type DiaryEditLogEntry = {
+  at: string;
+  action: "approved" | "reverted" | "edited";
+  by: string;
+  note?: string;
 };
 
 export type DiaryRecord = {
@@ -43,6 +53,18 @@ export type DiaryRecord = {
   fullReport: string;
   safetyChecklist: string[];
   sections: Array<Record<string, unknown>>;
+  editLog: DiaryEditLogEntry[];
+};
+
+export type TemplateRecord = {
+  id: string;
+  ownerEmail: string;
+  siteId: string;
+  name: string;
+  weather: string;
+  crewCount: string;
+  notesTemplate: string;
+  createdAt: string;
 };
 
 type Actor = { email: string; role: UserRole };
@@ -51,18 +73,21 @@ type MemoryState = {
   sites: Map<string, SiteRecord>;
   entries: Map<string, EntryRecord>;
   diaries: Map<string, DiaryRecord>;
+  templates: Map<string, TemplateRecord>;
 };
 
 type MemoryJson = {
   sites: SiteRecord[];
   entries: EntryRecord[];
   diaries: DiaryRecord[];
+  templates: TemplateRecord[];
 };
 
 const memory: MemoryState = {
   sites: new Map<string, SiteRecord>(),
   entries: new Map<string, EntryRecord>(),
   diaries: new Map<string, DiaryRecord>(),
+  templates: new Map<string, TemplateRecord>(),
 };
 
 function useDatabase() {
@@ -85,11 +110,15 @@ const store = new FileBackedStore<Partial<MemoryJson>>(
     for (const diary of Array.isArray(parsed.diaries) ? parsed.diaries : []) {
       memory.diaries.set(diary.id, diary);
     }
+    for (const tmpl of Array.isArray(parsed.templates) ? parsed.templates : []) {
+      memory.templates.set(tmpl.id, tmpl);
+    }
   },
   () => ({
     sites: Array.from(memory.sites.values()),
     entries: Array.from(memory.entries.values()),
     diaries: Array.from(memory.diaries.values()),
+    templates: Array.from(memory.templates.values()),
   })
 );
 
@@ -192,6 +221,9 @@ function mapEntry(row: {
   notes: string;
   photos_json: Array<Record<string, unknown>>;
   timestamp: Date;
+  swms_ref?: string | null;
+  hazard_notes?: string | null;
+  toolbox_talk?: boolean | null;
 }): EntryRecord {
   return {
     id: row.id,
@@ -204,6 +236,9 @@ function mapEntry(row: {
     notes: row.notes,
     photos: row.photos_json,
     timestamp: row.timestamp.toISOString(),
+    swmsRef: row.swms_ref ?? undefined,
+    hazardNotes: row.hazard_notes ?? undefined,
+    toolboxTalk: row.toolbox_talk ?? undefined,
   };
 }
 
@@ -218,6 +253,7 @@ function mapDiary(row: {
   full_report: string;
   safety_checklist_json: string[] | null;
   sections_json: Array<Record<string, unknown>>;
+  edit_log?: DiaryEditLogEntry[] | null;
 }): DiaryRecord {
   const period: ReportPeriod =
     row.report_period === "weekly" || row.report_period === "monthly" ? row.report_period : "daily";
@@ -232,6 +268,7 @@ function mapDiary(row: {
     fullReport: row.full_report || "",
     safetyChecklist: Array.isArray(row.safety_checklist_json) ? row.safety_checklist_json : [],
     sections: row.sections_json,
+    editLog: Array.isArray(row.edit_log) ? row.edit_log : [],
   };
 }
 
@@ -275,7 +312,7 @@ export async function createSite(
   payload: Omit<SiteRecord, "id" | "ownerEmail" | "createdAt">
 ): Promise<SiteRecord> {
   const site: SiteRecord = {
-    id: uuidv4(),
+    id: uuidv7(),
     ownerEmail: actor.email,
     createdAt: new Date().toISOString(),
     ...payload,
@@ -367,7 +404,7 @@ export async function createEntry(
   payload: Omit<EntryRecord, "id" | "ownerEmail" | "timestamp">
 ): Promise<EntryRecord> {
   const entry: EntryRecord = {
-    id: uuidv4(),
+    id: uuidv7(),
     ownerEmail: actor.email,
     timestamp: new Date().toISOString(),
     ...payload,
@@ -389,9 +426,13 @@ export async function createEntry(
     notes: string;
     photos_json: Array<Record<string, unknown>>;
     timestamp: Date;
+    swms_ref: string | null;
+    hazard_notes: string | null;
+    toolbox_talk: boolean | null;
   }>(
-    `INSERT INTO project_entries (id, owner_email, site_id, date, location_address, weather, crew_count, notes, photos_json)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+    `INSERT INTO project_entries
+       (id, owner_email, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
      RETURNING *`,
     [
       entry.id,
@@ -403,6 +444,9 @@ export async function createEntry(
       entry.crewCount,
       entry.notes,
       JSON.stringify(entry.photos),
+      entry.swmsRef ?? "",
+      entry.hazardNotes ?? "",
+      entry.toolboxTalk ?? false,
     ]
   );
   return mapEntry(result.rows[0]);
@@ -445,6 +489,9 @@ export async function updateEntry(
     notes: string;
     photos_json: Array<Record<string, unknown>>;
     timestamp: Date;
+    swms_ref: string | null;
+    hazard_notes: string | null;
+    toolbox_talk: boolean | null;
   }>(
     `UPDATE project_entries
      SET
@@ -454,6 +501,9 @@ export async function updateEntry(
        crew_count = COALESCE($5, crew_count),
        notes = COALESCE($6, notes),
        photos_json = COALESCE($7::jsonb, photos_json),
+       swms_ref = COALESCE($8, swms_ref),
+       hazard_notes = COALESCE($9, hazard_notes),
+       toolbox_talk = COALESCE($10, toolbox_talk),
        timestamp = NOW()
      WHERE id = $1
      RETURNING *`,
@@ -465,6 +515,9 @@ export async function updateEntry(
       patch.crewCount ?? null,
       patch.notes ?? null,
       patch.photos ? JSON.stringify(patch.photos) : null,
+      patch.swmsRef ?? null,
+      patch.hazardNotes ?? null,
+      patch.toolboxTalk ?? null,
     ]
   );
   if (result.rowCount === 0) return null;
@@ -524,12 +577,13 @@ export async function listDiaries(actor: Actor, siteId?: string, limit = 200, of
 
 export async function createDiary(
   actor: Actor,
-  payload: Omit<DiaryRecord, "id" | "ownerEmail" | "generatedAt">
+  payload: Omit<DiaryRecord, "id" | "ownerEmail" | "generatedAt" | "editLog">
 ): Promise<DiaryRecord> {
   const diary: DiaryRecord = {
-    id: uuidv4(),
+    id: uuidv7(),
     ownerEmail: actor.email,
     generatedAt: new Date().toISOString(),
+    editLog: [],
     ...payload,
   };
   if (!useDatabase()) {
@@ -570,28 +624,76 @@ export async function createDiary(
   return mapDiary(result.rows[0]);
 }
 
+function buildAuditEntry(
+  current: DiaryRecord,
+  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections">>,
+  actor: Actor,
+  note?: string
+): DiaryEditLogEntry | null {
+  if (patch.status && patch.status !== current.status) {
+    const action = patch.status === "approved" ? "approved" : "reverted";
+    const entry: DiaryEditLogEntry = { at: new Date().toISOString(), action, by: actor.email };
+    if (note) entry.note = note;
+    return entry;
+  }
+  const contentChanged =
+    (patch.summary !== undefined && patch.summary !== current.summary) ||
+    (patch.fullReport !== undefined && patch.fullReport !== current.fullReport);
+  if (contentChanged) {
+    return { at: new Date().toISOString(), action: "edited", by: actor.email };
+  }
+  return null;
+}
+
 export async function updateDiary(
   actor: Actor,
   diaryId: string,
-  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections">>
+  patch: Partial<Pick<DiaryRecord, "status" | "summary" | "reportPeriod" | "fullReport" | "safetyChecklist" | "sections">>,
+  note?: string
 ): Promise<DiaryRecord | null> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const current = memory.diaries.get(diaryId);
     if (!current || !canAccessOwner(actor, current.ownerEmail)) return null;
-    const updated = { ...current, ...patch };
+    const auditEntry = buildAuditEntry(current, patch, actor, note);
+    const updated: DiaryRecord = {
+      ...current,
+      ...patch,
+      editLog: auditEntry ? [...current.editLog, auditEntry] : current.editLog,
+    };
     memory.diaries.set(diaryId, updated);
     await persistMemory();
     return updated;
   }
 
-  const existingResult = await getPgPool().query<{ owner_email: string }>(
-    `SELECT owner_email FROM project_diaries WHERE id = $1 LIMIT 1`,
+  const existingResult = await getPgPool().query<{
+    owner_email: string;
+    status: DiaryStatus;
+    summary: string;
+    full_report: string;
+    edit_log: DiaryEditLogEntry[] | null;
+  }>(
+    `SELECT owner_email, status, summary, full_report, edit_log FROM project_diaries WHERE id = $1 LIMIT 1`,
     [diaryId]
   );
   if (existingResult.rowCount === 0) return null;
-  const ownerEmail = existingResult.rows[0].owner_email;
-  if (!canAccessOwner(actor, ownerEmail)) return null;
+  const existing = existingResult.rows[0];
+  if (!canAccessOwner(actor, existing.owner_email)) return null;
+
+  const currentForAudit: DiaryRecord = {
+    id: diaryId,
+    ownerEmail: existing.owner_email,
+    siteId: "",
+    generatedAt: "",
+    status: existing.status,
+    summary: existing.summary,
+    reportPeriod: "daily",
+    fullReport: existing.full_report,
+    safetyChecklist: [],
+    sections: [],
+    editLog: Array.isArray(existing.edit_log) ? existing.edit_log : [],
+  };
+  const auditEntry = buildAuditEntry(currentForAudit, patch, actor, note);
 
   const result = await getPgPool().query<{
     id: string;
@@ -604,6 +706,7 @@ export async function updateDiary(
     full_report: string;
     safety_checklist_json: string[] | null;
     sections_json: Array<Record<string, unknown>>;
+    edit_log: DiaryEditLogEntry[] | null;
   }>(
     `UPDATE project_diaries
      SET
@@ -612,7 +715,8 @@ export async function updateDiary(
        report_period = COALESCE($4, report_period),
        full_report = COALESCE($5, full_report),
        safety_checklist_json = COALESCE($6::jsonb, safety_checklist_json),
-       sections_json = COALESCE($7::jsonb, sections_json)
+       sections_json = COALESCE($7::jsonb, sections_json),
+       edit_log = CASE WHEN $8::jsonb IS NOT NULL THEN edit_log || $8::jsonb ELSE edit_log END
      WHERE id = $1
      RETURNING *`,
     [
@@ -623,6 +727,7 @@ export async function updateDiary(
       patch.fullReport ?? null,
       patch.safetyChecklist ? JSON.stringify(patch.safetyChecklist) : null,
       patch.sections ? JSON.stringify(patch.sections) : null,
+      auditEntry ? JSON.stringify([auditEntry]) : null,
     ]
   );
   if (result.rowCount === 0) return null;
@@ -716,24 +821,167 @@ export async function deleteAllUserProjectData(email: string): Promise<void> {
     for (const [id, diary] of memory.diaries.entries()) {
       if (diary.ownerEmail === email) memory.diaries.delete(id);
     }
+    for (const [id, tmpl] of memory.templates.entries()) {
+      if (tmpl.ownerEmail === email) memory.templates.delete(id);
+    }
     await persistMemory();
     return;
   }
-  // CASCADE constraints handle entries/diaries automatically on site delete
+  // CASCADE constraints handle entries/diaries/templates automatically on site delete
   await getPgPool().query(`DELETE FROM project_sites WHERE owner_email = $1`, [email]);
   await getPgPool().query(`DELETE FROM project_entries WHERE owner_email = $1`, [email]);
   await getPgPool().query(`DELETE FROM project_diaries WHERE owner_email = $1`, [email]);
+  await getPgPool().query(`DELETE FROM project_templates WHERE owner_email = $1`, [email]);
 }
 
 export async function resetProjectStoreForTests() {
   if (useDatabase()) {
     await getPgPool().query(`DELETE FROM project_diaries`);
     await getPgPool().query(`DELETE FROM project_entries`);
+    await getPgPool().query(`DELETE FROM project_templates`);
     await getPgPool().query(`DELETE FROM project_sites`);
     return;
   }
   memory.sites.clear();
   memory.entries.clear();
   memory.diaries.clear();
+  memory.templates.clear();
   store.resetForTests();
+}
+
+// ─── Templates ───────────────────────────────────────────────────────────────
+
+function mapTemplate(row: {
+  id: string;
+  owner_email: string;
+  site_id: string;
+  name: string;
+  weather: string;
+  crew_count: string;
+  notes_template: string;
+  created_at: Date;
+}): TemplateRecord {
+  return {
+    id: row.id,
+    ownerEmail: row.owner_email,
+    siteId: row.site_id,
+    name: row.name,
+    weather: row.weather,
+    crewCount: row.crew_count,
+    notesTemplate: row.notes_template,
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+export async function listTemplates(actor: Actor, siteId?: string): Promise<TemplateRecord[]> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    return Array.from(memory.templates.values())
+      .filter((t) => canAccessOwner(actor, t.ownerEmail))
+      .filter((t) => (siteId ? t.siteId === siteId : true))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  const queryParts: string[] = [];
+  const params: unknown[] = [];
+  if (!isElevatedRole(actor.role)) {
+    params.push(actor.email);
+    queryParts.push(`owner_email = $${params.length}`);
+  }
+  if (siteId) {
+    params.push(siteId);
+    queryParts.push(`site_id = $${params.length}`);
+  }
+  const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; site_id: string; name: string;
+    weather: string; crew_count: string; notes_template: string; created_at: Date;
+  }>(`SELECT * FROM project_templates ${where} ORDER BY created_at DESC`, params);
+  return result.rows.map(mapTemplate);
+}
+
+export async function createTemplate(
+  actor: Actor,
+  payload: Pick<TemplateRecord, "siteId" | "name" | "weather" | "crewCount" | "notesTemplate">
+): Promise<TemplateRecord> {
+  const tmpl: TemplateRecord = {
+    id: uuidv7(),
+    ownerEmail: actor.email,
+    createdAt: new Date().toISOString(),
+    ...payload,
+  };
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    memory.templates.set(tmpl.id, tmpl);
+    await persistMemory();
+    return tmpl;
+  }
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; site_id: string; name: string;
+    weather: string; crew_count: string; notes_template: string; created_at: Date;
+  }>(
+    `INSERT INTO project_templates (id, owner_email, site_id, name, weather, crew_count, notes_template)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING *`,
+    [tmpl.id, actor.email, tmpl.siteId, tmpl.name, tmpl.weather, tmpl.crewCount, tmpl.notesTemplate]
+  );
+  return mapTemplate(result.rows[0]);
+}
+
+export async function updateTemplate(
+  actor: Actor,
+  templateId: string,
+  patch: Partial<Pick<TemplateRecord, "name" | "weather" | "crewCount" | "notesTemplate">>
+): Promise<TemplateRecord | null> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const current = memory.templates.get(templateId);
+    if (!current || !canAccessOwner(actor, current.ownerEmail)) return null;
+    const updated = { ...current, ...patch };
+    memory.templates.set(templateId, updated);
+    await persistMemory();
+    return updated;
+  }
+  const existing = await getPgPool().query<{ owner_email: string }>(
+    `SELECT owner_email FROM project_templates WHERE id = $1 LIMIT 1`,
+    [templateId]
+  );
+  if (existing.rowCount === 0) return null;
+  if (!canAccessOwner(actor, existing.rows[0].owner_email)) return null;
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; site_id: string; name: string;
+    weather: string; crew_count: string; notes_template: string; created_at: Date;
+  }>(
+    `UPDATE project_templates
+     SET name = COALESCE($2, name),
+         weather = COALESCE($3, weather),
+         crew_count = COALESCE($4, crew_count),
+         notes_template = COALESCE($5, notes_template)
+     WHERE id = $1
+     RETURNING *`,
+    [templateId, patch.name ?? null, patch.weather ?? null, patch.crewCount ?? null, patch.notesTemplate ?? null]
+  );
+  if (result.rowCount === 0) return null;
+  return mapTemplate(result.rows[0]);
+}
+
+export async function deleteTemplate(actor: Actor, templateId: string): Promise<boolean> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const tmpl = memory.templates.get(templateId);
+    if (!tmpl || !canAccessOwner(actor, tmpl.ownerEmail)) return false;
+    memory.templates.delete(templateId);
+    await persistMemory();
+    return true;
+  }
+  const existing = await getPgPool().query<{ owner_email: string }>(
+    `SELECT owner_email FROM project_templates WHERE id = $1 LIMIT 1`,
+    [templateId]
+  );
+  if (existing.rowCount === 0) return false;
+  if (!canAccessOwner(actor, existing.rows[0].owner_email)) return false;
+  const result = await getPgPool().query(
+    `DELETE FROM project_templates WHERE id = $1`,
+    [templateId]
+  );
+  return (result.rowCount ?? 0) > 0;
 }

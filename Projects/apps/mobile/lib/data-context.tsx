@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Site, Entry, GeneratedDiary } from "@/lib/types";
+import { Site, Entry, GeneratedDiary, SiteTemplate } from "@/lib/types";
 import { resolveApiBaseUrl } from "@/lib/api-base-url";
 import { useAuth, isTokenExpiringSoon } from "@/lib/auth-context";
 import {
@@ -9,13 +9,16 @@ import {
   savePhotoPayloads,
   stripPhotoPayloads,
 } from "@/lib/photo-payload-store";
+import { enqueue, peekQueue, dequeue, isNetworkError } from "@/lib/offline-queue";
 
 interface DataContextType {
   sites: Site[];
   entries: Entry[];
   diaries: GeneratedDiary[];
+  templates: SiteTemplate[];
   syncStatus: "idle" | "syncing" | "offline" | "error";
   lastSyncError: string | null;
+  pendingCount: number;
   addSite: (site: Omit<Site, "id" | "createdAt">) => Promise<void>;
   deleteSite: (id: string) => Promise<void>;
   addEntry: (entry: Omit<Entry, "id" | "timestamp" | "createdAt">) => Promise<void>;
@@ -27,6 +30,7 @@ interface DataContextType {
   getEntry: (id?: string) => Entry | undefined;
   getSiteEntries: (siteId?: string) => Entry[];
   getSiteDiaries: (siteId?: string) => GeneratedDiary[];
+  getSiteTemplates: (siteId?: string) => SiteTemplate[];
   loading: boolean;
   refresh: () => Promise<void>;
 }
@@ -128,7 +132,7 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-async function uploadPhoto(photo: Entry["photos"][number]) {
+async function uploadPhotoOnce(photo: Entry["photos"][number]) {
   if (/^https?:\/\//i.test(photo.uri)) {
     return photo;
   }
@@ -156,7 +160,6 @@ async function uploadPhoto(photo: Entry["photos"][number]) {
   }
 
   const payload = (await res.json()) as { url?: string; storagePath?: string; storageKey?: string };
-  // Store the canonical path only — tokens are never embedded in URIs
   const canonicalPath = payload.url?.startsWith("/") ? payload.url : (payload.url || "");
 
   return {
@@ -165,6 +168,22 @@ async function uploadPhoto(photo: Entry["photos"][number]) {
     storagePath: payload.storagePath,
     storageKey: payload.storageKey,
   };
+}
+
+async function uploadPhoto(photo: Entry["photos"][number]): Promise<Entry["photos"][number]> {
+  const backoff = [1000, 2500, 5000];
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= backoff.length; attempt++) {
+    try {
+      return await uploadPhotoOnce(photo);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < backoff.length) {
+        await new Promise((r) => setTimeout(r, backoff[attempt]));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 async function uploadPhotos(photos: Entry["photos"]) {
@@ -286,9 +305,54 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [sites, setSites] = useState<Site[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [diaries, setDiaries] = useState<GeneratedDiary[]>([]);
+  const [templates, setTemplates] = useState<SiteTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "offline" | "error">("idle");
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const drainOfflineQueue = async () => {
+    const queue = await peekQueue();
+    if (queue.length === 0) return;
+    setPendingCount(queue.length);
+    for (const op of queue) {
+      try {
+        if (op.type === "addEntry") {
+          const data = op.payload as Omit<Entry, "id" | "timestamp" | "createdAt">;
+          await apiJson<{ entry: Entry }>("/projects/entries", {
+            method: "POST",
+            body: JSON.stringify(stripPhotoPayloads({ ...data } as Entry)),
+          });
+        } else if (op.type === "addSite") {
+          await apiJson<{ site: Site }>("/projects/sites", {
+            method: "POST",
+            body: JSON.stringify(op.payload),
+          });
+        } else if (op.type === "updateEntry") {
+          const { id, patch } = op.payload as { id: string; patch: Partial<Entry> };
+          await apiJson<{ entry: Entry }>(`/projects/entries/${id}`, {
+            method: "PATCH",
+            body: JSON.stringify(patch),
+          });
+        } else if (op.type === "deleteEntry") {
+          await apiJson<{ ok: boolean }>(`/projects/entries/${op.payload as string}`, { method: "DELETE" });
+        } else if (op.type === "deleteSite") {
+          await apiJson<{ ok: boolean }>(`/projects/sites/${op.payload as string}`, { method: "DELETE" });
+        }
+        await dequeue(op.id);
+      } catch (err) {
+        if (!isNetworkError(err)) {
+          // Non-network error (e.g. 4xx): drop the op to avoid infinite retry
+          await dequeue(op.id);
+          console.warn("[queue] Dropping unrecoverable queued op", op.type, err);
+        }
+        // Network error: leave in queue for next refresh
+        break;
+      }
+    }
+    const remaining = await peekQueue();
+    setPendingCount(remaining.length);
+  };
 
   const refresh = async () => {
     const userEmail = user?.email ?? null;
@@ -306,7 +370,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     try {
       setSyncStatus("syncing");
       setLastSyncError(null);
-      const bootstrap = await apiJson<{ sites: Site[]; entries: Entry[]; diaries: GeneratedDiary[] }>("/projects/bootstrap");
+      // Drain any queued offline writes before pulling fresh data
+      await drainOfflineQueue();
+      const [bootstrap, templatesResp] = await Promise.all([
+        apiJson<{ sites: Site[]; entries: Entry[]; diaries: GeneratedDiary[] }>("/projects/bootstrap"),
+        apiJson<{ templates: SiteTemplate[] }>("/projects/templates").catch(() => ({ templates: [] })),
+      ]);
       const hydratedEntries = await attachSignedPhotoUris(
         await hydrateEntriesWithPhotoPayloads(bootstrap.entries),
         token
@@ -314,8 +383,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setSites(bootstrap.sites);
       setEntries(hydratedEntries);
       setDiaries(bootstrap.diaries);
+      setTemplates(templatesResp.templates);
       await persistCache(userEmail, bootstrap.sites, hydratedEntries, bootstrap.diaries);
-      setSyncStatus("idle");
+      const remaining = await peekQueue();
+      setSyncStatus(remaining.length > 0 ? "offline" : "idle");
     } catch (err) {
       console.warn("Remote bootstrap failed, using cache:", err);
       setSites(cached.sites);
@@ -351,13 +422,32 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [authLoading, isAuthenticated, user?.email, token]);
 
   const addSite = async (siteData: Omit<Site, "id" | "createdAt">) => {
-    const response = await apiJson<{ site: Site }>("/projects/sites", {
-      method: "POST",
-      body: JSON.stringify(siteData),
-    });
-    const updated = [response.site, ...sites];
-    setSites(updated);
-    await persistCache(user?.email, updated, entries, diaries);
+    try {
+      const response = await apiJson<{ site: Site }>("/projects/sites", {
+        method: "POST",
+        body: JSON.stringify(siteData),
+      });
+      const updated = [response.site, ...sites];
+      setSites(updated);
+      await persistCache(user?.email, updated, entries, diaries);
+    } catch (err) {
+      if (isNetworkError(err)) {
+        // Optimistic local add while offline
+        const optimistic: Site = {
+          ...siteData,
+          id: `pending-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+        };
+        const updated = [optimistic, ...sites];
+        setSites(updated);
+        await persistCache(user?.email, updated, entries, diaries);
+        await enqueue({ type: "addSite", payload: siteData });
+        setPendingCount((n) => n + 1);
+        setSyncStatus("offline");
+        return;
+      }
+      throw err;
+    }
   };
 
   const deleteSite = async (id: string) => {
@@ -372,16 +462,38 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addEntry = async (entryData: Omit<Entry, "id" | "timestamp" | "createdAt">) => {
-    const uploadedPhotos = await uploadPhotos(entryData.photos);
-    await savePhotoPayloads(uploadedPhotos);
-    const response = await apiJson<{ entry: Entry }>("/projects/entries", {
-      method: "POST",
-      body: JSON.stringify(stripPhotoPayloads({ ...entryData, photos: uploadedPhotos } as Entry)),
-    });
-    const [hydratedEntry] = await hydrateEntriesWithPhotoPayloads([response.entry]);
-    const updated = [hydratedEntry, ...entries];
-    setEntries(updated);
-    await persistCache(user?.email, sites, updated, diaries);
+    try {
+      const uploadedPhotos = await uploadPhotos(entryData.photos);
+      await savePhotoPayloads(uploadedPhotos);
+      const response = await apiJson<{ entry: Entry }>("/projects/entries", {
+        method: "POST",
+        body: JSON.stringify(stripPhotoPayloads({ ...entryData, photos: uploadedPhotos } as Entry)),
+      });
+      const [hydratedEntry] = await hydrateEntriesWithPhotoPayloads([response.entry]);
+      const updated = [hydratedEntry, ...entries];
+      setEntries(updated);
+      await persistCache(user?.email, sites, updated, diaries);
+    } catch (err) {
+      if (isNetworkError(err)) {
+        // Optimistic local entry — marked pending so UI can indicate sync state
+        const optimistic: Entry = {
+          ...entryData,
+          id: `pending-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          isPending: true,
+        };
+        await savePhotoPayloads(entryData.photos);
+        const updated = [optimistic, ...entries];
+        setEntries(updated);
+        await persistCache(user?.email, sites, updated, diaries);
+        await enqueue({ type: "addEntry", payload: stripPhotoPayloads(optimistic) });
+        setPendingCount((n) => n + 1);
+        setSyncStatus("offline");
+        return;
+      }
+      throw err;
+    }
   };
 
   const deleteEntry = async (id: string) => {
@@ -510,14 +622,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     return diaries.filter((d) => d.siteId === siteId).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
   };
 
+  const getSiteTemplates = (siteId?: string) => {
+    if (!siteId) return [];
+    return templates.filter((t) => t.siteId === siteId);
+  };
+
   return (
     <DataContext.Provider
       value={{
         sites,
         entries,
         diaries,
+        templates,
         syncStatus,
         lastSyncError,
+        pendingCount,
         addSite,
         deleteSite,
         addEntry,
@@ -529,6 +648,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         getSite,
         getSiteEntries,
         getSiteDiaries,
+        getSiteTemplates,
         loading,
         refresh,
       }}

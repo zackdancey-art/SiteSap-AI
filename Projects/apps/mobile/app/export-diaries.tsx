@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
-import { buildDiariesReportHtml, exportReportDocument } from "@/lib/export-utils";
+import { buildDiariesReportHtml, buildDiariesCsv, exportReportDocument, shareOrDownloadText } from "@/lib/export-utils";
 
 export default function ExportDiariesScreen() {
   const { diaries, sites } = useData();
@@ -25,21 +25,34 @@ export default function ExportDiariesScreen() {
     }
   };
 
+  const onExportCsv = async () => {
+    try {
+      const csv = buildDiariesCsv(diaries, sites);
+      await shareOrDownloadText(`sitesnap-diaries-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    } catch (error) {
+      console.error("CSV export failed", error);
+      Alert.alert("Export failed", "Could not export CSV.");
+    }
+  };
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.card}>
         <Text style={styles.title}>Diary Export</Text>
-        <Text style={styles.subtitle}>Export all generated diaries in a clean PDF or Word report.</Text>
+        <Text style={styles.subtitle}>Export all generated diaries in a clean PDF, Word, or CSV report.</Text>
         <View style={styles.statRow}>
           <Text style={styles.statLabel}>Diaries ready</Text>
           <Text style={styles.statValue}>{diaries.length}</Text>
         </View>
         <View style={styles.actions}>
           <Pressable style={styles.buttonSecondary} onPress={() => void onExport("doc")}>
-            <Text style={styles.buttonSecondaryText}>Export Word</Text>
+            <Text style={styles.buttonSecondaryText}>Word</Text>
+          </Pressable>
+          <Pressable style={styles.buttonSecondary} onPress={() => void onExportCsv()}>
+            <Text style={styles.buttonSecondaryText}>CSV</Text>
           </Pressable>
           <Pressable style={styles.button} onPress={() => void onExport("pdf")}>
-            <Text style={styles.buttonText}>Export PDF</Text>
+            <Text style={styles.buttonText}>PDF</Text>
           </Pressable>
         </View>
       </View>

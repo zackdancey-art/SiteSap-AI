@@ -1,4 +1,5 @@
 import { Request, Response, Router } from "express";
+import { randomBytes, randomInt } from "crypto";
 import {
   createPasswordResetToken,
   createUser,
@@ -23,7 +24,7 @@ import {
 } from "../services/notificationService";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { createAuthToken } from "../utils/authToken";
-import { isRateLimited } from "../middleware/rateLimit";
+import { isRateLimitedByIp, isRateLimitedByAccount, LIMITS } from "../middleware/rateLimit";
 import { hashPassword, verifyPassword } from "../utils/password";
 
 const router: Router = Router();
@@ -49,12 +50,12 @@ function normalizePhone(phone: string) {
   return `${hasPlus ? "+" : ""}${digits}`;
 }
 
-function makeResetToken(email: string) {
-  return Buffer.from(`${email}:${Date.now()}:${Math.random()}`).toString("base64url");
+function makeResetToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
-function makeCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+function makeCode(): string {
+  return String(randomInt(100000, 1000000));
 }
 
 function buildResetLink(resetToken: string) {
@@ -74,8 +75,8 @@ function isUniqueViolation(err: unknown) {
 }
 
 async function initiateRegistration(req: Request, res: Response) {
-  if (isRateLimited(req, "register-initiate", 8, 10 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many signup attempts. Please try again shortly." });
+  if (await isRateLimitedByIp(req, "register-initiate", LIMITS.registerPerIp.max, LIMITS.registerPerIp.windowMs)) {
+    return res.status(429).json({ error: "Too many signup attempts from this network. Please try again shortly." });
   }
 
   const email = String(req.body?.email ?? "").trim().toLowerCase();
@@ -98,6 +99,17 @@ async function initiateRegistration(req: Request, res: Response) {
   }
   if (password.length < 8) {
     return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+
+  // OTP send limits checked after field validation so only real-looking addresses consume quota
+  if (await isRateLimitedByAccount(email, "otp-send", LIMITS.otpSendPerAccount.max, LIMITS.otpSendPerAccount.windowMs)) {
+    return res.status(429).json({ error: "Too many verification codes requested for this account. Please try again shortly." });
+  }
+  if (await isRateLimitedByAccount(email, "otp-send-daily", LIMITS.otpSendPerAccountDaily.max, LIMITS.otpSendPerAccountDaily.windowMs)) {
+    return res.status(429).json({ error: "Daily verification code limit reached for this account. Please try again tomorrow." });
+  }
+  if (await isRateLimitedByIp(req, "otp-send", LIMITS.otpSendPerIp.max, LIMITS.otpSendPerIp.windowMs)) {
+    return res.status(429).json({ error: "Too many verification requests from this network. Please try again shortly." });
   }
 
   try {
@@ -176,7 +188,7 @@ router.post("/auth/register", initiateRegistration);
 router.post("/auth/register/initiate", initiateRegistration);
 
 router.post("/auth/register/verify", async (req, res) => {
-  if (isRateLimited(req, "register-verify", 12, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "register-verify", LIMITS.registerVerifyPerIp.max, LIMITS.registerVerifyPerIp.windowMs)) {
     return res.status(429).json({ error: "Too many verification attempts. Please try again shortly." });
   }
 
@@ -202,7 +214,7 @@ router.post("/auth/register/verify", async (req, res) => {
 
     if (pending.emailCode !== emailCode || pending.smsCode !== smsCode) {
       const attempts = await incrementPendingAttempts(email);
-      if (attempts >= 5) {
+      if (attempts >= LIMITS.otpVerifyMaxAttempts) {
         await deletePendingRegistration(email);
         return res.status(429).json({ error: "Too many invalid verification attempts. Please register again." });
       }
@@ -243,14 +255,21 @@ router.post("/auth/register/verify", async (req, res) => {
 });
 
 async function loginHandler(req: Request, res: Response) {
-  if (isRateLimited(req, "login", 15, 10 * 60 * 1000)) {
-    return res.status(429).json({ error: "Too many login attempts. Please try again shortly." });
-  }
-
   const email = String(req.body?.email ?? "").trim().toLowerCase();
   const password = String(req.body?.password ?? "").trim();
   if (!email || !password) {
     return res.status(400).json({ error: "Email and password are required." });
+  }
+
+  // Per-account check first: protects individual accounts from brute-force, regardless of IP.
+  // A crew sharing one network gets per-person limits, not a shared pool.
+  if (await isRateLimitedByAccount(email, "login", LIMITS.loginPerAccount.max, LIMITS.loginPerAccount.windowMs)) {
+    return res.status(429).json({ error: "Too many login attempts for this account. Please try again shortly." });
+  }
+
+  // Per-IP backstop: only fires for extremely high volume from a single IP (bots/scanners).
+  if (await isRateLimitedByIp(req, "login", LIMITS.loginPerIp.max, LIMITS.loginPerIp.windowMs)) {
+    return res.status(429).json({ error: "Too many login attempts from this network. Please try again shortly." });
   }
 
   try {
@@ -316,7 +335,7 @@ router.patch("/auth/profile", requireAuth, async (req: Request, res: Response) =
 
 // Permanently delete the authenticated user's account and all their data
 router.delete("/auth/account", requireAuth, async (req: Request, res: Response) => {
-  if (isRateLimited(req, "delete-account", 3, 60 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "delete-account", 3, 60 * 60 * 1000)) {
     return res.status(429).json({ error: "Too many account deletion attempts." });
   }
   const auth = (req as AuthenticatedRequest).auth;
@@ -343,7 +362,7 @@ router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) =>
 });
 
 router.post("/auth/forgot-password", async (req, res) => {
-  if (isRateLimited(req, "forgot-password", 8, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "forgot-password", LIMITS.forgotPasswordPerIp.max, LIMITS.forgotPasswordPerIp.windowMs)) {
     return res.status(429).json({ error: "Too many reset requests. Please try again shortly." });
   }
 
@@ -366,7 +385,7 @@ router.post("/auth/forgot-password", async (req, res) => {
     const user = await findUserByIdentifier(normalizedIdentifier, normalizedPhone);
 
     if (user) {
-      const resetToken = makeResetToken(user.email);
+      const resetToken = makeResetToken();
       const resetLink = buildResetLink(resetToken);
       const resetCode = resetToken.slice(0, 8).toUpperCase();
       await createPasswordResetToken(resetToken, user.email, new Date(Date.now() + 1000 * 60 * 30));
@@ -418,7 +437,7 @@ router.post("/auth/forgot-password", async (req, res) => {
 });
 
 router.post("/auth/reset-password", async (req, res) => {
-  if (isRateLimited(req, "reset-password", 12, 10 * 60 * 1000)) {
+  if (await isRateLimitedByIp(req, "reset-password", LIMITS.resetPasswordPerIp.max, LIMITS.resetPasswordPerIp.windowMs)) {
     return res.status(429).json({ error: "Too many reset attempts. Please try again shortly." });
   }
 

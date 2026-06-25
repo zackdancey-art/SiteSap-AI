@@ -17,6 +17,8 @@ export interface Photo {
   mimeType?: string;
   storagePath?: string;
   storageKey?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface DailyEntry {
@@ -30,6 +32,14 @@ export interface DailyEntry {
   photos: Photo[];
   createdAt?: string;
   timestamp: string;
+  isPending?: boolean;
+}
+
+export interface DiaryEditLogEntry {
+  at: string;
+  action: "approved" | "reverted" | "edited";
+  by?: string;
+  note?: string;
 }
 
 export interface GeneratedDiary {
@@ -42,6 +52,7 @@ export interface GeneratedDiary {
   fullReport?: string;
   safetyChecklist?: string[];
   sections: DiarySection[];
+  editLog?: DiaryEditLogEntry[];
 }
 
 export interface DiarySection {
@@ -57,3 +68,14 @@ export interface DiarySection {
 
 // Backwards-compatible alias expected by some modules
 export type Entry = DailyEntry;
+
+export interface SiteTemplate {
+  id: string;
+  ownerEmail: string;
+  siteId: string;
+  name: string;
+  weather: string;
+  crewCount: string;
+  notesTemplate: string;
+  createdAt: string;
+}
