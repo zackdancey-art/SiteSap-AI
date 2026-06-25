@@ -1,0 +1,86 @@
+name: Build Mobile (EAS)
+
+# Triggers:
+#   - Manual dispatch (choose profile + platforms)
+#   - Push of a version tag (e.g. v1.2.3) → production build
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "EAS build profile"
+        required: true
+        default: "preview"
+        type: choice
+        options: [development, preview, production]
+      platform:
+        description: "Platform(s)"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, ios, android]
+
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Projects/apps/mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Install workspace dependencies
+        working-directory: Projects
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck mobile
+        run: pnpm run typecheck
+
+      # EXPO_TOKEN must be set as a repository secret.
+      # Create at: https://expo.dev/accounts/[account]/settings/access-tokens
+      - name: EAS Build
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          PROFILE="${{ github.event.inputs.profile || 'production' }}"
+          PLATFORM="${{ github.event.inputs.platform || 'all' }}"
+          eas build --profile "$PROFILE" --platform "$PLATFORM" --non-interactive
+
+  submit:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Projects/apps/mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: EAS Submit (iOS + Android)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: eas submit --profile production --platform all --non-interactive

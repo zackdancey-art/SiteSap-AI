@@ -1,0 +1,19 @@
+**/.git
+**/node_modules
+**/dist
+**/.next
+**/coverage
+**/.DS_Store
+**/.expo
+*.md
+.env*
+!**/.env.example
+
+# Mobile app — not included in the API image
+Projects/apps
+
+# Docs, scripts — not needed at build time
+Projects/docs
+Projects/scripts
+Projects/assets
+Projects/attached_assets
