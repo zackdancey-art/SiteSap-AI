@@ -126,6 +126,18 @@ function RootLayoutNav() {
           headerTintColor: "#0F2B46",
         }}
       />
+      <Stack.Screen
+        name="invite"
+        options={{
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="site-invite"
+        options={{
+          headerShown: false,
+        }}
+      />
     </Stack>
   );
 }

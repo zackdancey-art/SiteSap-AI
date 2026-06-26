@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -12,8 +12,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useData } from "@/lib/data-context";
+import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
-import { DailyEntry } from "@/lib/types";
+import { DailyEntry, SiteMember } from "@/lib/types";
 
 function EntryCard({ entry }: { entry: DailyEntry }) {
   const dateObj = new Date(entry.date + "T00:00:00");
@@ -64,10 +65,52 @@ function EntryCard({ entry }: { entry: DailyEntry }) {
 export default function SiteDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { getSite, getSiteEntries, deleteSite } = useData();
+  const { getSite, getSiteEntries, deleteSite, getSiteMembers, removeSiteMember } = useData();
+  const { user } = useAuth();
 
   const site = getSite(id);
   const entries = getSiteEntries(id);
+
+  const [members, setMembers] = useState<SiteMember[]>([]);
+  const [membersLoaded, setMembersLoaded] = useState(false);
+
+  const canManage =
+    user?.role === "supervisor" ||
+    user?.role === "admin";
+
+  useEffect(() => {
+    if (!id) return;
+    getSiteMembers(id)
+      .then((m) => {
+        setMembers(m);
+        setMembersLoaded(true);
+      })
+      .catch(() => setMembersLoaded(true));
+  }, [id]);
+
+  const handleRemoveMember = (member: SiteMember) => {
+    if (!id) return;
+    const doRemove = async () => {
+      try {
+        await removeSiteMember(id, member.memberEmail);
+        setMembers((prev) => prev.filter((m) => m.memberEmail !== member.memberEmail));
+      } catch (err) {
+        Alert.alert("Error", err instanceof Error ? err.message : "Could not remove member.");
+      }
+    };
+    if (Platform.OS === "web") {
+      void doRemove();
+      return;
+    }
+    Alert.alert(
+      "Remove Member",
+      `Remove ${member.memberEmail} from this site?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => void doRemove() },
+      ]
+    );
+  };
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
 
@@ -113,6 +156,16 @@ export default function SiteDetailScreen() {
             <Ionicons name="arrow-back" size={22} color={Colors.white} />
           </Pressable>
           <View style={styles.headerActions}>
+            {canManage && (
+              <Pressable
+                onPress={() =>
+                  router.push({ pathname: "/site-invite", params: { siteId: id, siteName: site.name } })
+                }
+                style={styles.headerAction}
+              >
+                <Ionicons name="person-add-outline" size={20} color="rgba(255,255,255,0.8)" />
+              </Pressable>
+            )}
             <Pressable onPress={handleDelete} style={styles.headerAction}>
               <Ionicons name="trash-outline" size={20} color="rgba(255,255,255,0.8)" />
             </Pressable>
@@ -174,6 +227,37 @@ export default function SiteDetailScreen() {
         renderItem={({ item }) => <EntryCard entry={item} />}
         contentContainerStyle={[styles.listContent, { paddingBottom: 40 }]}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          membersLoaded && members.length > 0 ? (
+            <View style={styles.teamSection}>
+              <Text style={styles.teamTitle}>Team</Text>
+              {members.map((m) => (
+                <View key={m.memberEmail} style={styles.memberRow}>
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText}>
+                      {m.memberEmail[0].toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.memberEmail}>{m.memberEmail}</Text>
+                    <Text style={styles.memberRole}>
+                      {m.role.charAt(0).toUpperCase() + m.role.slice(1)}
+                    </Text>
+                  </View>
+                  {canManage && (
+                    <Pressable
+                      onPress={() => handleRemoveMember(m)}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="person-remove-outline" size={18} color={Colors.textTertiary} />
+                    </Pressable>
+                  )}
+                </View>
+              ))}
+              <Text style={styles.entriesHeading}>Entries</Text>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Ionicons name="document-text-outline" size={48} color={Colors.textTertiary} />
@@ -419,5 +503,63 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: "center",
     paddingHorizontal: 40,
+  },
+  teamSection: {
+    marginBottom: 12,
+  },
+  teamTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  memberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 6,
+    shadowColor: Colors.cardShadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  memberAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.primary + "14",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  memberAvatarText: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: Colors.primary,
+  },
+  memberEmail: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: Colors.text,
+  },
+  memberRole: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  entriesHeading: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 16,
+    marginBottom: 4,
   },
 });

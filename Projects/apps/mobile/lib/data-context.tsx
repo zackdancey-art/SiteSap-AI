@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Site, Entry, GeneratedDiary, SiteTemplate } from "@/lib/types";
+import { Site, Entry, GeneratedDiary, SiteTemplate, SiteMember, InviteResult } from "@/lib/types";
 import { resolveApiBaseUrl } from "@/lib/api-base-url";
 import { useAuth, isTokenExpiringSoon } from "@/lib/auth-context";
 import {
@@ -33,6 +33,10 @@ interface DataContextType {
   getSiteTemplates: (siteId?: string) => SiteTemplate[];
   loading: boolean;
   refresh: () => Promise<void>;
+  inviteCrewMembers: (siteId: string, emails: string[], role: string) => Promise<InviteResult[]>;
+  acceptInvite: (token: string) => Promise<{ siteId: string; siteName: string; role: string }>;
+  getSiteMembers: (siteId: string) => Promise<SiteMember[]>;
+  removeSiteMember: (siteId: string, memberEmail: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -627,6 +631,35 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     return templates.filter((t) => t.siteId === siteId);
   };
 
+  const inviteCrewMembers = async (siteId: string, emails: string[], role: string): Promise<InviteResult[]> => {
+    const resp = await apiJson<{ results: InviteResult[] }>(`/projects/sites/${siteId}/invites`, {
+      method: "POST",
+      body: JSON.stringify({ emails, role }),
+    });
+    return resp.results;
+  };
+
+  const acceptInvite = async (token: string): Promise<{ siteId: string; siteName: string; role: string }> => {
+    const resp = await apiJson<{ siteId: string; siteName: string; role: string }>("/projects/invites/accept", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+    // Refresh so the newly joined site appears in the sites list
+    await refresh();
+    return resp;
+  };
+
+  const getSiteMembers = async (siteId: string): Promise<SiteMember[]> => {
+    const resp = await apiJson<{ members: SiteMember[] }>(`/projects/sites/${siteId}/members`);
+    return resp.members;
+  };
+
+  const removeSiteMember = async (siteId: string, memberEmail: string): Promise<void> => {
+    await apiJson<{ ok: boolean }>(`/projects/sites/${siteId}/members/${encodeURIComponent(memberEmail)}`, {
+      method: "DELETE",
+    });
+  };
+
   return (
     <DataContext.Provider
       value={{
@@ -651,6 +684,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         getSiteTemplates,
         loading,
         refresh,
+        inviteCrewMembers,
+        acceptInvite,
+        getSiteMembers,
+        removeSiteMember,
       }}
     >
       {children}
