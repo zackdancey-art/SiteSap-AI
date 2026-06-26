@@ -98,16 +98,16 @@ test("supervisor can create an invite", async () => {
   const supToken = await registerAndLogin("supervisor@example.com", "+447911000010", "Supervisor");
   const siteId = await createSite(supToken);
 
-  const r = await req<{ invited: Array<{ email: string; status: string }> }>(
+  const r = await req<{ results: Array<{ email: string; status: string }> }>(
     "POST",
     `/projects/sites/${siteId}/invites`,
     { emails: ["worker1@example.com"], role: "worker" },
     supToken
   );
   assert.equal(r.status, 201);
-  assert.equal(r.body.invited.length, 1);
-  assert.equal(r.body.invited[0].email, "worker1@example.com");
-  assert.equal(r.body.invited[0].status, "sent");
+  assert.equal(r.body.results.length, 1);
+  assert.equal(r.body.results[0].email, "worker1@example.com");
+  assert.equal(r.body.results[0].status, "sent");
 });
 
 test("worker (non-supervisor, non-owner) gets 403 when creating invite", async () => {
@@ -128,14 +128,14 @@ test("site owner (worker role) can create invite for their own site", async () =
   const ownerToken = await registerAndLogin("owner@example.com", "+447911000020", "Owner");
   const siteId = await createSite(ownerToken);
 
-  const r = await req<{ invited: Array<{ email: string; status: string }> }>(
+  const r = await req<{ results: Array<{ email: string; status: string }> }>(
     "POST",
     `/projects/sites/${siteId}/invites`,
     { emails: ["invited@example.com"], role: "worker" },
     ownerToken
   );
   assert.equal(r.status, 201);
-  assert.equal(r.body.invited[0].status, "sent");
+  assert.equal(r.body.results[0].status, "sent");
 });
 
 test("accepted invite registers user as member; token cannot be reused", async () => {
@@ -289,13 +289,13 @@ test("already_member status returned for existing member", async () => {
   await req("POST", "/projects/invites/accept", { token: listR.body.invites[0].token }, memberToken);
 
   // Invite again → should return already_member
-  const r2 = await req<{ invited: Array<{ email: string; status: string }> }>(
+  const r2 = await req<{ results: Array<{ email: string; status: string }> }>(
     "POST", `/projects/sites/${siteId}/invites`,
     { emails: ["repeat@example.com"], role: "worker" },
     supToken
   );
   assert.equal(r2.status, 201);
-  assert.equal(r2.body.invited[0].status, "already_member");
+  assert.equal(r2.body.results[0].status, "already_member");
 });
 
 test("supervisor can remove a member", async () => {

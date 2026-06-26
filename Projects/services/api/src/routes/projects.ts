@@ -291,7 +291,7 @@ projectsRouter.post("/projects/sites/:siteId/invites", async (req, res) => {
     }).catch(() => {/* best-effort */});
   }
 
-  return res.status(201).json({ invited: results });
+  return res.status(201).json({ results });
 });
 
 projectsRouter.get("/projects/sites/:siteId/invites", async (req, res) => {
