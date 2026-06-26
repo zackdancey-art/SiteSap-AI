@@ -14,8 +14,14 @@
 **/.env.*
 !**/.env.example
 
-# Expo
-**/apps/mobile/.expo/
+# Expo / React Native
+**/.expo/
+
+# Next.js (webpack cache — must never be committed)
+**/.next/
+
+# Test coverage
+**/coverage/
 
 # TypeScript build info
 **/*.tsbuildinfo
