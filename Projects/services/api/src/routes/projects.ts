@@ -2,23 +2,31 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requireRole, AuthenticatedRequest } from "../middleware/auth";
 import {
+  acceptSiteInvite,
   createDiary,
   createEntry,
   createSite,
+  createSiteInvites,
   createTemplate,
   deleteEntry,
   deleteSite,
+  deleteSiteInvite,
   deleteTemplate,
   getScopedBootstrap,
   getSupervisorReport,
   listDiaries,
   listEntries,
+  listSiteInvites,
+  listSiteMembers,
   listSites,
   listTemplates,
+  removeSiteMember,
   updateDiary,
   updateEntry,
   updateTemplate,
 } from "../storage/projectsStore";
+import { isRateLimitedByAccount, LIMITS } from "../middleware/rateLimit";
+import { sendSiteInvite } from "../services/notificationService";
 
 function parsePagination(query: Record<string, unknown>) {
   const limit = Math.min(Math.max(Number(query.limit) || 200, 1), 500);
@@ -236,4 +244,108 @@ projectsRouter.delete("/projects/templates/:id", async (req, res) => {
   const removed = await deleteTemplate(actor, req.params.id);
   if (!removed) return res.status(404).json({ error: "Template not found." });
   return res.json({ ok: true });
+});
+
+// ─── Site invites ─────────────────────────────────────────────────────────────
+
+const InviteSchema = z.object({
+  emails: z.array(z.string().email()).min(1).max(50),
+  role: z.enum(["worker", "supervisor"]).default("worker"),
+});
+
+projectsRouter.post("/projects/sites/:siteId/invites", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+
+  if (await isRateLimitedByAccount(actor.email, "bulk-invite", LIMITS.bulkInvitePerAccount.max, LIMITS.bulkInvitePerAccount.windowMs)) {
+    return res.status(429).json({ error: "Too many invitations sent. Please try again shortly." });
+  }
+
+  const parsed = InviteSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid invite payload.", details: parsed.error.flatten() });
+  }
+
+  const results = await createSiteInvites(actor, req.params.siteId, parsed.data.emails, parsed.data.role);
+  if (results === null) {
+    return res.status(403).json({ error: "Insufficient permissions to manage this site." });
+  }
+
+  // Send invite emails best-effort; look up current invites once for all tokens
+  const actorAuth = (req as unknown as AuthenticatedRequest).auth;
+  const invites = await listSiteInvites(actor, req.params.siteId);
+  const sites = await listSites(actor);
+  const site = sites.find((s) => s.id === req.params.siteId);
+  const siteName = site?.name ?? req.params.siteId;
+  const inviteByEmail = new Map((invites ?? []).map((i) => [i.invitedEmail, i]));
+
+  for (const result of results) {
+    if (result.status === "already_member") continue;
+    const invite = inviteByEmail.get(result.email);
+    if (!invite) continue;
+    sendSiteInvite({
+      to: result.email,
+      inviterName: actorAuth.fullName || actor.email,
+      siteName,
+      role: invite.role,
+      token: invite.token,
+    }).catch(() => {/* best-effort */});
+  }
+
+  return res.status(201).json({ results });
+});
+
+projectsRouter.get("/projects/sites/:siteId/invites", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const invites = await listSiteInvites(actor, req.params.siteId);
+  if (invites === null) {
+    return res.status(403).json({ error: "Insufficient permissions to manage this site." });
+  }
+  return res.json({ invites });
+});
+
+projectsRouter.delete("/projects/sites/:siteId/invites/:inviteId", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const removed = await deleteSiteInvite(actor, req.params.siteId, req.params.inviteId);
+  if (!removed) return res.status(404).json({ error: "Invite not found." });
+  return res.json({ ok: true });
+});
+
+// ─── Site members ─────────────────────────────────────────────────────────────
+
+projectsRouter.get("/projects/sites/:siteId/members", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const members = await listSiteMembers(actor, req.params.siteId);
+  if (members === null) {
+    return res.status(403).json({ error: "Insufficient permissions to manage this site." });
+  }
+  return res.json({ members });
+});
+
+projectsRouter.delete("/projects/sites/:siteId/members/:email", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const removed = await removeSiteMember(actor, req.params.siteId, req.params.email);
+  if (!removed) return res.status(404).json({ error: "Member not found." });
+  return res.json({ ok: true });
+});
+
+// ─── Invite accept ────────────────────────────────────────────────────────────
+
+const AcceptInviteSchema = z.object({
+  token: z.string().min(1),
+});
+
+projectsRouter.post("/projects/invites/accept", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const parsed = AcceptInviteSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Missing invite token." });
+  }
+  const result = await acceptSiteInvite(actor.email, parsed.data.token);
+  if (result === "not_found" || result === "expired" || result === "already_used") {
+    return res.status(404).json({ error: "Invite not found or has expired." });
+  }
+  if (result === "wrong_user") {
+    return res.status(403).json({ error: "This invitation was sent to a different email address." });
+  }
+  return res.json({ siteId: result.siteId, siteName: result.siteName, role: result.role });
 });

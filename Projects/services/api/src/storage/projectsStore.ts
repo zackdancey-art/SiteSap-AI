@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import path from "path";
 import { v7 as uuidv7 } from "uuid";
 import { getPgPool } from "./postgres";
@@ -67,6 +68,30 @@ export type TemplateRecord = {
   createdAt: string;
 };
 
+export type SiteInviteRecord = {
+  id: string;
+  siteId: string;
+  invitedEmail: string;
+  invitedBy: string;
+  role: string;
+  token: string;
+  expiresAt: string;
+  createdAt: string;
+};
+
+export type SiteMemberRecord = {
+  siteId: string;
+  memberEmail: string;
+  role: string;
+  invitedBy: string;
+  joinedAt: string;
+};
+
+export type InviteResult = {
+  email: string;
+  status: "sent" | "resent" | "already_member";
+};
+
 type Actor = { email: string; role: UserRole };
 
 type MemoryState = {
@@ -74,6 +99,8 @@ type MemoryState = {
   entries: Map<string, EntryRecord>;
   diaries: Map<string, DiaryRecord>;
   templates: Map<string, TemplateRecord>;
+  siteInvites: Map<string, SiteInviteRecord>;  // key = token
+  siteMembers: Map<string, SiteMemberRecord>;  // key = `${siteId}:${memberEmail}`
 };
 
 type MemoryJson = {
@@ -81,6 +108,8 @@ type MemoryJson = {
   entries: EntryRecord[];
   diaries: DiaryRecord[];
   templates: TemplateRecord[];
+  siteInvites?: SiteInviteRecord[];
+  siteMembers?: SiteMemberRecord[];
 };
 
 const memory: MemoryState = {
@@ -88,6 +117,8 @@ const memory: MemoryState = {
   entries: new Map<string, EntryRecord>(),
   diaries: new Map<string, DiaryRecord>(),
   templates: new Map<string, TemplateRecord>(),
+  siteInvites: new Map<string, SiteInviteRecord>(),
+  siteMembers: new Map<string, SiteMemberRecord>(),
 };
 
 function useDatabase() {
@@ -113,12 +144,20 @@ const store = new FileBackedStore<Partial<MemoryJson>>(
     for (const tmpl of Array.isArray(parsed.templates) ? parsed.templates : []) {
       memory.templates.set(tmpl.id, tmpl);
     }
+    for (const inv of Array.isArray(parsed.siteInvites) ? parsed.siteInvites : []) {
+      memory.siteInvites.set(inv.token, inv);
+    }
+    for (const mem of Array.isArray(parsed.siteMembers) ? parsed.siteMembers : []) {
+      memory.siteMembers.set(`${mem.siteId}:${mem.memberEmail}`, mem);
+    }
   },
   () => ({
     sites: Array.from(memory.sites.values()),
     entries: Array.from(memory.entries.values()),
     diaries: Array.from(memory.diaries.values()),
     templates: Array.from(memory.templates.values()),
+    siteInvites: Array.from(memory.siteInvites.values()),
+    siteMembers: Array.from(memory.siteMembers.values()),
   })
 );
 
@@ -275,8 +314,13 @@ function mapDiary(row: {
 export async function listSites(actor: Actor, limit = 200, offset = 0): Promise<SiteRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
+    const memberSiteIds = new Set(
+      Array.from(memory.siteMembers.values())
+        .filter((m) => m.memberEmail === actor.email)
+        .map((m) => m.siteId)
+    );
     return Array.from(memory.sites.values())
-      .filter((site) => canAccessOwner(actor, site.ownerEmail))
+      .filter((site) => canAccessOwner(actor, site.ownerEmail) || memberSiteIds.has(site.id))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(offset, offset + limit);
   }
@@ -301,7 +345,10 @@ export async function listSites(actor: Actor, limit = 200, offset = 0): Promise<
         status: SiteStatus;
         created_at: Date;
       }>(
-        `SELECT * FROM project_sites WHERE owner_email = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+        `SELECT * FROM project_sites
+         WHERE owner_email = $1
+            OR id IN (SELECT site_id FROM site_members WHERE member_email = $1)
+         ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
         [actor.email, limit, offset]
       );
   return result.rows.map(mapSite);
@@ -836,6 +883,8 @@ export async function deleteAllUserProjectData(email: string): Promise<void> {
 
 export async function resetProjectStoreForTests() {
   if (useDatabase()) {
+    await getPgPool().query(`DELETE FROM site_members`);
+    await getPgPool().query(`DELETE FROM site_invites`);
     await getPgPool().query(`DELETE FROM project_diaries`);
     await getPgPool().query(`DELETE FROM project_entries`);
     await getPgPool().query(`DELETE FROM project_templates`);
@@ -846,6 +895,8 @@ export async function resetProjectStoreForTests() {
   memory.entries.clear();
   memory.diaries.clear();
   memory.templates.clear();
+  memory.siteInvites.clear();
+  memory.siteMembers.clear();
   store.resetForTests();
 }
 
@@ -984,4 +1035,281 @@ export async function deleteTemplate(actor: Actor, templateId: string): Promise<
     [templateId]
   );
   return (result.rowCount ?? 0) > 0;
+}
+
+// ─── Site invites & members ───────────────────────────────────────────────────
+
+function generateInviteToken(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+async function canManageSite(actor: Actor, siteId: string): Promise<boolean> {
+  if (isElevatedRole(actor.role)) return true;
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const site = memory.sites.get(siteId);
+    return site?.ownerEmail === actor.email;
+  }
+  const r = await getPgPool().query<{ owner_email: string }>(
+    `SELECT owner_email FROM project_sites WHERE id = $1 LIMIT 1`,
+    [siteId]
+  );
+  return r.rows[0]?.owner_email === actor.email;
+}
+
+export async function createSiteInvites(
+  actor: Actor,
+  siteId: string,
+  emails: string[],
+  role: string
+): Promise<InviteResult[] | null> {
+  if (!(await canManageSite(actor, siteId))) return null;
+
+  await ensureMemoryLoaded();
+  const results: InviteResult[] = [];
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  for (const email of emails) {
+    const token = generateInviteToken();
+    if (!useDatabase()) {
+      const memberKey = `${siteId}:${email}`;
+      if (memory.siteMembers.has(memberKey)) {
+        results.push({ email, status: "already_member" });
+        continue;
+      }
+      const existing = Array.from(memory.siteInvites.values()).find(
+        (i) => i.siteId === siteId && i.invitedEmail === email
+      );
+      if (existing) {
+        memory.siteInvites.delete(existing.token);
+        const resent: SiteInviteRecord = {
+          ...existing,
+          token,
+          expiresAt,
+        };
+        memory.siteInvites.set(token, resent);
+        results.push({ email, status: "resent" });
+      } else {
+        const invite: SiteInviteRecord = {
+          id: uuidv7(),
+          siteId,
+          invitedEmail: email,
+          invitedBy: actor.email,
+          role,
+          token,
+          expiresAt,
+          createdAt: new Date().toISOString(),
+        };
+        memory.siteInvites.set(token, invite);
+        results.push({ email, status: "sent" });
+      }
+    } else {
+      const isMember = await getPgPool().query<{ exists: boolean }>(
+        `SELECT EXISTS(SELECT 1 FROM site_members WHERE site_id=$1 AND member_email=$2) AS exists`,
+        [siteId, email]
+      );
+      if (isMember.rows[0].exists) {
+        results.push({ email, status: "already_member" });
+        continue;
+      }
+      const upsert = await getPgPool().query<{
+        id: string; site_id: string; invited_email: string; invited_by: string;
+        role: string; token: string; expires_at: Date; created_at: Date;
+      }>(
+        `INSERT INTO site_invites (id, site_id, invited_email, invited_by, role, token, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (site_id, invited_email) DO UPDATE
+           SET token=$6, expires_at=$7, role=$5, invited_by=$4
+         RETURNING *, (xmax = 0) AS inserted`,
+        [uuidv7(), siteId, email, actor.email, role, token, expiresAt]
+      );
+      const wasNew = (upsert as unknown as { rows: Array<{ xmax: string }> }).rows[0].xmax === "0";
+      results.push({ email, status: wasNew ? "sent" : "resent" });
+    }
+  }
+
+  if (!useDatabase()) await persistMemory();
+  return results;
+}
+
+export async function listSiteInvites(
+  actor: Actor,
+  siteId: string
+): Promise<SiteInviteRecord[] | null> {
+  if (!(await canManageSite(actor, siteId))) return null;
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const now = new Date().toISOString();
+    return Array.from(memory.siteInvites.values()).filter(
+      (i) => i.siteId === siteId && i.expiresAt > now
+    );
+  }
+  const r = await getPgPool().query<{
+    id: string; site_id: string; invited_email: string; invited_by: string;
+    role: string; token: string; expires_at: Date; created_at: Date;
+  }>(
+    `SELECT * FROM site_invites WHERE site_id=$1 AND expires_at > NOW() ORDER BY created_at DESC`,
+    [siteId]
+  );
+  return r.rows.map((row) => ({
+    id: row.id,
+    siteId: row.site_id,
+    invitedEmail: row.invited_email,
+    invitedBy: row.invited_by,
+    role: row.role,
+    token: row.token,
+    expiresAt: row.expires_at.toISOString(),
+    createdAt: row.created_at.toISOString(),
+  }));
+}
+
+export async function deleteSiteInvite(
+  actor: Actor,
+  siteId: string,
+  inviteId: string
+): Promise<boolean> {
+  if (!(await canManageSite(actor, siteId))) return false;
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    for (const [token, invite] of memory.siteInvites.entries()) {
+      if (invite.id === inviteId && invite.siteId === siteId) {
+        memory.siteInvites.delete(token);
+        await persistMemory();
+        return true;
+      }
+    }
+    return false;
+  }
+  const r = await getPgPool().query(
+    `DELETE FROM site_invites WHERE id=$1 AND site_id=$2`,
+    [inviteId, siteId]
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+export async function acceptSiteInvite(
+  actorEmail: string,
+  token: string
+): Promise<{ siteId: string; siteName: string; role: string } | "expired" | "not_found" | "wrong_user" | "already_used"> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const invite = memory.siteInvites.get(token);
+    if (!invite) return "not_found";
+    if (invite.invitedEmail !== actorEmail) return "wrong_user";
+    if (new Date(invite.expiresAt) < new Date()) return "expired";
+
+    // Atomic in the single-threaded JS sense: delete first, then insert
+    memory.siteInvites.delete(token);
+    const memberKey = `${invite.siteId}:${actorEmail}`;
+    if (memory.siteMembers.has(memberKey)) {
+      // Already a member — still return success
+      await persistMemory();
+      const site = memory.sites.get(invite.siteId);
+      return { siteId: invite.siteId, siteName: site?.name ?? invite.siteId, role: invite.role };
+    }
+    memory.siteMembers.set(memberKey, {
+      siteId: invite.siteId,
+      memberEmail: actorEmail,
+      role: invite.role,
+      invitedBy: invite.invitedBy,
+      joinedAt: new Date().toISOString(),
+    });
+    await persistMemory();
+    const site = memory.sites.get(invite.siteId);
+    return { siteId: invite.siteId, siteName: site?.name ?? invite.siteId, role: invite.role };
+  }
+
+  const pool = getPgPool();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Atomically claim the token — DELETE RETURNING means only one concurrent
+    // request can claim it; subsequent requests get 0 rows.
+    const del = await client.query<{
+      id: string; site_id: string; invited_email: string; invited_by: string; role: string;
+    }>(
+      `DELETE FROM site_invites WHERE token=$1 AND expires_at > NOW() RETURNING *`,
+      [token]
+    );
+    if (del.rowCount === 0) {
+      // Check if it existed but was expired or already used
+      const check = await client.query(
+        `SELECT 1 FROM site_invites WHERE token=$1`,
+        [token]
+      );
+      await client.query("ROLLBACK");
+      return check.rowCount === 0 ? "not_found" : "expired";
+    }
+    const invite = del.rows[0];
+    if (invite.invited_email !== actorEmail) {
+      await client.query("ROLLBACK");
+      return "wrong_user";
+    }
+    await client.query(
+      `INSERT INTO site_members (site_id, member_email, role, invited_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT DO NOTHING`,
+      [invite.site_id, actorEmail, invite.role, invite.invited_by]
+    );
+    const siteRow = await client.query<{ name: string }>(
+      `SELECT name FROM project_sites WHERE id=$1`,
+      [invite.site_id]
+    );
+    await client.query("COMMIT");
+    return {
+      siteId: invite.site_id,
+      siteName: siteRow.rows[0]?.name ?? invite.site_id,
+      role: invite.role,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listSiteMembers(
+  actor: Actor,
+  siteId: string
+): Promise<SiteMemberRecord[] | null> {
+  if (!(await canManageSite(actor, siteId))) return null;
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    return Array.from(memory.siteMembers.values()).filter((m) => m.siteId === siteId);
+  }
+  const r = await getPgPool().query<{
+    site_id: string; member_email: string; role: string; invited_by: string; joined_at: Date;
+  }>(
+    `SELECT * FROM site_members WHERE site_id=$1 ORDER BY joined_at ASC`,
+    [siteId]
+  );
+  return r.rows.map((row) => ({
+    siteId: row.site_id,
+    memberEmail: row.member_email,
+    role: row.role,
+    invitedBy: row.invited_by,
+    joinedAt: row.joined_at.toISOString(),
+  }));
+}
+
+export async function removeSiteMember(
+  actor: Actor,
+  siteId: string,
+  memberEmail: string
+): Promise<boolean> {
+  if (!(await canManageSite(actor, siteId))) return false;
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const key = `${siteId}:${memberEmail}`;
+    if (!memory.siteMembers.has(key)) return false;
+    memory.siteMembers.delete(key);
+    await persistMemory();
+    return true;
+  }
+  const r = await getPgPool().query(
+    `DELETE FROM site_members WHERE site_id=$1 AND member_email=$2`,
+    [siteId, memberEmail]
+  );
+  return (r.rowCount ?? 0) > 0;
 }

@@ -66,6 +66,11 @@ export const LIMITS = {
     max: envInt("RATE_LIMIT_RESET_PASSWORD_PER_IP", 12),
     windowMs: envInt("RATE_LIMIT_RESET_PASSWORD_PER_IP_WINDOW_MS", 10 * 60 * 1000),
   },
+  // Bulk invite: per-account (prevents invite spam from a single account)
+  bulkInvitePerAccount: {
+    max: envInt("RATE_LIMIT_BULK_INVITE_PER_ACCOUNT", 20),
+    windowMs: envInt("RATE_LIMIT_BULK_INVITE_PER_ACCOUNT_WINDOW_MS", 10 * 60 * 1000),
+  },
 };
 
 // ─── Test-mode bypass ───────────────────────────────────────────────────────
