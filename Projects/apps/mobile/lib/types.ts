@@ -30,6 +30,8 @@ export interface DailyEntry {
   crewCount: string;
   notes: string;
   photos: Photo[];
+  timeCode?: string;
+  hoursWorked?: string;
   createdAt?: string;
   timestamp: string;
   isPending?: boolean;
