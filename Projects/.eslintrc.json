@@ -2,7 +2,7 @@
   "root": true,
   "parser": "@typescript-eslint/parser",
   "parserOptions": {
-    "project": ["./tsconfig.json", "./services/api/tsconfig.json", "./shared/tsconfig.build.json", "./apps/mobile/tsconfig.json"],
+    "project": ["./tsconfig.json", "./services/api/tsconfig.json", "./shared/tsconfig.build.json", "./apps/mobile/tsconfig.json", "./apps/supervisor-web/tsconfig.json"],
     "sourceType": "module"
   },
   "plugins": ["@typescript-eslint", "import"],
@@ -22,17 +22,27 @@
       }
     },
     {
-      "files": ["apps/**/*.{ts,tsx}"],
+      "files": ["apps/mobile/**/*.{ts,tsx}"],
       "rules": {
         "no-restricted-imports": [
           "error",
-          {
-            "patterns": ["services/*", "services/**"]
-          }
+          { "patterns": ["services/*", "services/**"] }
         ]
       },
       "parserOptions": {
         "project": ["./apps/mobile/tsconfig.json"]
+      }
+    },
+    {
+      "files": ["apps/supervisor-web/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          { "patterns": ["services/*", "services/**"] }
+        ]
+      },
+      "parserOptions": {
+        "project": ["./apps/supervisor-web/tsconfig.json"]
       }
     },
     {

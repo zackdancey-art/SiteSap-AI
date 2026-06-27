@@ -172,4 +172,6 @@ function RootLayout() {
   );
 }
 
-export default sentryDsn ? Sentry.wrap(RootLayout) : RootLayout;
+// Cast resolves pnpm dual-@types/react path that TS can't name through Sentry.wrap's return type
+const AppLayout = (sentryDsn ? Sentry.wrap(RootLayout) : RootLayout) as unknown as typeof RootLayout;
+export default AppLayout;
