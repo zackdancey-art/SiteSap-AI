@@ -1,0 +1,639 @@
+import React, { useEffect, useState } from "react";
+import {
+  View, Text, Pressable, ScrollView, StyleSheet, Alert,
+  ActivityIndicator, TextInput, Modal,
+} from "react-native";
+import { useLocalSearchParams, router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import Colors from "@/constants/colors";
+import { EmptyState } from "@/components/EmptyState";
+import { getApiBaseUrl } from "@/lib/api-base-url";
+import { useData } from "@/lib/data-context";
+
+type Condition = "good" | "damaged" | "partial";
+type DeliveryStatus = "received" | "checked" | "accepted" | "rejected";
+
+type LineItem = { description: string; quantity: string; unit: string; condition: Condition };
+
+type Delivery = {
+  id: string;
+  siteId: string;
+  date: string;
+  time?: string;
+  docketNumber?: string;
+  supplier: string;
+  supplierContact?: string;
+  purchaseOrder?: string;
+  vehicleReg?: string;
+  driverName?: string;
+  items: string[];
+  quantity: string;
+  notes: string;
+  receivedBy?: string;
+  conditionOnArrival?: Condition;
+  damageDescription?: string;
+  storageLocation?: string;
+  nonConformances?: string;
+  deliveryStatus?: DeliveryStatus;
+};
+
+const CONDITION_META: Record<Condition, { label: string; color: string }> = {
+  good:    { label: "Good",    color: Colors.success },
+  damaged: { label: "Damaged", color: Colors.error },
+  partial: { label: "Partial", color: "#F6AD55" },
+};
+
+const STATUS_META: Record<DeliveryStatus, { label: string; color: string }> = {
+  received: { label: "Received",  color: "#93C5FD" },
+  checked:  { label: "Checked",  color: "#F6AD55" },
+  accepted: { label: "Accepted", color: Colors.success },
+  rejected: { label: "Rejected", color: Colors.error },
+};
+
+async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await AsyncStorage.getItem("sitesnap.token");
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <View style={formStyles.field}>
+      <Text style={formStyles.label}>{label}{required ? <Text style={formStyles.required}> *</Text> : null}</Text>
+      {children}
+    </View>
+  );
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return <Text style={formStyles.sectionHeader}>{title}</Text>;
+}
+
+function ChipGroup<T extends string>({
+  options, value, onChange, meta,
+}: {
+  options: T[];
+  value: T;
+  onChange: (v: T) => void;
+  meta: Record<string, { label: string; color: string }>;
+}) {
+  return (
+    <View style={formStyles.chipRow}>
+      {options.map((opt) => {
+        const active = value === opt;
+        const { label, color } = meta[opt] ?? { label: opt, color: Colors.accent };
+        return (
+          <Pressable
+            key={opt}
+            style={[formStyles.chip, active && { backgroundColor: color, borderColor: color }]}
+            onPress={() => onChange(opt)}
+          >
+            <Text style={[formStyles.chipText, active && formStyles.chipTextActive]}>{label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function LineItemRow({
+  item, index, onChange, onRemove,
+}: {
+  item: LineItem;
+  index: number;
+  onChange: (field: keyof LineItem, value: string) => void;
+  onRemove: () => void;
+}) {
+  const conditions: Condition[] = ["good", "damaged", "partial"];
+  return (
+    <View style={formStyles.lineItemCard}>
+      <View style={formStyles.lineItemHeader}>
+        <Text style={formStyles.lineItemIndex}>Item {index + 1}</Text>
+        <Pressable onPress={onRemove} hitSlop={8}>
+          <Ionicons name="close-circle" size={20} color={Colors.error} />
+        </Pressable>
+      </View>
+      <TextInput
+        style={formStyles.input}
+        value={item.description}
+        onChangeText={(v) => onChange("description", v)}
+        placeholder="Material / item description *"
+        placeholderTextColor={Colors.textTertiary}
+      />
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <View style={{ flex: 1 }}>
+          <TextInput
+            style={formStyles.input}
+            value={item.quantity}
+            onChangeText={(v) => onChange("quantity", v)}
+            placeholder="Qty (e.g. 20)"
+            placeholderTextColor={Colors.textTertiary}
+            keyboardType="decimal-pad"
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <TextInput
+            style={formStyles.input}
+            value={item.unit}
+            onChangeText={(v) => onChange("unit", v)}
+            placeholder="Unit (bag, m³, each)"
+            placeholderTextColor={Colors.textTertiary}
+          />
+        </View>
+      </View>
+      <View style={{ flexDirection: "row", gap: 6 }}>
+        {conditions.map((c) => (
+          <Pressable
+            key={c}
+            style={[formStyles.miniChip, item.condition === c && { backgroundColor: CONDITION_META[c].color, borderColor: CONDITION_META[c].color }]}
+            onPress={() => onChange("condition", c)}
+          >
+            <Text style={[formStyles.miniChipText, item.condition === c && { color: "#fff" }]}>{CONDITION_META[c].label}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+export default function DeliveriesScreen() {
+  const { siteId } = useLocalSearchParams<{ siteId: string }>();
+  const { getSite } = useData();
+  const site = getSite(siteId);
+  const insets = useSafeAreaInsets();
+
+  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Form state
+  const [docketNumber, setDocketNumber] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [time, setTime] = useState(new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false }));
+  const [supplier, setSupplier] = useState("");
+  const [supplierContact, setSupplierContact] = useState("");
+  const [purchaseOrder, setPurchaseOrder] = useState("");
+  const [vehicleReg, setVehicleReg] = useState("");
+  const [driverName, setDriverName] = useState("");
+  const [lineItems, setLineItems] = useState<LineItem[]>([{ description: "", quantity: "", unit: "", condition: "good" }]);
+  const [receivedBy, setReceivedBy] = useState("");
+  const [conditionOnArrival, setConditionOnArrival] = useState<Condition>("good");
+  const [damageDescription, setDamageDescription] = useState("");
+  const [storageLocation, setStorageLocation] = useState("");
+  const [nonConformances, setNonConformances] = useState("");
+  const [deliveryStatus, setDeliveryStatus] = useState<DeliveryStatus>("received");
+  const [notes, setNotes] = useState("");
+
+  const load = async () => {
+    try {
+      const data = await apiJson<{ deliveries: Delivery[] }>(`/api/deliveries?siteId=${siteId}`);
+      setDeliveries(data.deliveries);
+    } catch {
+      // silent in dev
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [siteId]);
+
+  const resetForm = () => {
+    setDocketNumber(""); setDate(new Date().toISOString().split("T")[0]);
+    setTime(new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false }));
+    setSupplier(""); setSupplierContact(""); setPurchaseOrder("");
+    setVehicleReg(""); setDriverName("");
+    setLineItems([{ description: "", quantity: "", unit: "", condition: "good" }]);
+    setReceivedBy(""); setConditionOnArrival("good"); setDamageDescription("");
+    setStorageLocation(""); setNonConformances(""); setDeliveryStatus("received"); setNotes("");
+  };
+
+  const updateLineItem = (index: number, field: keyof LineItem, value: string) => {
+    setLineItems((prev) => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
+  };
+
+  const addLineItem = () => {
+    setLineItems((prev) => [...prev, { description: "", quantity: "", unit: "", condition: "good" }]);
+  };
+
+  const removeLineItem = (index: number) => {
+    setLineItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAdd = async () => {
+    const validItems = lineItems.filter((li) => li.description.trim());
+    if (!supplier.trim() && validItems.length === 0) {
+      Alert.alert("Required", "Please enter at least a supplier name or one material item.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiJson(`/api/deliveries`, {
+        method: "POST",
+        body: JSON.stringify({
+          siteId,
+          date,
+          supplier: supplier.trim(),
+          items: validItems.map((li) => `${li.description.trim()} — ${li.quantity} ${li.unit} (${CONDITION_META[li.condition].label})`),
+          quantity: validItems.map((li) => `${li.quantity} ${li.unit}`).filter(Boolean).join(", "),
+          notes: notes.trim(),
+          time, docketNumber: docketNumber.trim(), supplierContact: supplierContact.trim(),
+          purchaseOrder: purchaseOrder.trim(), vehicleReg: vehicleReg.trim(),
+          driverName: driverName.trim(), receivedBy: receivedBy.trim(),
+          conditionOnArrival, damageDescription: damageDescription.trim(),
+          storageLocation: storageLocation.trim(), nonConformances: nonConformances.trim(),
+          deliveryStatus,
+        }),
+      });
+      setShowForm(false);
+      resetForm();
+      await load();
+    } catch {
+      Alert.alert("Error", "Failed to save delivery record. Please check your connection.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = (id: string) => {
+    Alert.alert("Delete Delivery", "Remove this delivery record?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete", style: "destructive", onPress: async () => {
+          await apiJson(`/api/deliveries/${id}`, { method: "DELETE" }).catch(() => {});
+          setDeliveries((prev) => prev.filter((d) => d.id !== id));
+        },
+      },
+    ]);
+  };
+
+  const conditions: Condition[] = ["good", "damaged", "partial"];
+  const statuses: DeliveryStatus[] = ["received", "checked", "accepted", "rejected"];
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={24} color={Colors.white} />
+        </Pressable>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>Material Dockets</Text>
+          {site && <Text style={styles.headerSub}>{site.name}</Text>}
+        </View>
+        <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
+          <Ionicons name="add" size={22} color="#fff" />
+          <Text style={styles.addBtnText}>Log</Text>
+        </Pressable>
+      </View>
+
+      {deliveries.length > 0 && (
+        <View style={styles.summaryBar}>
+          <Ionicons name="cube-outline" size={16} color={Colors.primary} />
+          <Text style={styles.summaryText}>{deliveries.length} delivery record{deliveries.length !== 1 ? "s" : ""}</Text>
+        </View>
+      )}
+
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 40 }} color={Colors.primary} />
+      ) : deliveries.length === 0 ? (
+        <EmptyState
+          icon="cube-outline"
+          title="No deliveries recorded"
+          subtitle="Log material deliveries to maintain a full delivery register and docket trail."
+          ctaLabel="Log Delivery"
+          onCta={() => setShowForm(true)}
+        />
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+          {deliveries.map((d) => {
+            const cond = d.conditionOnArrival ? CONDITION_META[d.conditionOnArrival] : null;
+            const status = d.deliveryStatus ? STATUS_META[d.deliveryStatus] : null;
+            const expanded = expandedId === d.id;
+            return (
+              <Pressable key={d.id} style={styles.card} onPress={() => setExpandedId(expanded ? null : d.id)}>
+                <View style={styles.cardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardSupplier}>{d.supplier || "Unknown Supplier"}</Text>
+                    <Text style={styles.cardMeta}>
+                      {d.date}{d.time ? ` · ${d.time}` : ""}
+                      {d.docketNumber ? ` · Docket #${d.docketNumber}` : ""}
+                    </Text>
+                  </View>
+                  <View style={{ gap: 4, alignItems: "flex-end" }}>
+                    {cond && (
+                      <View style={[styles.badge, { backgroundColor: cond.color + "22" }]}>
+                        <Text style={[styles.badgeText, { color: cond.color }]}>{cond.label}</Text>
+                      </View>
+                    )}
+                    {status && (
+                      <View style={[styles.badge, { backgroundColor: status.color + "22" }]}>
+                        <Text style={[styles.badgeText, { color: status.color }]}>{status.label}</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {d.items.length > 0 && (
+                  <View style={styles.itemsList}>
+                    {d.items.slice(0, expanded ? undefined : 2).map((item, i) => (
+                      <View key={i} style={styles.itemRow}>
+                        <View style={styles.itemDot} />
+                        <Text style={styles.itemText}>{item}</Text>
+                      </View>
+                    ))}
+                    {!expanded && d.items.length > 2 && (
+                      <Text style={styles.moreText}>+{d.items.length - 2} more items</Text>
+                    )}
+                  </View>
+                )}
+
+                {expanded && (
+                  <View style={styles.expandDetail}>
+                    {!!d.purchaseOrder && <DetailRow icon="document-text-outline" label="Purchase Order" value={d.purchaseOrder} />}
+                    {!!d.driverName && <DetailRow icon="car-outline" label="Driver" value={[d.driverName, d.vehicleReg].filter(Boolean).join(" · ")} />}
+                    {!!d.receivedBy && <DetailRow icon="person-outline" label="Received By" value={d.receivedBy} />}
+                    {!!d.storageLocation && <DetailRow icon="location-outline" label="Storage Location" value={d.storageLocation} />}
+                    {!!d.damageDescription && <DetailRow icon="warning-outline" label="Damage Notes" value={d.damageDescription} />}
+                    {!!d.nonConformances && <DetailRow icon="alert-circle-outline" label="Non-Conformances" value={d.nonConformances} />}
+                    {!!d.notes && <DetailRow icon="chatbubble-outline" label="Notes" value={d.notes} />}
+                    <View style={styles.deleteRow}>
+                      <Pressable style={styles.deleteBtn} onPress={() => handleDelete(d.id)}>
+                        <Ionicons name="trash-outline" size={14} color={Colors.error} />
+                        <Text style={styles.deleteBtnText}>Delete Record</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.expandIndicator}>
+                  <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={Colors.textTertiary} />
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      )}
+
+      {/* Delivery Form */}
+      <Modal visible={showForm} animationType="slide" presentationStyle="pageSheet">
+        <View style={[formStyles.container, { paddingTop: insets.top + 16 }]}>
+          <View style={formStyles.modalHeader}>
+            <Pressable onPress={() => { setShowForm(false); resetForm(); }}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </Pressable>
+            <Text style={formStyles.modalTitle}>Delivery Docket</Text>
+            <Pressable
+              style={[formStyles.submitBtn, saving && { opacity: 0.6 }]}
+              onPress={handleAdd}
+              disabled={saving}
+            >
+              {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={formStyles.submitBtnText}>Save</Text>}
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={formStyles.scroll} keyboardShouldPersistTaps="handled">
+            {/* Section 1 – Docket Info */}
+            <SectionHeader title="1 · Docket Information" />
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Field label="Docket / Reference #">
+                  <TextInput style={formStyles.input} value={docketNumber} onChangeText={setDocketNumber} placeholder="e.g. D-0042" placeholderTextColor={Colors.textTertiary} />
+                </Field>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field label="Purchase Order / Job #">
+                  <TextInput style={formStyles.input} value={purchaseOrder} onChangeText={setPurchaseOrder} placeholder="PO number" placeholderTextColor={Colors.textTertiary} />
+                </Field>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Field label="Date" required>
+                  <TextInput style={formStyles.input} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" placeholderTextColor={Colors.textTertiary} />
+                </Field>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field label="Time">
+                  <TextInput style={formStyles.input} value={time} onChangeText={setTime} placeholder="HH:MM" placeholderTextColor={Colors.textTertiary} />
+                </Field>
+              </View>
+            </View>
+
+            {/* Section 2 – Supplier & Vehicle */}
+            <SectionHeader title="2 · Supplier & Transport" />
+            <Field label="Supplier Name" required>
+              <TextInput style={formStyles.input} value={supplier} onChangeText={setSupplier} placeholder="Company name" placeholderTextColor={Colors.textTertiary} />
+            </Field>
+            <Field label="Supplier Contact">
+              <TextInput style={formStyles.input} value={supplierContact} onChangeText={setSupplierContact} placeholder="Phone or email" placeholderTextColor={Colors.textTertiary} keyboardType="email-address" />
+            </Field>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Field label="Driver Name">
+                  <TextInput style={formStyles.input} value={driverName} onChangeText={setDriverName} placeholder="Driver's name" placeholderTextColor={Colors.textTertiary} />
+                </Field>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field label="Vehicle Rego / Truck #">
+                  <TextInput style={formStyles.input} value={vehicleReg} onChangeText={setVehicleReg} placeholder="e.g. ABC-123" placeholderTextColor={Colors.textTertiary} autoCapitalize="characters" />
+                </Field>
+              </View>
+            </View>
+
+            {/* Section 3 – Materials */}
+            <SectionHeader title="3 · Materials Delivered" />
+            {lineItems.map((item, index) => (
+              <LineItemRow
+                key={index}
+                item={item}
+                index={index}
+                onChange={(field, value) => updateLineItem(index, field, value)}
+                onRemove={() => removeLineItem(index)}
+              />
+            ))}
+            <Pressable style={formStyles.addItemBtn} onPress={addLineItem}>
+              <Ionicons name="add-circle-outline" size={18} color={Colors.accent} />
+              <Text style={formStyles.addItemText}>Add Another Item</Text>
+            </Pressable>
+
+            {/* Section 4 – Receipt & Condition */}
+            <SectionHeader title="4 · Receipt & Condition" />
+            <Field label="Received By">
+              <TextInput style={formStyles.input} value={receivedBy} onChangeText={setReceivedBy} placeholder="Name of person signing off" placeholderTextColor={Colors.textTertiary} />
+            </Field>
+            <Field label="Overall Condition on Arrival">
+              <ChipGroup options={conditions} value={conditionOnArrival} onChange={setConditionOnArrival} meta={CONDITION_META} />
+            </Field>
+            {conditionOnArrival !== "good" && (
+              <Field label="Damage / Defect Description">
+                <TextInput
+                  style={[formStyles.input, formStyles.multiline]}
+                  value={damageDescription}
+                  onChangeText={setDamageDescription}
+                  placeholder="Describe any damage, shortfall, or defects observed…"
+                  placeholderTextColor={Colors.textTertiary}
+                  multiline
+                  textAlignVertical="top"
+                />
+              </Field>
+            )}
+            <Field label="Storage Location on Site">
+              <TextInput style={formStyles.input} value={storageLocation} onChangeText={setStorageLocation} placeholder="e.g. Site compound, Level 3 lay-down area" placeholderTextColor={Colors.textTertiary} />
+            </Field>
+
+            {/* Section 5 – Quality */}
+            <SectionHeader title="5 · Quality & Status" />
+            <Field label="Non-Conformances / Discrepancies">
+              <TextInput
+                style={[formStyles.input, formStyles.multiline]}
+                value={nonConformances}
+                onChangeText={setNonConformances}
+                placeholder="Note any items not matching the order, substitutions, or missing items…"
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                textAlignVertical="top"
+              />
+            </Field>
+            <Field label="Delivery Status">
+              <ChipGroup options={statuses} value={deliveryStatus} onChange={setDeliveryStatus} meta={STATUS_META} />
+            </Field>
+            <Field label="Additional Notes">
+              <TextInput
+                style={[formStyles.input, formStyles.multiline]}
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="Any other notes for the record…"
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                textAlignVertical="top"
+              />
+            </Field>
+
+            <View style={{ height: 32 }} />
+          </ScrollView>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function DetailRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <View style={styles.detailRow}>
+      <Ionicons name={icon as never} size={14} color={Colors.textTertiary} style={{ marginTop: 2 }} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.detailLabel}>{label}</Text>
+        <Text style={styles.detailValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.background },
+  header: {
+    flexDirection: "row", alignItems: "center", padding: 16, gap: 12,
+    backgroundColor: Colors.primary, paddingBottom: 18,
+  },
+  backBtn: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center",
+  },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: "#fff" },
+  headerSub: { fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 1 },
+  addBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+  },
+  addBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  summaryBar: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: Colors.primary + "12", padding: 12, paddingHorizontal: 16,
+  },
+  summaryText: { fontSize: 14, color: Colors.primary, fontWeight: "600" },
+  card: {
+    backgroundColor: "#fff", borderRadius: 16, padding: 14,
+    shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+  },
+  cardHeader: { flexDirection: "row", alignItems: "flex-start", marginBottom: 10 },
+  cardSupplier: { fontSize: 15, fontWeight: "700", color: Colors.text },
+  cardMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  badge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  badgeText: { fontSize: 11, fontWeight: "700" },
+  itemsList: { gap: 5, marginBottom: 6 },
+  itemRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  itemDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.accent, marginTop: 7 },
+  itemText: { flex: 1, fontSize: 13, color: Colors.text, lineHeight: 19 },
+  moreText: { fontSize: 12, color: Colors.textTertiary, marginLeft: 13, marginTop: 2 },
+  expandDetail: { marginTop: 12, gap: 8, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.border },
+  detailRow: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
+  detailLabel: { fontSize: 11, color: Colors.textTertiary, textTransform: "uppercase", letterSpacing: 0.2 },
+  detailValue: { fontSize: 13, color: Colors.text, lineHeight: 18 },
+  deleteRow: { flexDirection: "row", justifyContent: "flex-end", marginTop: 4 },
+  deleteBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.error + "44" },
+  deleteBtnText: { fontSize: 13, color: Colors.error, fontWeight: "600" },
+  expandIndicator: { alignItems: "center", marginTop: 6 },
+});
+
+const formStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#fff" },
+  modalHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 20, paddingBottom: 16,
+    borderBottomWidth: 1, borderBottomColor: "#E8EDF5",
+  },
+  modalTitle: { fontSize: 17, fontWeight: "700", color: Colors.text },
+  submitBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8 },
+  submitBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  scroll: { padding: 20, gap: 12 },
+  sectionHeader: {
+    fontSize: 13, fontWeight: "800", color: Colors.primary,
+    textTransform: "uppercase", letterSpacing: 0.6,
+    marginTop: 8, marginBottom: 4,
+    paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  field: { gap: 6 },
+  label: { fontSize: 13, fontWeight: "600", color: Colors.text },
+  required: { color: Colors.error },
+  input: {
+    borderWidth: 1, borderColor: "#DDE5EF", borderRadius: 12,
+    padding: 12, fontSize: 14, color: Colors.text, backgroundColor: "#FAFBFC",
+  },
+  multiline: { minHeight: 72, textAlignVertical: "top" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+    backgroundColor: "#F0F4FA", borderWidth: 1, borderColor: "#DDE5EF",
+  },
+  chipText: { fontSize: 13, color: Colors.text, fontWeight: "600" },
+  chipTextActive: { color: "#fff" },
+  lineItemCard: {
+    borderWidth: 1, borderColor: "#DDE5EF", borderRadius: 14,
+    padding: 12, gap: 10, backgroundColor: "#FAFBFC",
+  },
+  lineItemHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  lineItemIndex: { fontSize: 12, fontWeight: "700", color: Colors.textSecondary, textTransform: "uppercase", letterSpacing: 0.3 },
+  miniChip: {
+    flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 8,
+    backgroundColor: "#F0F4FA", borderWidth: 1, borderColor: "#DDE5EF",
+  },
+  miniChipText: { fontSize: 12, color: Colors.text, fontWeight: "600" },
+  addItemBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    borderWidth: 1, borderColor: Colors.accent, borderRadius: 12,
+    paddingVertical: 12, borderStyle: "dashed",
+  },
+  addItemText: { fontSize: 14, color: Colors.accent, fontWeight: "600" },
+});

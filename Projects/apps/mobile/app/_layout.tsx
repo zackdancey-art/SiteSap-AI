@@ -4,11 +4,15 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router } from "expo-router";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { AuthProvider } from "@/lib/auth-context";
 import { DataProvider } from "@/lib/data-context";
 import { logResolvedApiBaseUrlOnce } from "@/lib/api-base-url";
+import { resumeTrackingIfEnabled } from "@/lib/location-service";
+import { ONBOARDING_COMPLETE_KEY } from "./onboarding";
 import Constants from "expo-constants";
 
 const sentryDsn = (Constants.expoConfig?.extra as { sentryDsn?: string } | undefined)?.sentryDsn
@@ -135,18 +139,13 @@ function RootLayoutNav() {
           headerTintColor: "#0F2B46",
         }}
       />
-      <Stack.Screen
-        name="invite"
-        options={{
-          headerShown: false,
-        }}
-      />
-      <Stack.Screen
-        name="site-invite"
-        options={{
-          headerShown: false,
-        }}
-      />
+      <Stack.Screen name="invite" options={{ headerShown: false }} />
+      <Stack.Screen name="site-invite" options={{ headerShown: false }} />
+      <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+      <Stack.Screen name="crew/[siteId]" options={{ headerShown: false }} />
+      <Stack.Screen name="incidents/[siteId]" options={{ headerShown: false }} />
+      <Stack.Screen name="inspections/[siteId]" options={{ headerShown: false }} />
+      <Stack.Screen name="deliveries/[siteId]" options={{ headerShown: false }} />
     </Stack>
   );
 }
@@ -154,7 +153,11 @@ function RootLayoutNav() {
 function RootLayout() {
   useEffect(() => {
     logResolvedApiBaseUrlOnce();
+    void resumeTrackingIfEnabled();
     SplashScreen.hideAsync();
+    AsyncStorage.getItem(ONBOARDING_COMPLETE_KEY).then((val) => {
+      if (!val) router.replace("/onboarding");
+    }).catch(() => {});
   }, []);
 
   return (
@@ -172,4 +175,6 @@ function RootLayout() {
   );
 }
 
-export default sentryDsn ? Sentry.wrap(RootLayout) : RootLayout;
+// Cast resolves pnpm dual-@types/react path that TS can't name through Sentry.wrap's return type
+const AppLayout = (sentryDsn ? Sentry.wrap(RootLayout) : RootLayout) as unknown as typeof RootLayout;
+export default AppLayout;

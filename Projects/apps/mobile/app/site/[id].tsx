@@ -1,12 +1,14 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   FlatList,
   Pressable,
+  ScrollView,
   StyleSheet,
   Platform,
   Alert,
+  TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,6 +17,8 @@ import { useData } from "@/lib/data-context";
 import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
 import { DailyEntry, SiteMember } from "@/lib/types";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
 function EntryCard({ entry }: { entry: DailyEntry }) {
   const dateObj = new Date(entry.date + "T00:00:00");
@@ -47,6 +51,12 @@ function EntryCard({ entry }: { entry: DailyEntry }) {
               <Text style={styles.metaText}>{entry.crewCount} crew</Text>
             </View>
           )}
+          {!!entry.timeCode && (
+            <View style={styles.metaChip}>
+              <Ionicons name="time-outline" size={12} color={Colors.accent} />
+              <Text style={styles.metaText}>{entry.timeCode}{entry.hoursWorked ? ` · ${entry.hoursWorked}h` : ""}</Text>
+            </View>
+          )}
         </View>
         <Text style={styles.entryNotes} numberOfLines={2}>{entry.notes}</Text>
         {entry.photos.length > 0 && (
@@ -62,6 +72,18 @@ function EntryCard({ entry }: { entry: DailyEntry }) {
   );
 }
 
+async function patchSiteProgress(siteId: string, pct: number) {
+  const token = await AsyncStorage.getItem("sitesnap.token");
+  const base = getApiBaseUrl();
+  await fetch(`${base}/api/projects/sites/${siteId}/progress`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ progressPercent: pct }),
+  });
+}
+
+const PROGRESS_STEPS = [0, 25, 50, 75, 100];
+
 export default function SiteDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -69,14 +91,25 @@ export default function SiteDetailScreen() {
   const { user } = useAuth();
 
   const site = getSite(id);
-  const entries = getSiteEntries(id);
-
+  const allEntries = getSiteEntries(id);
+  const [localProgress, setLocalProgress] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
   const [members, setMembers] = useState<SiteMember[]>([]);
   const [membersLoaded, setMembersLoaded] = useState(false);
 
-  const canManage =
-    user?.role === "supervisor" ||
-    user?.role === "admin";
+  const entries = useMemo(() => {
+    if (!search.trim()) return allEntries;
+    const q = search.trim().toLowerCase();
+    return allEntries.filter(
+      (e) =>
+        e.notes?.toLowerCase().includes(q) ||
+        e.date?.includes(q) ||
+        e.weather?.toLowerCase().includes(q) ||
+        e.locationAddress?.toLowerCase().includes(q)
+    );
+  }, [allEntries, search]);
+
+  const canManage = user?.role === "supervisor" || user?.role === "admin";
 
   useEffect(() => {
     if (!id) return;
@@ -110,6 +143,13 @@ export default function SiteDetailScreen() {
         { text: "Remove", style: "destructive", onPress: () => void doRemove() },
       ]
     );
+  };
+
+  const progress = localProgress ?? (site as { progressPercent?: number } | undefined)?.progressPercent ?? 0;
+
+  const handleProgressStep = (pct: number) => {
+    setLocalProgress(pct);
+    if (id) patchSiteProgress(id, pct).catch(() => {});
   };
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -182,11 +222,17 @@ export default function SiteDetailScreen() {
             <Ionicons name="location-outline" size={14} color="rgba(255,255,255,0.6)" />
             <Text style={styles.headerDetailText}>{site.address}</Text>
           </View>
+          {!!(site as { jobNumber?: string }).jobNumber && (
+            <View style={styles.headerDetail}>
+              <Ionicons name="pricetag-outline" size={14} color="rgba(255,255,255,0.6)" />
+              <Text style={styles.headerDetailText}>Job #{(site as { jobNumber?: string }).jobNumber}</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
-            <Text style={styles.statValue}>{entries.length}</Text>
+            <Text style={styles.statValue}>{allEntries.length}</Text>
             <Text style={styles.statLabel}>Entries</Text>
           </View>
           <View style={styles.statCard}>
@@ -202,24 +248,94 @@ export default function SiteDetailScreen() {
             <Text style={styles.statLabel}>Start</Text>
           </View>
         </View>
+
+        <View style={styles.progressSection}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+            <Text style={styles.progressLabel}>Progress</Text>
+            <Text style={styles.progressPct}>{progress}%</Text>
+          </View>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${progress}%` }]} />
+          </View>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
+            {PROGRESS_STEPS.map((step) => (
+              <Pressable
+                key={step}
+                onPress={() => handleProgressStep(step)}
+                style={[styles.progressStep, progress >= step && styles.progressStepActive]}
+              >
+                <Text style={[styles.progressStepText, progress >= step && styles.progressStepTextActive]}>
+                  {step}%
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
       </View>
 
-      <View style={styles.actionBar}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.actionBar}
+        style={styles.actionBarScroll}
+      >
         <Pressable
           style={({ pressed }) => [styles.actionButton, styles.actionPrimary, pressed && { opacity: 0.9 }]}
           onPress={() => router.push({ pathname: "/new-entry", params: { siteId: id } })}
         >
-          <Ionicons name="add-circle-outline" size={20} color={Colors.white} />
+          <Ionicons name="add-circle-outline" size={18} color={Colors.white} />
           <Text style={styles.actionPrimaryText}>New Entry</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
           onPress={() => router.push({ pathname: "/diary/[siteId]", params: { siteId: id } })}
         >
-          <Ionicons name="book-outline" size={20} color={Colors.accent} />
-          <Text style={styles.actionSecondaryText}>View Diary</Text>
+          <Ionicons name="book-outline" size={18} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Diary</Text>
         </Pressable>
-      </View>
+        <Pressable
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
+          onPress={() => router.push({ pathname: "/crew/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="time-outline" size={18} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Timesheets</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
+          onPress={() => router.push({ pathname: "/incidents/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="warning-outline" size={18} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Incidents</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
+          onPress={() => router.push({ pathname: "/inspections/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="shield-checkmark-outline" size={18} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Inspections</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.actionButton, styles.actionSecondary, pressed && { opacity: 0.8 }]}
+          onPress={() => router.push({ pathname: "/deliveries/[siteId]", params: { siteId: id } })}
+        >
+          <Ionicons name="cube-outline" size={18} color={Colors.accent} />
+          <Text style={styles.actionSecondaryText}>Dockets</Text>
+        </Pressable>
+      </ScrollView>
+
+      {allEntries.length > 0 && (
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={16} color={Colors.textTertiary} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={`Search ${allEntries.length} entries…`}
+            placeholderTextColor={Colors.textTertiary}
+            value={search}
+            onChangeText={setSearch}
+            clearButtonMode="while-editing"
+          />
+        </View>
+      )}
 
       <FlatList
         data={entries}
@@ -245,10 +361,7 @@ export default function SiteDetailScreen() {
                     </Text>
                   </View>
                   {canManage && (
-                    <Pressable
-                      onPress={() => handleRemoveMember(m)}
-                      hitSlop={8}
-                    >
+                    <Pressable onPress={() => handleRemoveMember(m)} hitSlop={8}>
                       <Ionicons name="person-remove-outline" size={18} color={Colors.textTertiary} />
                     </Pressable>
                   )}
@@ -261,8 +374,12 @@ export default function SiteDetailScreen() {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Ionicons name="document-text-outline" size={48} color={Colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No entries yet</Text>
-            <Text style={styles.emptyText}>Add your first daily entry to start building the site diary</Text>
+            <Text style={styles.emptyTitle}>{search ? "No results" : "No entries yet"}</Text>
+            <Text style={styles.emptyText}>
+              {search
+                ? `No entries match "${search}"`
+                : "Add your first daily entry to start building the site diary"}
+            </Text>
           </View>
         }
       />
@@ -374,20 +491,68 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: 5,
   },
+  progressSection: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.15)",
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.6)",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  progressPct: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.9)",
+    fontWeight: "700",
+  },
+  progressTrack: {
+    height: 6,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 6,
+    backgroundColor: Colors.success,
+    borderRadius: 3,
+  },
+  progressStep: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: "rgba(255,255,255,0.1)",
+  },
+  progressStepActive: {
+    backgroundColor: Colors.success,
+  },
+  progressStepText: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.6)",
+    fontWeight: "600",
+  },
+  progressStepTextActive: {
+    color: "#fff",
+  },
+  actionBarScroll: {
+    flexGrow: 0,
+  },
   actionBar: {
     flexDirection: "row",
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 10,
+    paddingVertical: 12,
+    gap: 8,
   },
   actionButton: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    height: 46,
+    gap: 6,
+    height: 44,
     borderRadius: 14,
+    paddingHorizontal: 14,
   },
   actionPrimary: {
     backgroundColor: Colors.accent,
@@ -404,6 +569,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: Colors.accent,
+  },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    height: 42,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.text,
   },
   listContent: {
     paddingHorizontal: 16,
