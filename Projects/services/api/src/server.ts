@@ -1,4 +1,4 @@
-import { initSentry, Sentry } from "./instrument";
+import { Sentry } from "./instrument";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -133,7 +133,6 @@ export function createApp(): express.Express {
 }
 
 export async function bootstrap() {
-  initSentry();
   validateProviderConfig();
   await runMigrations();
   await initAuthSchema();
@@ -171,10 +170,12 @@ export async function bootstrap() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("uncaughtException", (err) => {
     console.error("[server] uncaughtException", err);
+    Sentry.captureException(err);
     void shutdown("uncaughtException");
   });
   process.on("unhandledRejection", (reason) => {
     console.error("[server] unhandledRejection", reason);
+    Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)));
   });
 
   return server;
