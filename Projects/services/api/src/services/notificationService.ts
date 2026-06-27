@@ -49,6 +49,7 @@ async function sendWithResend(
       subject,
       text,
       html,
+      ...(process.env.EMAIL_REPLY_TO ? { reply_to: process.env.EMAIL_REPLY_TO } : {}),
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -83,6 +84,9 @@ async function sendWithSendGrid(
       from: { email: from },
       subject,
       content: [{ type: "text/plain", value: text }],
+      ...(process.env.EMAIL_REPLY_TO
+        ? { reply_to_list: [{ email: process.env.EMAIL_REPLY_TO }] }
+        : {}),
     }),
     signal: AbortSignal.timeout(10_000),
   });
