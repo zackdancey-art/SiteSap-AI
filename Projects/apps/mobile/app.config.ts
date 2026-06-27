@@ -86,6 +86,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-router",
     "expo-font",
+    [
+      "@sentry/react-native/expo",
+      {
+        // Uploads source maps so Sentry can de-obfuscate stack traces.
+        // Requires SENTRY_AUTH_TOKEN + SENTRY_ORG + SENTRY_PROJECT in the
+        // EAS build environment. Safe to omit — native crash reporting still
+        // works without source maps; frames will just show minified names.
+        // Organization and project slugs are set via EAS secrets/env vars.
+      },
+    ],
     ...(IS_DEV ? [] : ["expo-updates"]),
     [
       "expo-location",
@@ -114,7 +124,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       "expo-build-properties",
       {
-        ios: { deploymentTarget: "15.1" },
+        ios: { deploymentTarget: "16.4" },
         android: {
           compileSdkVersion: 35,
           targetSdkVersion: 35,

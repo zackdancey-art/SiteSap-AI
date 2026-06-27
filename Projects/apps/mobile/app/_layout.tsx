@@ -21,6 +21,15 @@ if (sentryDsn) {
     tracesSampleRate: __DEV__ ? 1.0 : 0.2,
     attachScreenshot: true,
     enableNativeFramesTracking: true,
+    sendDefaultPii: false,
+    beforeSend(event) {
+      // Strip any auth tokens or cookies that may appear in breadcrumbs/request data.
+      if (event.request?.headers) {
+        delete event.request.headers["authorization"];
+        delete event.request.headers["cookie"];
+      }
+      return event;
+    },
   });
 }
 
