@@ -18,6 +18,8 @@ export type SiteRecord = {
   startDate: string;
   status: SiteStatus;
   createdAt: string;
+  progressPercent?: number;
+  deletedAt?: string | null;
 };
 
 export type EntryRecord = {
@@ -1291,6 +1293,29 @@ export async function listSiteMembers(
     invitedBy: row.invited_by,
     joinedAt: row.joined_at.toISOString(),
   }));
+}
+
+export async function updateSiteProgress(actor: Actor, siteId: string, progressPercent: number): Promise<SiteRecord | null> {
+  const pct = Math.max(0, Math.min(100, Math.round(progressPercent)));
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const existing = memory.sites.get(siteId);
+    if (!existing || !canAccessOwner(actor, existing.ownerEmail) || existing.deletedAt) return null;
+    const updated: SiteRecord = { ...existing, progressPercent: pct };
+    memory.sites.set(siteId, updated);
+    await persistMemory();
+    return updated;
+  }
+  const result = await getPgPool().query<{
+    id: string; owner_email: string; name: string; address: string; client: string;
+    start_date: string; status: SiteStatus; progress_percent: number;
+    created_at: Date; updated_at: Date; deleted_at: Date | null;
+  }>(
+    `UPDATE project_sites SET progress_percent = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
+    [siteId, pct]
+  );
+  if (result.rowCount === 0) return null;
+  return mapSite(result.rows[0]);
 }
 
 export async function removeSiteMember(

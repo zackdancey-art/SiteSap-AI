@@ -23,6 +23,7 @@ import {
   removeSiteMember,
   updateDiary,
   updateEntry,
+  updateSiteProgress,
   updateTemplate,
 } from "../storage/projectsStore";
 import { isRateLimitedByAccount, LIMITS } from "../middleware/rateLimit";
@@ -332,6 +333,18 @@ projectsRouter.delete("/projects/sites/:siteId/members/:email", async (req, res)
 
 const AcceptInviteSchema = z.object({
   token: z.string().min(1),
+});
+
+projectsRouter.patch("/projects/sites/:id/progress", async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const raw = req.body?.progressPercent;
+  const pct = Number(raw);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+    return res.status(400).json({ error: "progressPercent must be a number between 0 and 100." });
+  }
+  const site = await updateSiteProgress(actor, req.params.id, pct);
+  if (!site) return res.status(404).json({ error: "Site not found." });
+  return res.json({ site });
 });
 
 projectsRouter.post("/projects/invites/accept", async (req, res) => {
