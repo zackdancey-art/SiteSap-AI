@@ -59,9 +59,10 @@ export default function ResetPasswordScreen() {
       if (!res.ok) {
         throw new Error(data.error || "Unable to reset password.");
       }
-      setMessage(data.message || "Password has been reset.");
+      setMessage(data.message || "Password has been reset. Redirecting to sign in…");
       setNewPassword("");
       setConfirmPassword("");
+      setTimeout(() => router.replace("/login"), 2500);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to reset password.");
     } finally {
@@ -81,7 +82,7 @@ export default function ResetPasswordScreen() {
               <Ionicons name="key-outline" size={34} color={Colors.white} />
             </View>
             <Text style={styles.appName}>Set New Password</Text>
-            <Text style={styles.tagline}>Use your reset token and choose a new password</Text>
+            <Text style={styles.tagline}>Choose a new password for your account</Text>
           </View>
 
           <View style={styles.formSection}>
@@ -105,7 +106,7 @@ export default function ResetPasswordScreen() {
               <Text style={styles.label}>Reset Token</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Paste token from email/SMS/dev card"
+                placeholder="Filled automatically from reset link"
                 value={token}
                 onChangeText={(value) => {
                   setToken(value);
