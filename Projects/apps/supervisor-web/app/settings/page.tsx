@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { getSavedUser, isAuthenticated, clearToken, changePassword, revokeAllSessions } from "@/lib/api";
 
+const SHOW_DEV_TOOLS = process.env.NEXT_PUBLIC_SHOW_DEV_TOOLS === "true";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type NotifPrefs = {
@@ -40,18 +42,20 @@ type SettingsSection =
   | "display" | "tracking" | "exports"
   | "api" | "privacy" | "about" | "security";
 
-const SECTIONS: { id: SettingsSection; label: string; icon: string }[] = [
+const ALL_SECTIONS: { id: SettingsSection; label: string; icon: string; devOnly?: boolean }[] = [
   { id: "account",       label: "Account",         icon: "👤" },
   { id: "organisation",  label: "Organisation",     icon: "🏢" },
   { id: "notifications", label: "Notifications",    icon: "🔔" },
   { id: "display",       label: "Display",          icon: "🎨" },
   { id: "tracking",      label: "Live Map",         icon: "📍" },
   { id: "exports",       label: "Reports & Exports",icon: "📄" },
-  { id: "api",           label: "API Connection",   icon: "🔌" },
+  { id: "api",           label: "API Connection",   icon: "🔌", devOnly: true },
   { id: "privacy",       label: "Data & Privacy",   icon: "🔒" },
   { id: "about",         label: "About",            icon: "ℹ️" },
   { id: "security",      label: "Security",         icon: "🛡️" },
 ];
+
+const SECTIONS = ALL_SECTIONS.filter((s) => !s.devOnly || SHOW_DEV_TOOLS);
 
 const TIMEZONES = [
   "Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane",
@@ -540,9 +544,9 @@ export default function SettingsPage() {
               </Panel>
             )}
 
-            {/* API Connection */}
-            {activeSection === "api" && (
-              <Panel title="API Connection" description="Backend server configuration. Set NEXT_PUBLIC_API_URL in .env.local for a permanent connection.">
+            {/* API Connection — developer tool, only rendered when SHOW_DEV_TOOLS is on */}
+            {SHOW_DEV_TOOLS && activeSection === "api" && (
+              <Panel title="API Connection" description="Connection to the SiteSnap AI service. Leave the default unless your administrator has provided a custom endpoint.">
                 <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
@@ -551,7 +555,7 @@ export default function SettingsPage() {
                     <div style={{ display: "flex", gap: 10 }}>
                       <input
                         type="text" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)}
-                        placeholder="http://192.168.x.x:4001"
+                        placeholder="https://api.getsitesnapai.com"
                         style={{ flex: 1, height: 38, fontSize: 14, borderRadius: 8, maxWidth: 380 }}
                       />
                       <button className="btn-primary" onClick={saveApiUrl} style={{ padding: "0 20px", whiteSpace: "nowrap" }}>
@@ -566,8 +570,8 @@ export default function SettingsPage() {
                       background: apiStatus === "ok" ? "#F0FDF4" : apiStatus === "error" ? "#FEF2F2" : "var(--surface-secondary)",
                     }}>
                       {apiStatus === "checking" && "⏳ Checking connection…"}
-                      {apiStatus === "ok"       && "✓ Connected — API is reachable"}
-                      {apiStatus === "error"    && "✗ Cannot reach API — check the URL and ensure the server is running"}
+                      {apiStatus === "ok"       && "✓ Connected to SiteSnap AI"}
+                      {apiStatus === "error"    && "✗ Couldn't connect — check the address and your internet connection"}
                     </div>
                   )}
                 </div>
