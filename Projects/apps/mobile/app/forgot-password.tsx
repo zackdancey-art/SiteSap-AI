@@ -35,13 +35,21 @@ export default function ForgotPasswordScreen() {
   const [channel, setChannel] = useState<"email" | "sms">("email");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [devReset, setDevReset] = useState<{ token: string; code: string; link: string } | null>(null);
+  const [devReset, setDevReset] = useState<{ token: string; link: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  function isValidEmail(email: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  }
 
   const handleSend = async () => {
     if (submitting) return;
     if (!identifier.trim()) {
-      setError("Please enter your email or phone.");
+      setError(channel === "email" ? "Please enter your email address." : "Please enter your phone number.");
+      return;
+    }
+    if (channel === "email" && !isValidEmail(identifier.trim())) {
+      setError("Please enter a valid email address.");
       return;
     }
     const normalizedPhone = `${smsPrefix}${identifier.replace(/\D/g, "")}`;
@@ -58,17 +66,15 @@ export default function ForgotPasswordScreen() {
         error?: string;
         message?: string;
         devResetToken?: string;
-        devResetCode?: string;
         devResetLink?: string;
       };
       if (!res.ok) {
         throw new Error(data.error || "Unable to send reset instructions.");
       }
       setMessage(data.message || "Reset instructions sent.");
-      if (data.devResetToken && data.devResetCode && data.devResetLink) {
+      if (data.devResetToken && data.devResetLink) {
         setDevReset({
           token: data.devResetToken,
-          code: data.devResetCode,
           link: data.devResetLink,
         });
       }
@@ -113,11 +119,7 @@ export default function ForgotPasswordScreen() {
             )}
             {!!devReset && (
               <View style={styles.devCodeCard}>
-                <Text style={styles.devCodeCardTitle}>Reset Details (Dev)</Text>
-                <View style={styles.devCodeRow}>
-                  <Text style={styles.devCodeLabel}>Reset code</Text>
-                  <Text style={styles.devCodeValue}>{devReset.code}</Text>
-                </View>
+                <Text style={styles.devCodeCardTitle}>Dev Mode — Reset Link</Text>
                 <View style={styles.devCodeStack}>
                   <Text style={styles.devCodeLabel}>Reset token</Text>
                   <Text style={styles.devTokenValue} selectable>{devReset.token}</Text>
@@ -144,13 +146,13 @@ export default function ForgotPasswordScreen() {
             <View style={styles.channelRow}>
               <Pressable
                 style={[styles.channelChip, channel === "email" && styles.channelChipActive]}
-                onPress={() => setChannel("email")}
+                onPress={() => { setChannel("email"); setIdentifier(""); setMessage(""); setError(""); setDevReset(null); }}
               >
                 <Text style={[styles.channelChipText, channel === "email" && styles.channelChipTextActive]}>Email</Text>
               </Pressable>
               <Pressable
                 style={[styles.channelChip, channel === "sms" && styles.channelChipActive]}
-                onPress={() => setChannel("sms")}
+                onPress={() => { setChannel("sms"); setIdentifier(""); setMessage(""); setError(""); setDevReset(null); }}
               >
                 <Text style={[styles.channelChipText, channel === "sms" && styles.channelChipTextActive]}>Text (SMS)</Text>
               </Pressable>
@@ -357,17 +359,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: "#1E3A8A",
   },
-  devCodeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderRadius: 10,
-    backgroundColor: Colors.white,
-    borderWidth: 1,
-    borderColor: "#DBEAFE",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
   devCodeStack: {
     borderRadius: 10,
     backgroundColor: Colors.white,
@@ -378,7 +369,6 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   devCodeLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: Colors.textSecondary },
-  devCodeValue: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#1E3A8A" },
   devTokenValue: { fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.text, lineHeight: 18 },
   devResetAction: {
     marginTop: 2,

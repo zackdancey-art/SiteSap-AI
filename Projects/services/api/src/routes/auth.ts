@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { randomBytes, randomInt } from "crypto";
+import { createHash, randomBytes, randomInt } from "crypto";
 import {
   createPasswordResetToken,
   createUser,
@@ -58,8 +58,15 @@ function makeCode(): string {
   return String(randomInt(100000, 1000000));
 }
 
-function buildResetLink(resetToken: string) {
-  const base = process.env.PASSWORD_RESET_URL || "sitesnap://reset-password";
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function buildResetLink(resetToken: string, channel: "email" | "sms"): string {
+  const base =
+    channel === "email"
+      ? (process.env.PASSWORD_RESET_WEB_URL || "http://localhost:3001/reset-password")
+      : (process.env.PASSWORD_RESET_URL || "sitesnap://reset-password");
   const separator = base.includes("?") ? "&" : "?";
   return `${base}${separator}token=${encodeURIComponent(resetToken)}`;
 }
@@ -373,6 +380,10 @@ router.post("/auth/forgot-password", async (req, res) => {
     return res.status(400).json({ error: "Email or phone is required." });
   }
 
+  if (channel === "email" && !isValidEmail(identifier)) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+
   try {
     await purgeExpiredAuthRecords();
     const channelConfig = isChannelConfigured(channel);
@@ -386,9 +397,9 @@ router.post("/auth/forgot-password", async (req, res) => {
 
     if (user) {
       const resetToken = makeResetToken();
-      const resetLink = buildResetLink(resetToken);
-      const resetCode = resetToken.slice(0, 8).toUpperCase();
-      await createPasswordResetToken(resetToken, user.email, new Date(Date.now() + 1000 * 60 * 30));
+      const resetLink = buildResetLink(resetToken, channel);
+      const tokenHash = hashToken(resetToken);
+      await createPasswordResetToken(tokenHash, user.email, new Date(Date.now() + 1000 * 60 * 30));
 
       if (channelConfig.ok) {
         const delivery = await sendPasswordReset({
@@ -396,7 +407,6 @@ router.post("/auth/forgot-password", async (req, res) => {
           email: user.email,
           phone: user.phone ?? undefined,
           resetLink,
-          resetCode,
         });
 
         if (!delivery.ok) {
@@ -408,7 +418,6 @@ router.post("/auth/forgot-password", async (req, res) => {
             ok: true,
             message: "Dev mode: provider not configured, using local reset token.",
             devResetToken: !isProd ? resetToken : undefined,
-            devResetCode: !isProd ? resetCode : undefined,
             devResetLink: !isProd ? resetLink : undefined,
           });
         }
@@ -417,7 +426,6 @@ router.post("/auth/forgot-password", async (req, res) => {
           ok: true,
           message: "Dev mode: provider not configured, using local reset token.",
           devResetToken: !isProd ? resetToken : undefined,
-          devResetCode: !isProd ? resetCode : undefined,
           devResetLink: !isProd ? resetLink : undefined,
         });
       }
@@ -453,26 +461,27 @@ router.post("/auth/reset-password", async (req, res) => {
 
   try {
     await purgeExpiredAuthRecords();
-    const resetRecord = await getPasswordResetToken(token);
+    const tokenHash = hashToken(token);
+    const resetRecord = await getPasswordResetToken(tokenHash);
     if (!resetRecord) {
-      return res.status(400).json({ error: "Invalid reset token." });
+      return res.status(400).json({ error: "This reset link is invalid or has already been used. Please request a new one." });
     }
 
     if (Date.now() > new Date(resetRecord.expiresAt).getTime()) {
-      await deletePasswordResetToken(token);
-      return res.status(400).json({ error: "Reset token has expired." });
+      await deletePasswordResetToken(tokenHash);
+      return res.status(400).json({ error: "This reset link has expired. Please request a new one." });
     }
 
     const user = await findUserByEmail(resetRecord.email);
     if (!user) {
-      await deletePasswordResetToken(token);
+      await deletePasswordResetToken(tokenHash);
       return res.status(404).json({ error: "Account not found." });
     }
 
     const nextHash = await hashPassword(newPassword);
     await updateUserPassword(resetRecord.email, nextHash);
-    await deletePasswordResetToken(token);
-    return res.json({ ok: true, message: "Password has been reset." });
+    await deletePasswordResetToken(tokenHash);
+    return res.json({ ok: true, message: "Password has been reset. You can now sign in with your new password." });
   } catch (error) {
     console.error("[auth] reset-password failed", error);
     return res.status(500).json({ error: "Unable to reset password." });
