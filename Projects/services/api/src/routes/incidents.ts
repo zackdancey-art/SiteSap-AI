@@ -4,13 +4,12 @@ import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { listIncidents, createIncident, updateIncident, deleteIncident } from "../storage/incidentStore";
 import { getAllTokensForEmails } from "../storage/pushStore";
 import { sendExpoPushNotifications } from "../utils/expoPush";
-import { UserRole } from "../utils/authToken";
 
 export const incidentsRouter: Router = Router();
 
 function getActor(req: unknown) {
   const r = req as AuthenticatedRequest;
-  return { email: r.auth.email, role: r.auth.role as UserRole };
+  return { email: r.auth.email, role: r.auth.role, companyId: r.auth.companyId, companyRole: r.auth.companyRole };
 }
 
 const IncidentSchema = z.object({

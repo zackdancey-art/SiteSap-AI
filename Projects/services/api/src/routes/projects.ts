@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireAuth, requireRole, AuthenticatedRequest } from "../middleware/auth";
+import { requireAuth, requireAtLeast, AuthenticatedRequest } from "../middleware/auth";
 import {
   acceptSiteInvite,
   createDiary,
@@ -90,10 +90,16 @@ const TemplatePatchSchema = TemplateSchema.omit({ siteId: true }).partial();
 
 export const projectsRouter: Router = Router();
 
-projectsRouter.use(requireAuth);
+// Crew (rank 0) are blocked from the entire dashboard router — only viewer+ may proceed.
+projectsRouter.use(requireAuth, requireAtLeast("viewer"));
 
 function getActor(req: AuthenticatedRequest) {
-  return { email: req.auth.email, role: req.auth.role };
+  return {
+    email: req.auth.email,
+    role: req.auth.role,
+    companyId: req.auth.companyId,
+    companyRole: req.auth.companyRole,
+  };
 }
 
 projectsRouter.get("/projects/bootstrap", async (req, res) => {
@@ -126,7 +132,7 @@ projectsRouter.get("/projects/sites", async (req, res) => {
   res.json({ sites, limit, offset });
 });
 
-projectsRouter.post("/projects/sites", async (req, res) => {
+projectsRouter.post("/projects/sites", requireAtLeast("manager"), async (req, res) => {
   const actor = getActor(req as unknown as AuthenticatedRequest);
   const parsed = SiteSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -136,7 +142,7 @@ projectsRouter.post("/projects/sites", async (req, res) => {
   return res.status(201).json({ site });
 });
 
-projectsRouter.delete("/projects/sites/:id", async (req, res) => {
+projectsRouter.delete("/projects/sites/:id", requireAtLeast("manager"), async (req, res) => {
   const removed = await deleteSite(getActor(req as unknown as AuthenticatedRequest), req.params.id);
   if (!removed) return res.status(404).json({ error: "Site not found." });
   return res.json({ ok: true });
@@ -207,8 +213,9 @@ projectsRouter.patch("/projects/diaries/:id", async (req, res) => {
   return res.json({ diary });
 });
 
-projectsRouter.get("/projects/reports/supervisor", requireRole("supervisor", "admin"), async (req, res) => {
-  const perSite = await getSupervisorReport();
+projectsRouter.get("/projects/reports/supervisor", requireAtLeast("viewer"), async (req, res) => {
+  const actor = getActor(req as unknown as AuthenticatedRequest);
+  const perSite = await getSupervisorReport(actor);
   return res.json({ generatedAt: new Date().toISOString(), perSite });
 });
 
@@ -269,6 +276,9 @@ projectsRouter.post("/projects/sites/:siteId/invites", async (req, res) => {
   const results = await createSiteInvites(actor, req.params.siteId, parsed.data.emails, parsed.data.role);
   if (results === null) {
     return res.status(403).json({ error: "Insufficient permissions to manage this site." });
+  }
+  if (typeof results === "string") {
+    return res.status(400).json({ error: "Invalid invite: owner role cannot be assigned via invite." });
   }
 
   // Send invite emails best-effort; look up current invites once for all tokens
@@ -360,5 +370,8 @@ projectsRouter.post("/projects/invites/accept", async (req, res) => {
   if (result === "wrong_user") {
     return res.status(403).json({ error: "This invitation was sent to a different email address." });
   }
-  return res.json({ siteId: result.siteId, siteName: result.siteName, role: result.role });
+  if (result === "already_in_company") {
+    return res.status(409).json({ status: "already_in_company", error: "You are already a member of a different company." });
+  }
+  return res.json({ siteId: result.siteId, siteName: result.siteName, role: result.role, companyId: result.companyId, companyRole: result.companyRole });
 });

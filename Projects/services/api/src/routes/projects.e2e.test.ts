@@ -23,29 +23,34 @@ test("RBAC project workflow supports supervisor approval and scoped reads", asyn
 
   const workerEmail = "worker1@example.com";
   const supervisorEmail = "supervisor1@example.com";
-  await createUser(workerEmail, await hashPassword("Password123!"), "+14155550124", "Worker One", "worker");
+  const testCompanyId = "company_test_e2e";
+  await createUser(workerEmail, await hashPassword("Password123!"), "+14155550124", "Worker One", "worker", testCompanyId, "crew");
   await createUser(
     supervisorEmail,
     await hashPassword("Password123!"),
     "+14155550125",
     "Supervisor One",
-    "supervisor"
+    "supervisor",
+    testCompanyId,
+    "manager"
   );
 
   const workerClaims = verifyAuthToken(
-    createAuthToken({ email: workerEmail, fullName: "Worker One", role: "worker" })
+    createAuthToken({ email: workerEmail, fullName: "Worker One", role: "worker", companyId: testCompanyId, companyRole: "crew" })
   );
   const supervisorClaims = verifyAuthToken(
-    createAuthToken({ email: supervisorEmail, fullName: "Supervisor One", role: "supervisor" })
+    createAuthToken({ email: supervisorEmail, fullName: "Supervisor One", role: "supervisor", companyId: testCompanyId, companyRole: "manager" })
   );
 
   assert.ok(workerClaims);
   assert.ok(supervisorClaims);
 
-  const workerActor = { email: workerClaims?.email ?? "", role: workerClaims?.role ?? "worker" };
+  const workerActor = { email: workerClaims?.email ?? "", role: workerClaims?.role ?? "worker", companyId: workerClaims?.companyId ?? testCompanyId, companyRole: workerClaims?.companyRole ?? "crew" as const };
   const supervisorActor = {
     email: supervisorClaims?.email ?? "",
     role: supervisorClaims?.role ?? "supervisor",
+    companyId: supervisorClaims?.companyId ?? testCompanyId,
+    companyRole: supervisorClaims?.companyRole ?? "manager" as const,
   };
 
   const site = await createSite(workerActor, {

@@ -1,6 +1,7 @@
 import { Request, Response, Router } from "express";
 import { createHash, randomBytes, randomInt } from "crypto";
 import {
+  createCompany,
   createPasswordResetToken,
   createUser,
   deletePasswordResetToken,
@@ -16,7 +17,8 @@ import {
   updateUserProfile,
   updateUserPassword,
 } from "../storage/authStore";
-import { deleteAllUserProjectData } from "../storage/projectsStore";
+import { acceptSiteInvite, deleteAllUserProjectData } from "../storage/projectsStore";
+import { soloCompanyIdForEmail } from "../utils/authToken";
 import {
   isChannelConfigured,
   sendAccountVerification,
@@ -34,13 +36,6 @@ const hasDatabase = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function getSupervisorAllowlist() {
-  return String(process.env.SUPERVISOR_SIGNUP_EMAILS ?? "")
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
 }
 
 function normalizePhone(phone: string) {
@@ -90,9 +85,11 @@ async function initiateRegistration(req: Request, res: Response) {
   const password = String(req.body?.password ?? "").trim();
   const phoneRaw = String(req.body?.phone ?? "").trim();
   const fullName = String(req.body?.fullName ?? "").trim() || "User";
-  const supervisorAllowlist = getSupervisorAllowlist();
-  const isSupervisorEmail = supervisorAllowlist.includes(email);
-  const role = isSupervisorEmail ? "supervisor" : "worker";
+  const companyName = String(req.body?.companyName ?? "").trim();
+  // Company model: the SUPERVISOR_SIGNUP_EMAILS allowlist no longer assigns a
+  // role. Every fresh signup becomes the owner of their own company; the legacy
+  // `role` column is seeded to 'worker' and coexists during the transition.
+  const role = "worker";
   const phone = phoneRaw ? normalizePhone(phoneRaw) : "";
 
   if (!email || !password || !phone) {
@@ -166,9 +163,11 @@ async function initiateRegistration(req: Request, res: Response) {
     }
 
     const passwordHash = await hashPassword(password);
+    // Pending blob format (:: delimited), backward compatible — companyName is
+    // the new 4th field and defaults to '' when absent (mobile signup).
     await upsertPendingRegistration(
       email,
-      `${passwordHash}::${fullName}::${role}`,
+      `${passwordHash}::${fullName}::${role}::${companyName ?? ""}`,
       phone,
       emailCode,
       smsCode,
@@ -234,23 +233,65 @@ router.post("/auth/register/verify", async (req, res) => {
       return res.status(409).json({ error: "An account with this email already exists." });
     }
 
-    const [passwordHash, fullName = "User", role = "worker"] = pending.passwordHash.split("::");
-    await createUser(
-      email,
-      passwordHash,
-      pending.phone,
-      fullName,
-      role === "supervisor" || role === "admin" ? role : "worker"
-    );
+    const [passwordHash, fullName = "User", roleRaw = "worker", companyNameRaw = ""] =
+      pending.passwordHash.split("::");
+    const legacyRole = roleRaw === "supervisor" || roleRaw === "admin" ? roleRaw : "worker";
+    const companyName = companyNameRaw.trim();
+    const inviteToken = String(req.body?.inviteToken ?? "").trim();
+
+    // Determine the company + company_role for the new user.
+    // Priority: (1) invited join → adopt the invite's company, do NOT create a
+    // company; (2) explicit companyName (web) or none (mobile) → new solo company.
+    let companyId: string;
+    let companyRole: "owner" | "manager" | "viewer" | "crew";
+
+    if (inviteToken) {
+      // Create the user first (crew placeholder, no company), then let
+      // acceptSiteInvite stamp the invite's company + role transactionally.
+      companyId = "";
+      companyRole = "crew";
+    } else {
+      companyId = soloCompanyIdForEmail(email);
+      companyRole = "owner";
+      const resolvedName = companyName || `${fullName}'s Company`;
+      await createCompany({ id: companyId, name: resolvedName, ownerEmail: email });
+    }
+
+    await createUser(email, passwordHash, pending.phone, fullName, legacyRole, companyId, companyRole);
     await deletePendingRegistration(email);
+
+    // Invited join: consume the invite now that the user row exists.
+    if (inviteToken) {
+      const accepted = await acceptSiteInvite(email, inviteToken);
+      if (accepted === "already_in_company") {
+        // Cannot happen for a brand-new user, but guard defensively.
+        return res.status(409).json({ error: "This account already belongs to another company." });
+      }
+      // "not_found" / "expired" / "wrong_user" are non-fatal here: the account
+      // is created; the user simply lands with no company yet and can retry the
+      // invite. Fall through to token issuance.
+    }
+
     const user = await findUserByEmail(email);
     if (!user) {
       return res.status(500).json({ error: "Account created but user lookup failed." });
     }
     return res.status(201).json({
       ok: true,
-      token: createAuthToken({ email: user.email, fullName: user.fullName, role: user.role }),
-      user: { email: user.email, name: user.fullName, role: user.role },
+      token: createAuthToken({
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        companyId: user.companyId,
+        companyRole: user.companyRole,
+      }),
+      user: {
+        email: user.email,
+        name: user.fullName,
+        role: user.role,
+        companyId: user.companyId,
+        companyRole: user.companyRole,
+      },
     });
   } catch (error) {
     if (isUniqueViolation(error)) {
@@ -292,8 +333,20 @@ async function loginHandler(req: Request, res: Response) {
 
     return res.json({
       ok: true,
-      token: createAuthToken({ email: existing.email, fullName: existing.fullName, role: existing.role }),
-      user: { email: existing.email, name: existing.fullName, role: existing.role },
+      token: createAuthToken({
+        email: existing.email,
+        fullName: existing.fullName,
+        role: existing.role,
+        companyId: existing.companyId,
+        companyRole: existing.companyRole,
+      }),
+      user: {
+        email: existing.email,
+        name: existing.fullName,
+        role: existing.role,
+        companyId: existing.companyId,
+        companyRole: existing.companyRole,
+      },
     });
   } catch (error) {
     console.error("[auth] login failed", error);
@@ -308,10 +361,20 @@ router.get("/auth/me", requireAuth, async (req: Request, res: Response) => {
   const auth = (req as AuthenticatedRequest).auth;
   const user = await findUserByEmail(auth.email);
   if (!user && !hasDatabase) {
-    return res.json({ user: { email: auth.email, name: auth.fullName, role: auth.role } });
+    return res.json({
+      user: {
+        email: auth.email, name: auth.fullName, role: auth.role,
+        companyId: auth.companyId, companyRole: auth.companyRole,
+      },
+    });
   }
   if (!user) return res.status(404).json({ error: "User not found." });
-  return res.json({ user: { email: user.email, name: user.fullName, role: user.role } });
+  return res.json({
+    user: {
+      email: user.email, name: user.fullName, role: user.role,
+      companyId: user.companyId, companyRole: user.companyRole,
+    },
+  });
 });
 
 router.patch("/auth/profile", requireAuth, async (req: Request, res: Response) => {
@@ -332,12 +395,30 @@ router.patch("/auth/profile", requireAuth, async (req: Request, res: Response) =
   if (!updated && !hasDatabase) {
     const nextName = fullName || auth.fullName;
     const nextRole = requestedRole || auth.role;
-    const token = createAuthToken({ email: auth.email, fullName: nextName, role: nextRole });
-    return res.json({ token, user: { email: auth.email, name: nextName, role: nextRole } });
+    const token = createAuthToken({
+      email: auth.email, fullName: nextName, role: nextRole,
+      companyId: auth.companyId, companyRole: auth.companyRole,
+    });
+    return res.json({
+      token,
+      user: {
+        email: auth.email, name: nextName, role: nextRole,
+        companyId: auth.companyId, companyRole: auth.companyRole,
+      },
+    });
   }
   if (!updated) return res.status(404).json({ error: "User not found." });
-  const token = createAuthToken({ email: updated.email, fullName: updated.fullName, role: updated.role });
-  return res.json({ token, user: { email: updated.email, name: updated.fullName, role: updated.role } });
+  const token = createAuthToken({
+    email: updated.email, fullName: updated.fullName, role: updated.role,
+    companyId: updated.companyId, companyRole: updated.companyRole,
+  });
+  return res.json({
+    token,
+    user: {
+      email: updated.email, name: updated.fullName, role: updated.role,
+      companyId: updated.companyId, companyRole: updated.companyRole,
+    },
+  });
 });
 
 // Permanently delete the authenticated user's account and all their data
@@ -364,8 +445,10 @@ router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) =>
   const email = user?.email ?? auth.email;
   const fullName = user?.fullName ?? auth.fullName;
   const role = user?.role ?? auth.role;
-  const token = createAuthToken({ email, fullName, role });
-  return res.json({ token, user: { email, name: fullName, role } });
+  const companyId = user?.companyId ?? auth.companyId;
+  const companyRole = user?.companyRole ?? auth.companyRole;
+  const token = createAuthToken({ email, fullName, role, companyId, companyRole });
+  return res.json({ token, user: { email, name: fullName, role, companyId, companyRole } });
 });
 
 router.post("/auth/forgot-password", async (req, res) => {

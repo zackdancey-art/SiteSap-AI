@@ -11,6 +11,7 @@ import { inspectionsRouter } from "./inspections";
 import { deliveriesRouter } from "./deliveries";
 import { templatesRouter } from "./templates";
 import { locationRouter } from "./location";
+import { companyRouter } from "./company";
 
 const apiRouter: Router = Router();
 
@@ -26,5 +27,6 @@ apiRouter.use(inspectionsRouter);
 apiRouter.use(deliveriesRouter);
 apiRouter.use(templatesRouter);
 apiRouter.use(locationRouter);
+apiRouter.use(companyRouter);
 
 export { apiRouter };

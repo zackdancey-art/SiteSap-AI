@@ -1,5 +1,5 @@
 import { getPgPool } from "./postgres";
-import { UserRole, isElevatedRole } from "../utils/authToken";
+import { Actor } from "./actor";
 
 export type LocationRecord = {
   id: string;
@@ -12,10 +12,13 @@ export type LocationRecord = {
   timestamp: string;
 };
 
-type Actor = { email: string; role: UserRole };
-
 function useDatabase() {
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
+}
+
+// Only managers and owners may view the whole-company worker map.
+function canViewCompanyLocations(actor: Actor): boolean {
+  return actor.companyRole === "manager" || actor.companyRole === "owner";
 }
 
 // In-memory store: one current location per user
@@ -55,20 +58,26 @@ export async function upsertLocation(
 }
 
 export async function getAllWorkerLocations(actor: Actor): Promise<LocationRecord[]> {
-  if (!isElevatedRole(actor.role)) return [];
+  if (!canViewCompanyLocations(actor)) return [];
 
   if (!useDatabase()) {
-    const cutoff = Date.now() - 4 * 60 * 60 * 1000; // 4 hours
+    const cutoff = Date.now() - 4 * 60 * 60 * 1000;
     return Array.from(memoryLocations.values()).filter(
       (l) => new Date(l.timestamp).getTime() > cutoff
     );
   }
 
+  // Join to auth_users to enforce company scoping — worker_locations has no
+  // company_id column (schema-drift issue tracked separately).
   const result = await getPgPool().query(
-    `SELECT user_email, user_name, latitude, longitude, accuracy, site_id, timestamp
-     FROM worker_locations
-     WHERE timestamp > NOW() - INTERVAL '4 hours'
-     ORDER BY timestamp DESC`
+    `SELECT wl.user_email, wl.user_name, wl.latitude, wl.longitude,
+            wl.accuracy, wl.site_id, wl.timestamp
+     FROM worker_locations wl
+     JOIN auth_users u ON u.email = wl.user_email
+     WHERE u.company_id = $1
+       AND wl.timestamp > NOW() - INTERVAL '4 hours'
+     ORDER BY wl.timestamp DESC`,
+    [actor.companyId]
   );
   return result.rows.map((r) => ({
     id: r.user_email,

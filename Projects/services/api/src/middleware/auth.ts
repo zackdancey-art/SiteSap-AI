@@ -1,5 +1,5 @@
-import { NextFunction, Request, Response } from "express";
-import { AuthClaims, UserRole, verifyAuthToken } from "../utils/authToken";
+import { NextFunction, Request, RequestHandler, Response } from "express";
+import { AuthClaims, CompanyRole, UserRole, verifyAuthToken } from "../utils/authToken";
 
 export type AuthenticatedRequest = Request & { auth: AuthClaims };
 
@@ -24,6 +24,36 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+// ── Company-role middleware ──────────────────────────────────────────────────
+const ROLE_RANK: Record<CompanyRole, number> = { crew: 0, viewer: 1, manager: 2, owner: 3 };
+
+/** Requires the caller's company_role to rank at or above `min`. */
+export function requireAtLeast(min: CompanyRole): RequestHandler {
+  return (req, res, next) => {
+    const role = (req as AuthenticatedRequest).auth?.companyRole;
+    if (!role || ROLE_RANK[role] < ROLE_RANK[min]) {
+      return res.status(403).json({ error: "Insufficient permissions." });
+    }
+    next();
+  };
+}
+
+/** Requires the caller's company_role to be one of `allowed`. */
+export function requireCompanyRole(...allowed: CompanyRole[]): RequestHandler {
+  return (req, res, next) => {
+    const role = (req as AuthenticatedRequest).auth?.companyRole;
+    if (!role || !allowed.includes(role)) {
+      return res.status(403).json({ error: "Insufficient permissions." });
+    }
+    next();
+  };
+}
+
+/**
+ * @deprecated Legacy role gate keyed on the pre-company `role` claim. Kept for
+ * any route not yet migrated to company roles. New routes should use
+ * requireAtLeast / requireCompanyRole instead.
+ */
 export function requireRole(...roles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const auth = (req as AuthenticatedRequest).auth;
