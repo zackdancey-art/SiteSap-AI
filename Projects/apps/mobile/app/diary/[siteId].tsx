@@ -251,7 +251,7 @@ export default function DiaryPreviewScreen() {
       console.warn("Generate diary error:", err);
       const message =
         err instanceof Error && err.message.includes("Network request failed")
-          ? `Could not reach the SiteSnap API at ${BASE_URL}. Check that the backend is running and your phone is on the same network.`
+          ? "Couldn't connect to SiteSnap AI. Check your internet connection and try again."
           : err instanceof Error && err.message
             ? err.message
             : "Could not connect to report generation. Please try again.";
