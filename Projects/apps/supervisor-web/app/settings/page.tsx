@@ -558,7 +558,7 @@ export default function SettingsPage() {
                     <div style={{ display: "flex", gap: 10 }}>
                       <input
                         type="text" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)}
-                        placeholder="http://192.168.x.x:4001"
+                        placeholder="https://api.getsitesnapai.com"
                         style={{ flex: 1, height: 38, fontSize: 14, borderRadius: 8, maxWidth: 380 }}
                       />
                       <button className="btn-primary" onClick={saveApiUrl} style={{ padding: "0 20px", whiteSpace: "nowrap" }}>
@@ -573,8 +573,8 @@ export default function SettingsPage() {
                       background: apiStatus === "ok" ? "#F0FDF4" : apiStatus === "error" ? "#FEF2F2" : "var(--surface-secondary)",
                     }}>
                       {apiStatus === "checking" && "⏳ Checking connection…"}
-                      {apiStatus === "ok"       && "✓ Connected — API is reachable"}
-                      {apiStatus === "error"    && "✗ Cannot reach API — check the URL and ensure the server is running"}
+                      {apiStatus === "ok"       && "✓ Connected to SiteSnap AI"}
+                      {apiStatus === "error"    && "✗ Couldn't connect — check the address and your internet connection"}
                     </div>
                   )}
                 </div>
@@ -605,7 +605,7 @@ export default function SettingsPage() {
                 <Row label="Application" sub="SiteSnap AI Supervisor Portal">
                   <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>v0.1.0</span>
                 </Row>
-                <Row label="Platform" sub="Next.js 14 · TypeScript · React">
+                <Row label="Platform" sub="SiteSnap AI Supervisor Portal — web">
                   <span style={{ fontSize: 12, background: "var(--surface-secondary)", padding: "4px 12px", borderRadius: 8, color: "var(--text-secondary)", fontWeight: 600 }}>Web</span>
                 </Row>
                 <Row label="Compliance" sub="Privacy Act 1988 (AU) · Privacy Act 2020 (NZ) · WHS/HSWA 2015">

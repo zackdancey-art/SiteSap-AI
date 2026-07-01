@@ -8,13 +8,13 @@ export default function PrivacyPolicyScreen() {
       <View style={styles.hero}>
         <Text style={styles.heroTitle}>Privacy Policy</Text>
         <Text style={styles.heroText}>
-          This policy describes how SiteSnap collects, uses, stores, and shares project information entered through the mobile application.
+          This policy describes how SiteSnap AI collects, uses, stores, and shares project information entered through the mobile app.
         </Text>
       </View>
 
       <PolicyCard
         title="Information We Process"
-        body="SiteSnap may process account identifiers, site details, diary entries, project notes, uploaded photos, timestamps, and device-provided metadata required to support diary creation and export."
+        body="SiteSnap AI may process account identifiers, site details, diary entries, project notes, uploaded photos, timestamps, and device-provided metadata required to support diary creation and export."
       />
       <PolicyCard
         title="Purpose of Processing"
@@ -26,11 +26,11 @@ export default function PrivacyPolicyScreen() {
       />
       <PolicyCard
         title="Storage and Retention"
-        body="During local development, data may be stored on-device and within the configured development API. Exported files remain the responsibility of the organisation operating the project and should be handled under its retention policy."
+        body="Project data is stored securely on SiteSnap AI's cloud service so it can be synced across devices and reviewed by authorised supervisors. Exported files remain the responsibility of the organisation operating the project and should be handled under its retention policy."
       />
       <PolicyCard
         title="Access and Disclosure"
-        body="Access is limited by the application role model. Supervisor and administrator accounts may review diaries and related site information for operational oversight. SiteSnap does not intentionally disclose project data beyond configured services and user-initiated exports."
+        body="Access is limited by the application role model. Supervisor and administrator accounts may review diaries and related site information for operational oversight. SiteSnap AI does not intentionally disclose project data beyond configured services and user-initiated exports."
       />
       <PolicyCard
         title="User Responsibilities"

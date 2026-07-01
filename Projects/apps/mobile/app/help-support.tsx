@@ -19,7 +19,7 @@ export default function HelpSupportScreen() {
       <View style={styles.hero}>
         <Text style={styles.heroTitle}>Help & Support</Text>
         <Text style={styles.heroText}>
-          Operational support for field teams, supervisors, and administrators using SiteSnap across active projects.
+          Support for field teams, supervisors, and administrators using SiteSnap AI across active projects.
         </Text>
       </View>
 
@@ -41,10 +41,11 @@ export default function HelpSupportScreen() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Self-Service Guidance</Text>
-        <Text style={styles.body}>1. Confirm the mobile device is on the same network as the API when testing locally.</Text>
-        <Text style={styles.body}>2. Re-open Expo Go after config or environment changes.</Text>
-        <Text style={styles.body}>3. Verify required fields are completed before saving sites, entries, or profile updates.</Text>
+        <Text style={styles.sectionTitle}>Quick Troubleshooting</Text>
+        <Text style={styles.body}>1. Check that your device has an active internet connection — SiteSnap AI syncs your sites, entries, and diaries to the cloud.</Text>
+        <Text style={styles.body}>2. If something looks out of date, pull to refresh or sign out and back in to re-sync your data.</Text>
+        <Text style={styles.body}>3. Make sure all required fields are completed before saving sites, entries, or profile updates.</Text>
+        <Text style={styles.body}>4. If the problem continues, update to the latest version of the app from the App Store or Google Play.</Text>
       </View>
     </ScrollView>
   );

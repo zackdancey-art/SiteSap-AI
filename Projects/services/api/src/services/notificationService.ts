@@ -1,3 +1,5 @@
+import { buildEmailHtml } from "./emailTemplates";
+
 type DeliveryChannel = "email" | "sms";
 
 type PasswordResetPayload = {
@@ -5,7 +7,6 @@ type PasswordResetPayload = {
   email?: string;
   phone?: string;
   resetLink: string;
-  resetCode: string;
 };
 
 type VerificationPayload = {
@@ -65,7 +66,8 @@ async function sendWithResend(
 async function sendWithSendGrid(
   to: string,
   subject: string,
-  text: string
+  text: string,
+  html: string
 ): Promise<DeliveryResult> {
   const apiKey = process.env.SENDGRID_API_KEY;
   const from = process.env.EMAIL_FROM;
@@ -83,7 +85,10 @@ async function sendWithSendGrid(
       personalizations: [{ to: [{ email: to }] }],
       from: { email: from },
       subject,
-      content: [{ type: "text/plain", value: text }],
+      content: [
+        { type: "text/plain", value: text },
+        { type: "text/html", value: html },
+      ],
       ...(process.env.EMAIL_REPLY_TO
         ? { reply_to_list: [{ email: process.env.EMAIL_REPLY_TO }] }
         : {}),
@@ -112,7 +117,7 @@ function getEmailProvider() {
 async function sendEmail(to: string, subject: string, text: string, html: string): Promise<DeliveryResult> {
   const provider = getEmailProvider();
   if (provider === "resend") return sendWithResend(to, subject, text, html);
-  if (provider === "sendgrid") return sendWithSendGrid(to, subject, text);
+  if (provider === "sendgrid") return sendWithSendGrid(to, subject, text, html);
   return {
     ok: false,
     error:
@@ -186,21 +191,33 @@ export function isChannelConfigured(channel: DeliveryChannel): { ok: boolean; re
 export async function sendPasswordReset(payload: PasswordResetPayload): Promise<DeliveryResult> {
   if (payload.channel === "email") {
     if (!payload.email) return { ok: false, error: "Missing recipient email." };
+
+    const subject = "Reset your SiteSnap password";
     const text =
       `We received a password reset request for your SiteSnap account.\n\n` +
-      `Reset link: ${payload.resetLink}\n` +
-      `Reset code: ${payload.resetCode}\n\n` +
-      `If you did not request this, you can ignore this message.`;
-    const html =
-      `<p>We received a password reset request for your SiteSnap account.</p>` +
-      `<p><a href="${payload.resetLink}">Reset your password</a></p>` +
-      `<p>Or use this code: <strong>${payload.resetCode}</strong></p>` +
-      `<p>If you did not request this, you can ignore this message.</p>`;
-    return sendEmail(payload.email, "Reset your SiteSnap password", text, html);
+      `Reset your password here:\n${payload.resetLink}\n\n` +
+      `This link expires in 30 minutes. If you didn't request a reset, you can safely ignore this email.`;
+
+    const html = buildEmailHtml({
+      heading: "Reset your password",
+      bodyLines: [
+        "We received a request to reset your SiteSnap password.",
+        "Click the button below to choose a new password. This link is valid for <strong>30 minutes</strong> and can only be used once.",
+      ],
+      ctaButton: { text: "Reset My Password", url: payload.resetLink },
+      noteLines: [
+        "If you didn't request this, no action is needed — your password won't change.",
+      ],
+    });
+
+    return sendEmail(payload.email, subject, text, html);
   }
 
   if (!payload.phone) return { ok: false, error: "Missing recipient phone." };
-  return sendSms(payload.phone, `SiteSnap reset code: ${payload.resetCode}. Link: ${payload.resetLink}`);
+  return sendSms(
+    payload.phone,
+    `SiteSnap: Reset your password here:\n${payload.resetLink}\n\nExpires in 30 min. If you didn't request this, ignore this message.`
+  );
 }
 
 type SiteInvitePayload = {
@@ -214,16 +231,23 @@ type SiteInvitePayload = {
 export async function sendSiteInvite(payload: SiteInvitePayload): Promise<DeliveryResult> {
   const inviteUrl = `${process.env.INVITE_URL || "sitesnap://invite"}?token=${payload.token}`;
   const subject = `You've been invited to join ${payload.siteName} on SiteSnap`;
+
   const text =
     `Hi,\n\n` +
     `${payload.inviterName} has invited you to collaborate on ${payload.siteName} as a ${payload.role}.\n\n` +
-    `Tap the link below in the SiteSnap app to accept:\n${inviteUrl}\n\n` +
+    `Accept your invitation here:\n${inviteUrl}\n\n` +
     `This invitation expires in 7 days.`;
-  const html =
-    `<p>Hi,</p>` +
-    `<p>${payload.inviterName} has invited you to collaborate on <strong>${payload.siteName}</strong> as a ${payload.role}.</p>` +
-    `<p><a href="${inviteUrl}">Accept Invitation →</a></p>` +
-    `<p>This invitation expires in 7 days.</p>`;
+
+  const html = buildEmailHtml({
+    heading: "You've been invited to SiteSnap",
+    bodyLines: [
+      `<strong>${payload.inviterName}</strong> has invited you to collaborate on <strong>${payload.siteName}</strong> as a ${payload.role}.`,
+      "Tap the button below to accept and get started.",
+    ],
+    ctaButton: { text: "Accept Invitation", url: inviteUrl },
+    noteLines: ["This invitation expires in 7 days."],
+  });
+
   const result = await sendEmail(payload.to, subject, text, html);
   if (!result.ok) {
     console.warn(`[invite] Email delivery failed for ${payload.to}: ${result.error}`);
@@ -234,16 +258,27 @@ export async function sendSiteInvite(payload: SiteInvitePayload): Promise<Delive
 export async function sendAccountVerification(payload: VerificationPayload): Promise<DeliveryResult> {
   if (payload.channel === "email") {
     if (!payload.email) return { ok: false, error: "Missing recipient email." };
+
+    const subject = "Verify your SiteSnap account";
     const text =
       `Use this verification code to complete your SiteSnap signup: ${payload.code}\n\n` +
-      `If you did not create this account, you can ignore this message.`;
-    const html =
-      `<p>Use this verification code to complete your SiteSnap signup:</p>` +
-      `<p><strong>${payload.code}</strong></p>` +
-      `<p>If you did not create this account, you can ignore this message.</p>`;
-    return sendEmail(payload.email, "Verify your SiteSnap account", text, html);
+      `This code expires in 10 minutes. If you didn't create this account, you can ignore this message.`;
+
+    const html = buildEmailHtml({
+      heading: "Verify your account",
+      bodyLines: [
+        "Welcome to SiteSnap! Enter the code below to complete your account setup.",
+      ],
+      codeBlock: payload.code,
+      noteLines: [
+        "This code expires in <strong>10 minutes</strong>.",
+        "If you didn't create this account, you can safely ignore this email.",
+      ],
+    });
+
+    return sendEmail(payload.email, subject, text, html);
   }
 
   if (!payload.phone) return { ok: false, error: "Missing recipient phone." };
-  return sendSms(payload.phone, `Your SiteSnap verification code is: ${payload.code}`);
+  return sendSms(payload.phone, `Your SiteSnap verification code is: ${payload.code}. Expires in 10 minutes.`);
 }
