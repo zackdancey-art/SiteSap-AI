@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { getSavedUser, isAuthenticated, clearToken, changePassword, revokeAllSessions } from "@/lib/api";
 
+// ── Dev-tools gate ───────────────────────────────────────────────────────────
+// The API Connection panel is only shown when NEXT_PUBLIC_SHOW_DEV_TOOLS=true.
+// It must NEVER be set in production deployments.
+const SHOW_DEV_TOOLS = process.env.NEXT_PUBLIC_SHOW_DEV_TOOLS === "true";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type NotifPrefs = {
@@ -40,18 +45,20 @@ type SettingsSection =
   | "display" | "tracking" | "exports"
   | "api" | "privacy" | "about" | "security";
 
-const SECTIONS: { id: SettingsSection; label: string; icon: string }[] = [
+const ALL_SECTIONS: { id: SettingsSection; label: string; icon: string; devOnly?: boolean }[] = [
   { id: "account",       label: "Account",         icon: "👤" },
   { id: "organisation",  label: "Organisation",     icon: "🏢" },
   { id: "notifications", label: "Notifications",    icon: "🔔" },
   { id: "display",       label: "Display",          icon: "🎨" },
   { id: "tracking",      label: "Live Map",         icon: "📍" },
   { id: "exports",       label: "Reports & Exports",icon: "📄" },
-  { id: "api",           label: "API Connection",   icon: "🔌" },
+  { id: "api",           label: "API Connection",   icon: "🔌", devOnly: true },
   { id: "privacy",       label: "Data & Privacy",   icon: "🔒" },
   { id: "about",         label: "About",            icon: "ℹ️" },
   { id: "security",      label: "Security",         icon: "🛡️" },
 ];
+
+const SECTIONS = ALL_SECTIONS.filter((s) => !s.devOnly || SHOW_DEV_TOOLS);
 
 const TIMEZONES = [
   "Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane",
@@ -540,9 +547,9 @@ export default function SettingsPage() {
               </Panel>
             )}
 
-            {/* API Connection */}
-            {activeSection === "api" && (
-              <Panel title="API Connection" description="Connection to the SiteSnap AI service. Leave the default unless your administrator has given you a specific address.">
+            {/* API Connection — dev tools only; hidden in production */}
+            {SHOW_DEV_TOOLS && activeSection === "api" && (
+              <Panel title="API Connection" description="Backend server configuration. Set NEXT_PUBLIC_API_URL in .env.local for a permanent connection.">
                 <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
