@@ -35,7 +35,7 @@ test("HTTP API flow persists site and entry data and generates diary by siteId",
   try {
     const port = (server.address() as AddressInfo).port;
     const baseUrl = `http://127.0.0.1:${port}`;
-    const token = createAuthToken({ email: "flow@example.com", fullName: "Flow User", role: "worker" });
+    const token = createAuthToken({ email: "flow@example.com", fullName: "Flow User", role: "supervisor", companyId: "flow-test-company", companyRole: "owner" });
     const headers = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,

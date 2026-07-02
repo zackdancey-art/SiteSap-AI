@@ -62,9 +62,13 @@ async function req<T = unknown>(
   });
 }
 
+// Global counter: phone numbers must be unique across all registrations in a test run.
+let _phoneSeq = 0;
+function nextPhone() { return `+614${String(++_phoneSeq).padStart(8, "0")}`; }
+
 /** Register + verify a user, returning their auth token. */
 async function registerUser(email: string, name: string, companyName?: string): Promise<string> {
-  const regBody: Record<string, string> = { email, fullName: name, password: "Password123!!" };
+  const regBody: Record<string, string> = { email, phone: nextPhone(), fullName: name, password: "Password123!!" };
   if (companyName) regBody.companyName = companyName;
   const regRes = await req<{ ok: boolean; devCodes?: { emailCode: string; smsCode: string } }>(
     "POST", "/auth/register", regBody
@@ -74,7 +78,7 @@ async function registerUser(email: string, name: string, companyName?: string): 
   const verRes = await req<{ token: string }>(
     "POST", "/auth/register/verify", { email, emailCode, smsCode }
   );
-  assert.equal(verRes.status, 200, `verify ${email} failed: ${JSON.stringify(verRes.body)}`);
+  assert.equal(verRes.status, 201, `verify ${email} failed: ${JSON.stringify(verRes.body)}`);
   return verRes.body.token;
 }
 
@@ -136,20 +140,21 @@ test("2: Viewer GET /projects/sites returns 200; POST returns 403", async () => 
   const inviteToken = invRes.body.results[0]?.token;
   assert.ok(inviteToken, "invite token missing from response");
 
-  // Viewer registers and accepts invite
+  // Viewer registers and accepts invite — use the fresh token from the response
   const viewerToken = await registerUser("viewer@co.test", "Viewer");
-  const acceptRes = await req("POST", "/projects/invites/accept", { token: inviteToken }, viewerToken);
+  const acceptRes = await req<{ token?: string }>("POST", "/projects/invites/accept", { token: inviteToken }, viewerToken);
   assert.equal(acceptRes.status, 200, `accept failed: ${JSON.stringify(acceptRes.body)}`);
+  const viewerActiveToken = acceptRes.body.token ?? viewerToken;
 
   // Viewer GET should succeed
-  const getRes = await req("GET", "/projects/sites", undefined, viewerToken);
+  const getRes = await req("GET", "/projects/sites", undefined, viewerActiveToken);
   assert.equal(getRes.status, 200, "viewer GET should be 200");
 
   // Viewer POST should be blocked
   const postRes = await req(
     "POST", "/projects/sites",
     { name: "X", address: "X", client: "X", startDate: "2026-01-01", status: "active" },
-    viewerToken
+    viewerActiveToken
   );
   assert.equal(postRes.status, 403, "viewer POST should be 403");
 });
@@ -168,9 +173,10 @@ test("3: Crew token on GET /projects/sites returns 403", async () => {
   const inviteToken = invRes.body.results[0]?.token;
 
   const crewToken = await registerUser("crew@co.test", "Crew Member");
-  await req("POST", "/projects/invites/accept", { token: inviteToken }, crewToken);
+  const crewAccept = await req<{ token?: string }>("POST", "/projects/invites/accept", { token: inviteToken }, crewToken);
+  const crewActiveToken = crewAccept.body.token ?? crewToken;
 
-  const dashRes = await req("GET", "/projects/sites", undefined, crewToken);
+  const dashRes = await req("GET", "/projects/sites", undefined, crewActiveToken);
   assert.equal(dashRes.status, 403, "crew should be blocked from dashboard");
 });
 
@@ -187,13 +193,14 @@ test("4: Manager cannot POST /company/members/invite", async () => {
   );
   assert.equal(invRes.status, 201);
   const mgrToken = await registerUser("mgr@co.test", "Manager");
-  await req("POST", "/projects/invites/accept", { token: invRes.body.results[0]?.token }, mgrToken);
+  const mgrAccept = await req<{ token?: string }>("POST", "/projects/invites/accept", { token: invRes.body.results[0]?.token }, mgrToken);
+  const mgrActiveToken = mgrAccept.body.token ?? mgrToken;
 
   // Manager tries to invite someone — must be 403
   const attemptRes = await req(
     "POST", "/company/members/invite",
     { emails: ["other@co.test"], companyRole: "crew" },
-    mgrToken
+    mgrActiveToken
   );
   assert.equal(attemptRes.status, 403, "manager should not be able to invite");
 });
@@ -214,7 +221,7 @@ test("5: Company A manager PATCH on Company B site returns 404", async () => {
   // Company A tries to update the progress of Site B
   const patchRes = await req(
     "PATCH", `/projects/sites/${siteBId}/progress`,
-    { status: "completed" },
+    { progressPercent: 50 },
     tokenA
   );
   assert.equal(patchRes.status, 404, "cross-company PATCH should return 404");

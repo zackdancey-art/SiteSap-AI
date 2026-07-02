@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requireAtLeast, AuthenticatedRequest } from "../middleware/auth";
+import { createAuthToken } from "../utils/authToken";
 import {
   acceptSiteInvite,
   createDiary,
@@ -373,5 +374,17 @@ projectsRouter.post("/projects/invites/accept", async (req, res) => {
   if (result === "already_in_company") {
     return res.status(409).json({ status: "already_in_company", error: "You are already a member of a different company." });
   }
-  return res.json({ siteId: result.siteId, siteName: result.siteName, role: result.role, companyId: result.companyId, companyRole: result.companyRole });
+  // Issue a fresh token so the caller's updated role takes effect immediately
+  // without requiring a separate login step.
+  const reqAuth = (req as unknown as AuthenticatedRequest).auth;
+  const effectiveCompanyId = result.companyId ?? reqAuth.companyId;
+  const effectiveCompanyRole = result.companyRole ?? reqAuth.companyRole;
+  const freshToken = createAuthToken({
+    email: reqAuth.email,
+    fullName: reqAuth.fullName,
+    role: reqAuth.role,
+    companyId: effectiveCompanyId,
+    companyRole: effectiveCompanyRole,
+  });
+  return res.json({ token: freshToken, siteId: result.siteId, siteName: result.siteName, role: result.role, companyId: effectiveCompanyId, companyRole: effectiveCompanyRole });
 });

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import path from "path";
 import { v7 as uuidv7 } from "uuid";
 import { getPgPool } from "./postgres";
-import { CompanyRole } from "../utils/authToken";
+import { CompanyRole, soloCompanyIdForEmail } from "../utils/authToken";
 import { Actor, isCrew } from "./actor";
 import { FileBackedStore } from "./fileStore";
 import { findUserByEmail, setUserCompany } from "./authStore";
@@ -144,11 +144,14 @@ function canAccessRow(
   memberSiteIds?: Set<string>,
   siteId?: string
 ): boolean {
-  if (rowCompanyId !== actor.companyId) return false;
-  if (!isCrew(actor)) return true;
-  if (actor.email === ownerEmail) return true;
+  // Explicit site-member record grants access regardless of company match —
+  // this allows site invites accepted with a stale pre-accept token to still
+  // surface the invited site in list queries.
   if (siteId && memberSiteIds?.has(siteId)) return true;
-  return false;
+  if (rowCompanyId !== actor.companyId) return false;
+  // Crew only see sites they own; non-crew company members see all.
+  if (isCrew(actor)) return actor.email === ownerEmail;
+  return true;
 }
 
 const store = new FileBackedStore<Partial<MemoryJson>>(
@@ -1310,7 +1313,9 @@ export type AcceptInviteResult =
   | "already_in_company";
 
 // Applies the company side of an invite to the accepting user. Returns
-// "already_in_company" if the user already belongs to a *different* company.
+// "already_in_company" if the user already belongs to a *different real* company.
+// Solo companies (auto-created on registration) are treated as "no real company"
+// and can be overridden when the user accepts an invite from a real company.
 async function applyCompanyMembership(
   actorEmail: string,
   invite: { companyId: string | null; companyRole: CompanyRole | null }
@@ -1318,7 +1323,8 @@ async function applyCompanyMembership(
   if (!invite.companyId) return "ok";
   const user = await findUserByEmail(actorEmail);
   const currentCompany = user?.companyId ?? "";
-  if (currentCompany && currentCompany !== invite.companyId) {
+  const isSoloCompany = currentCompany === soloCompanyIdForEmail(actorEmail);
+  if (currentCompany && !isSoloCompany && currentCompany !== invite.companyId) {
     return "already_in_company";
   }
   if (!currentCompany || currentCompany !== invite.companyId) {
@@ -1339,11 +1345,13 @@ export async function acceptSiteInvite(
     if (new Date(invite.expiresAt) < new Date()) return "expired";
 
     // Cross-company guard BEFORE consuming the token — a different-company user
-    // is rejected without burning the invite.
+    // is rejected without burning the invite. Solo companies are treated as
+    // "no real company" and can be overridden by an explicit company invite.
     if (invite.companyId) {
       const user = await findUserByEmail(actorEmail);
       const currentCompany = user?.companyId ?? "";
-      if (currentCompany && currentCompany !== invite.companyId) {
+      const isSoloCompany = currentCompany === soloCompanyIdForEmail(actorEmail);
+      if (currentCompany && !isSoloCompany && currentCompany !== invite.companyId) {
         return "already_in_company";
       }
     }
@@ -1392,7 +1400,8 @@ export async function acceptSiteInvite(
           [actorEmail]
         );
         const currentCompany = userRow.rows[0]?.company_id ?? "";
-        if (currentCompany && currentCompany !== peek.rows[0].company_id) {
+        const isSoloCompany = currentCompany === soloCompanyIdForEmail(actorEmail);
+        if (currentCompany && !isSoloCompany && currentCompany !== peek.rows[0].company_id) {
           await client.query("ROLLBACK");
           return "already_in_company";
         }
