@@ -2,8 +2,10 @@ import crypto from "crypto";
 import path from "path";
 import { v7 as uuidv7 } from "uuid";
 import { getPgPool } from "./postgres";
-import { UserRole, isElevatedRole } from "../utils/authToken";
+import { CompanyRole, soloCompanyIdForEmail } from "../utils/authToken";
+import { Actor, isCrew } from "./actor";
 import { FileBackedStore } from "./fileStore";
+import { findUserByEmail, setUserCompany } from "./authStore";
 
 type SiteStatus = "active" | "completed" | "on-hold";
 type DiaryStatus = "draft" | "approved";
@@ -12,6 +14,7 @@ type ReportPeriod = "daily" | "weekly" | "monthly";
 export type SiteRecord = {
   id: string;
   ownerEmail: string;
+  companyId: string;
   name: string;
   address: string;
   client: string;
@@ -25,6 +28,7 @@ export type SiteRecord = {
 export type EntryRecord = {
   id: string;
   ownerEmail: string;
+  companyId: string;
   siteId: string;
   date: string;
   locationAddress: string;
@@ -48,6 +52,7 @@ export type DiaryEditLogEntry = {
 export type DiaryRecord = {
   id: string;
   ownerEmail: string;
+  companyId: string;
   siteId: string;
   generatedAt: string;
   status: DiaryStatus;
@@ -62,6 +67,7 @@ export type DiaryRecord = {
 export type TemplateRecord = {
   id: string;
   ownerEmail: string;
+  companyId: string;
   siteId: string;
   name: string;
   weather: string;
@@ -72,7 +78,9 @@ export type TemplateRecord = {
 
 export type SiteInviteRecord = {
   id: string;
-  siteId: string;
+  siteId: string | null;
+  companyId: string | null;
+  companyRole: CompanyRole | null;
   invitedEmail: string;
   invitedBy: string;
   role: string;
@@ -93,8 +101,6 @@ export type InviteResult = {
   email: string;
   status: "sent" | "resent" | "already_member";
 };
-
-type Actor = { email: string; role: UserRole };
 
 type MemoryState = {
   sites: Map<string, SiteRecord>;
@@ -127,8 +133,25 @@ function useDatabase() {
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
 }
 
-function canAccessOwner(actor: Actor, ownerEmail: string) {
-  return isElevatedRole(actor.role) || actor.email === ownerEmail;
+// Company-scoped access to a row identified by its company + owner. A row is
+// accessible when it belongs to the actor's company AND, for crew, when the
+// actor owns it or is a member of its site. Non-crew (viewer/manager/owner)
+// see everything within their own company.
+function canAccessRow(
+  actor: Actor,
+  rowCompanyId: string,
+  ownerEmail: string,
+  memberSiteIds?: Set<string>,
+  siteId?: string
+): boolean {
+  // Explicit site-member record grants access regardless of company match —
+  // this allows site invites accepted with a stale pre-accept token to still
+  // surface the invited site in list queries.
+  if (siteId && memberSiteIds?.has(siteId)) return true;
+  if (rowCompanyId !== actor.companyId) return false;
+  // Crew only see sites they own; non-crew company members see all.
+  if (isCrew(actor)) return actor.email === ownerEmail;
+  return true;
 }
 
 const store = new FileBackedStore<Partial<MemoryJson>>(
@@ -232,6 +255,7 @@ export async function initProjectSchema() {
 function mapSite(row: {
   id: string;
   owner_email: string;
+  company_id: string;
   name: string;
   address: string;
   client: string;
@@ -242,6 +266,7 @@ function mapSite(row: {
   return {
     id: row.id,
     ownerEmail: row.owner_email,
+    companyId: row.company_id,
     name: row.name,
     address: row.address,
     client: row.client,
@@ -254,6 +279,7 @@ function mapSite(row: {
 function mapEntry(row: {
   id: string;
   owner_email: string;
+  company_id: string;
   site_id: string;
   date: string;
   location_address: string;
@@ -269,6 +295,7 @@ function mapEntry(row: {
   return {
     id: row.id,
     ownerEmail: row.owner_email,
+    companyId: row.company_id,
     siteId: row.site_id,
     date: row.date,
     locationAddress: row.location_address,
@@ -286,6 +313,7 @@ function mapEntry(row: {
 function mapDiary(row: {
   id: string;
   owner_email: string;
+  company_id: string;
   site_id: string;
   generated_at: Date;
   status: DiaryStatus;
@@ -301,6 +329,7 @@ function mapDiary(row: {
   return {
     id: row.id,
     ownerEmail: row.owner_email,
+    companyId: row.company_id,
     siteId: row.site_id,
     generatedAt: row.generated_at.toISOString(),
     status: row.status,
@@ -313,6 +342,18 @@ function mapDiary(row: {
   };
 }
 
+type SiteRow = {
+  id: string;
+  owner_email: string;
+  company_id: string;
+  name: string;
+  address: string;
+  client: string;
+  start_date: string;
+  status: SiteStatus;
+  created_at: Date;
+};
+
 export async function listSites(actor: Actor, limit = 200, offset = 0): Promise<SiteRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
@@ -322,47 +363,38 @@ export async function listSites(actor: Actor, limit = 200, offset = 0): Promise<
         .map((m) => m.siteId)
     );
     return Array.from(memory.sites.values())
-      .filter((site) => canAccessOwner(actor, site.ownerEmail) || memberSiteIds.has(site.id))
+      .filter((site) => canAccessRow(actor, site.companyId, site.ownerEmail, memberSiteIds, site.id))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(offset, offset + limit);
   }
-  const result = isElevatedRole(actor.role)
-    ? await getPgPool().query<{
-        id: string;
-        owner_email: string;
-        name: string;
-        address: string;
-        client: string;
-        start_date: string;
-        status: SiteStatus;
-        created_at: Date;
-      }>(`SELECT * FROM project_sites ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset])
-    : await getPgPool().query<{
-        id: string;
-        owner_email: string;
-        name: string;
-        address: string;
-        client: string;
-        start_date: string;
-        status: SiteStatus;
-        created_at: Date;
-      }>(
+  // Non-crew (viewer/manager/owner): every site in the company.
+  // Crew: only sites they own or are a member of, within the company.
+  const result = !isCrew(actor)
+    ? await getPgPool().query<SiteRow>(
         `SELECT * FROM project_sites
-         WHERE owner_email = $1
-            OR id IN (SELECT site_id FROM site_members WHERE member_email = $1)
+         WHERE company_id = $1
          ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-        [actor.email, limit, offset]
+        [actor.companyId, limit, offset]
+      )
+    : await getPgPool().query<SiteRow>(
+        `SELECT * FROM project_sites
+         WHERE company_id = $1
+           AND (owner_email = $2
+                OR id IN (SELECT site_id FROM site_members WHERE member_email = $2))
+         ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+        [actor.companyId, actor.email, limit, offset]
       );
   return result.rows.map(mapSite);
 }
 
 export async function createSite(
   actor: Actor,
-  payload: Omit<SiteRecord, "id" | "ownerEmail" | "createdAt">
+  payload: Omit<SiteRecord, "id" | "ownerEmail" | "createdAt" | "companyId">
 ): Promise<SiteRecord> {
   const site: SiteRecord = {
     id: uuidv7(),
     ownerEmail: actor.email,
+    companyId: actor.companyId,
     createdAt: new Date().toISOString(),
     ...payload,
   };
@@ -372,20 +404,11 @@ export async function createSite(
     await persistMemory();
     return site;
   }
-  const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    name: string;
-    address: string;
-    client: string;
-    start_date: string;
-    status: SiteStatus;
-    created_at: Date;
-  }>(
-    `INSERT INTO project_sites (id, owner_email, name, address, client, start_date, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+  const result = await getPgPool().query<SiteRow>(
+    `INSERT INTO project_sites (id, owner_email, company_id, name, address, client, start_date, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
-    [site.id, actor.email, site.name, site.address, site.client, site.startDate, site.status]
+    [site.id, actor.email, actor.companyId, site.name, site.address, site.client, site.startDate, site.status]
   );
   return mapSite(result.rows[0]);
 }
@@ -394,7 +417,10 @@ export async function deleteSite(actor: Actor, siteId: string): Promise<boolean>
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const existing = memory.sites.get(siteId);
-    if (!existing || !canAccessOwner(actor, existing.ownerEmail)) return false;
+    // Cross-company guard: never touch another company's site.
+    if (!existing || existing.companyId !== actor.companyId) return false;
+    // Crew may only delete sites they own.
+    if (isCrew(actor) && existing.ownerEmail !== actor.email) return false;
     memory.sites.delete(siteId);
     for (const [entryId, entry] of memory.entries.entries()) {
       if (entry.siteId === siteId) memory.entries.delete(entryId);
@@ -405,56 +431,63 @@ export async function deleteSite(actor: Actor, siteId: string): Promise<boolean>
     await persistMemory();
     return true;
   }
-  const result = isElevatedRole(actor.role)
-    ? await getPgPool().query(`DELETE FROM project_sites WHERE id = $1`, [siteId])
-    : await getPgPool().query(`DELETE FROM project_sites WHERE id = $1 AND owner_email = $2`, [siteId, actor.email]);
+  const result = isCrew(actor)
+    ? await getPgPool().query(
+        `DELETE FROM project_sites WHERE id = $1 AND company_id = $2 AND owner_email = $3`,
+        [siteId, actor.companyId, actor.email]
+      )
+    : await getPgPool().query(
+        `DELETE FROM project_sites WHERE id = $1 AND company_id = $2`,
+        [siteId, actor.companyId]
+      );
   return (result.rowCount ?? 0) > 0;
 }
 
 export async function listEntries(actor: Actor, siteId?: string, limit = 200, offset = 0): Promise<EntryRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
+    const memberSiteIds = new Set(
+      Array.from(memory.siteMembers.values())
+        .filter((m) => m.memberEmail === actor.email)
+        .map((m) => m.siteId)
+    );
     return Array.from(memory.entries.values())
-      .filter((entry) => canAccessOwner(actor, entry.ownerEmail))
+      .filter((entry) => canAccessRow(actor, entry.companyId, entry.ownerEmail, memberSiteIds, entry.siteId))
       .filter((entry) => (siteId ? entry.siteId === siteId : true))
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       .slice(offset, offset + limit);
   }
 
-  const queryParts: string[] = [];
-  const params: unknown[] = [];
-  if (!isElevatedRole(actor.role)) {
+  // Always company-scoped. Crew additionally limited to owned/member sites.
+  const params: unknown[] = [actor.companyId];
+  const queryParts: string[] = [`company_id = $1`];
+  if (isCrew(actor)) {
     params.push(actor.email);
-    queryParts.push(`owner_email = $${params.length}`);
+    queryParts.push(
+      `(owner_email = $${params.length} OR site_id IN (SELECT site_id FROM site_members WHERE member_email = $${params.length}))`
+    );
   }
   if (siteId) {
     params.push(siteId);
     queryParts.push(`site_id = $${params.length}`);
   }
-  const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  const where = `WHERE ${queryParts.join(" AND ")}`;
   params.push(limit, offset);
-  const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    site_id: string;
-    date: string;
-    location_address: string;
-    weather: string;
-    crew_count: string;
-    notes: string;
-    photos_json: Array<Record<string, unknown>>;
-    timestamp: Date;
-  }>(`SELECT * FROM project_entries ${where} ORDER BY timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+  const result = await getPgPool().query(
+    `SELECT * FROM project_entries ${where} ORDER BY timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
   return result.rows.map(mapEntry);
 }
 
 export async function createEntry(
   actor: Actor,
-  payload: Omit<EntryRecord, "id" | "ownerEmail" | "timestamp">
+  payload: Omit<EntryRecord, "id" | "ownerEmail" | "timestamp" | "companyId">
 ): Promise<EntryRecord> {
   const entry: EntryRecord = {
     id: uuidv7(),
     ownerEmail: actor.email,
+    companyId: actor.companyId,
     timestamp: new Date().toISOString(),
     ...payload,
   };
@@ -464,28 +497,15 @@ export async function createEntry(
     await persistMemory();
     return entry;
   }
-  const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    site_id: string;
-    date: string;
-    location_address: string;
-    weather: string;
-    crew_count: string;
-    notes: string;
-    photos_json: Array<Record<string, unknown>>;
-    timestamp: Date;
-    swms_ref: string | null;
-    hazard_notes: string | null;
-    toolbox_talk: boolean | null;
-  }>(
+  const result = await getPgPool().query(
     `INSERT INTO project_entries
-       (id, owner_email, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+       (id, owner_email, company_id, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
      RETURNING *`,
     [
       entry.id,
       actor.email,
+      actor.companyId,
       entry.siteId,
       entry.date,
       entry.locationAddress,
@@ -508,8 +528,13 @@ export async function updateEntry(
 ): Promise<EntryRecord | null> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
+    const memberSiteIds = new Set(
+      Array.from(memory.siteMembers.values())
+        .filter((m) => m.memberEmail === actor.email)
+        .map((m) => m.siteId)
+    );
     const current = memory.entries.get(entryId);
-    if (!current || !canAccessOwner(actor, current.ownerEmail)) return null;
+    if (!current || !canAccessRow(actor, current.companyId, current.ownerEmail, memberSiteIds, current.siteId)) return null;
     const updated: EntryRecord = {
       ...current,
       ...patch,
@@ -519,29 +544,23 @@ export async function updateEntry(
     await persistMemory();
     return updated;
   }
-  const existingResult = await getPgPool().query<{ owner_email: string }>(
-    `SELECT owner_email FROM project_entries WHERE id = $1 LIMIT 1`,
+  const existingResult = await getPgPool().query<{ owner_email: string; company_id: string; site_id: string }>(
+    `SELECT owner_email, company_id, site_id FROM project_entries WHERE id = $1 LIMIT 1`,
     [entryId]
   );
   if (existingResult.rowCount === 0) return null;
-  const ownerEmail = existingResult.rows[0].owner_email;
-  if (!canAccessOwner(actor, ownerEmail)) return null;
+  const existingRow = existingResult.rows[0];
+  // Cross-company guard: a different company's row is invisible (treated as 404).
+  if (existingRow.company_id !== actor.companyId) return null;
+  if (isCrew(actor) && existingRow.owner_email !== actor.email) {
+    const member = await getPgPool().query(
+      `SELECT 1 FROM site_members WHERE site_id = $1 AND member_email = $2`,
+      [existingRow.site_id, actor.email]
+    );
+    if (member.rowCount === 0) return null;
+  }
 
-  const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    site_id: string;
-    date: string;
-    location_address: string;
-    weather: string;
-    crew_count: string;
-    notes: string;
-    photos_json: Array<Record<string, unknown>>;
-    timestamp: Date;
-    swms_ref: string | null;
-    hazard_notes: string | null;
-    toolbox_talk: boolean | null;
-  }>(
+  const result = await getPgPool().query(
     `UPDATE project_entries
      SET
        date = COALESCE($2, date),
@@ -577,60 +596,67 @@ export async function deleteEntry(actor: Actor, entryId: string): Promise<boolea
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const existing = memory.entries.get(entryId);
-    if (!existing || !canAccessOwner(actor, existing.ownerEmail)) return false;
+    if (!existing || existing.companyId !== actor.companyId) return false;
+    if (isCrew(actor) && existing.ownerEmail !== actor.email) return false;
     memory.entries.delete(entryId);
     await persistMemory();
     return true;
   }
-  const result = isElevatedRole(actor.role)
-    ? await getPgPool().query(`DELETE FROM project_entries WHERE id = $1`, [entryId])
-    : await getPgPool().query(`DELETE FROM project_entries WHERE id = $1 AND owner_email = $2`, [entryId, actor.email]);
+  const result = isCrew(actor)
+    ? await getPgPool().query(
+        `DELETE FROM project_entries WHERE id = $1 AND company_id = $2 AND owner_email = $3`,
+        [entryId, actor.companyId, actor.email]
+      )
+    : await getPgPool().query(
+        `DELETE FROM project_entries WHERE id = $1 AND company_id = $2`,
+        [entryId, actor.companyId]
+      );
   return (result.rowCount ?? 0) > 0;
 }
 
 export async function listDiaries(actor: Actor, siteId?: string, limit = 200, offset = 0): Promise<DiaryRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
+    const memberSiteIds = new Set(
+      Array.from(memory.siteMembers.values())
+        .filter((m) => m.memberEmail === actor.email)
+        .map((m) => m.siteId)
+    );
     return Array.from(memory.diaries.values())
-      .filter((diary) => canAccessOwner(actor, diary.ownerEmail))
+      .filter((diary) => canAccessRow(actor, diary.companyId, diary.ownerEmail, memberSiteIds, diary.siteId))
       .filter((diary) => (siteId ? diary.siteId === siteId : true))
       .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
       .slice(offset, offset + limit);
   }
-  const queryParts: string[] = [];
-  const params: unknown[] = [];
-  if (!isElevatedRole(actor.role)) {
+  const params: unknown[] = [actor.companyId];
+  const queryParts: string[] = [`company_id = $1`];
+  if (isCrew(actor)) {
     params.push(actor.email);
-    queryParts.push(`owner_email = $${params.length}`);
+    queryParts.push(
+      `(owner_email = $${params.length} OR site_id IN (SELECT site_id FROM site_members WHERE member_email = $${params.length}))`
+    );
   }
   if (siteId) {
     params.push(siteId);
     queryParts.push(`site_id = $${params.length}`);
   }
-  const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
+  const where = `WHERE ${queryParts.join(" AND ")}`;
   params.push(limit, offset);
-  const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    site_id: string;
-    generated_at: Date;
-    status: DiaryStatus;
-    summary: string;
-    report_period: string;
-    full_report: string;
-    safety_checklist_json: string[] | null;
-    sections_json: Array<Record<string, unknown>>;
-  }>(`SELECT * FROM project_diaries ${where} ORDER BY generated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+  const result = await getPgPool().query(
+    `SELECT * FROM project_diaries ${where} ORDER BY generated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
   return result.rows.map(mapDiary);
 }
 
 export async function createDiary(
   actor: Actor,
-  payload: Omit<DiaryRecord, "id" | "ownerEmail" | "generatedAt" | "editLog">
+  payload: Omit<DiaryRecord, "id" | "ownerEmail" | "generatedAt" | "editLog" | "companyId">
 ): Promise<DiaryRecord> {
   const diary: DiaryRecord = {
     id: uuidv7(),
     ownerEmail: actor.email,
+    companyId: actor.companyId,
     generatedAt: new Date().toISOString(),
     editLog: [],
     ...payload,
@@ -641,26 +667,16 @@ export async function createDiary(
     await persistMemory();
     return diary;
   }
-  const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    site_id: string;
-    generated_at: Date;
-    status: DiaryStatus;
-    summary: string;
-    report_period: string;
-    full_report: string;
-    safety_checklist_json: string[] | null;
-    sections_json: Array<Record<string, unknown>>;
-  }>(
+  const result = await getPgPool().query(
     `INSERT INTO project_diaries (
-      id, owner_email, site_id, status, summary, report_period, full_report, safety_checklist_json, sections_json
+      id, owner_email, company_id, site_id, status, summary, report_period, full_report, safety_checklist_json, sections_json
     )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb)
      RETURNING *`,
     [
       diary.id,
       actor.email,
+      actor.companyId,
       diary.siteId,
       diary.status,
       diary.summary,
@@ -702,8 +718,13 @@ export async function updateDiary(
 ): Promise<DiaryRecord | null> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
+    const memberSiteIds = new Set(
+      Array.from(memory.siteMembers.values())
+        .filter((m) => m.memberEmail === actor.email)
+        .map((m) => m.siteId)
+    );
     const current = memory.diaries.get(diaryId);
-    if (!current || !canAccessOwner(actor, current.ownerEmail)) return null;
+    if (!current || !canAccessRow(actor, current.companyId, current.ownerEmail, memberSiteIds, current.siteId)) return null;
     const auditEntry = buildAuditEntry(current, patch, actor, note);
     const updated: DiaryRecord = {
       ...current,
@@ -717,21 +738,31 @@ export async function updateDiary(
 
   const existingResult = await getPgPool().query<{
     owner_email: string;
+    company_id: string;
+    site_id: string;
     status: DiaryStatus;
     summary: string;
     full_report: string;
     edit_log: DiaryEditLogEntry[] | null;
   }>(
-    `SELECT owner_email, status, summary, full_report, edit_log FROM project_diaries WHERE id = $1 LIMIT 1`,
+    `SELECT owner_email, company_id, site_id, status, summary, full_report, edit_log FROM project_diaries WHERE id = $1 LIMIT 1`,
     [diaryId]
   );
   if (existingResult.rowCount === 0) return null;
   const existing = existingResult.rows[0];
-  if (!canAccessOwner(actor, existing.owner_email)) return null;
+  if (existing.company_id !== actor.companyId) return null;
+  if (isCrew(actor) && existing.owner_email !== actor.email) {
+    const member = await getPgPool().query(
+      `SELECT 1 FROM site_members WHERE site_id = $1 AND member_email = $2`,
+      [existing.site_id, actor.email]
+    );
+    if (member.rowCount === 0) return null;
+  }
 
   const currentForAudit: DiaryRecord = {
     id: diaryId,
     ownerEmail: existing.owner_email,
+    companyId: existing.company_id,
     siteId: "",
     generatedAt: "",
     status: existing.status,
@@ -747,6 +778,7 @@ export async function updateDiary(
   const result = await getPgPool().query<{
     id: string;
     owner_email: string;
+    company_id: string;
     site_id: string;
     generated_at: Date;
     status: DiaryStatus;
@@ -799,10 +831,10 @@ export type SupervisorReportRow = {
   approvedDiaries: number;
 };
 
-export async function getSupervisorReport(): Promise<SupervisorReportRow[]> {
+export async function getSupervisorReport(actor: Actor): Promise<SupervisorReportRow[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
-    const sites = Array.from(memory.sites.values());
+    const sites = Array.from(memory.sites.values()).filter((s) => s.companyId === actor.companyId);
     const entries = Array.from(memory.entries.values());
     const diaries = Array.from(memory.diaries.values());
     return sites.map((site) => {
@@ -842,9 +874,10 @@ export async function getSupervisorReport(): Promise<SupervisorReportRow[]> {
     FROM project_sites s
     LEFT JOIN project_entries e ON e.site_id = s.id
     LEFT JOIN project_diaries d ON d.site_id = s.id
+    WHERE s.company_id = $1
     GROUP BY s.id, s.name, s.client, s.status, s.owner_email
     ORDER BY s.created_at DESC
-  `);
+  `, [actor.companyId]);
 
   return result.rows.map((row) => ({
     siteId: row.site_id,
@@ -907,6 +940,7 @@ export async function resetProjectStoreForTests() {
 function mapTemplate(row: {
   id: string;
   owner_email: string;
+  company_id: string;
   site_id: string;
   name: string;
   weather: string;
@@ -917,6 +951,7 @@ function mapTemplate(row: {
   return {
     id: row.id,
     ownerEmail: row.owner_email,
+    companyId: row.company_id,
     siteId: row.site_id,
     name: row.name,
     weather: row.weather,
@@ -929,26 +964,30 @@ function mapTemplate(row: {
 export async function listTemplates(actor: Actor, siteId?: string): Promise<TemplateRecord[]> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
+    const memberSiteIds = new Set(
+      Array.from(memory.siteMembers.values())
+        .filter((m) => m.memberEmail === actor.email)
+        .map((m) => m.siteId)
+    );
     return Array.from(memory.templates.values())
-      .filter((t) => canAccessOwner(actor, t.ownerEmail))
+      .filter((t) => canAccessRow(actor, t.companyId, t.ownerEmail, memberSiteIds, t.siteId))
       .filter((t) => (siteId ? t.siteId === siteId : true))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
-  const queryParts: string[] = [];
-  const params: unknown[] = [];
-  if (!isElevatedRole(actor.role)) {
+  const params: unknown[] = [actor.companyId];
+  const queryParts: string[] = [`company_id = $1`];
+  if (isCrew(actor)) {
     params.push(actor.email);
-    queryParts.push(`owner_email = $${params.length}`);
+    queryParts.push(
+      `(owner_email = $${params.length} OR site_id IN (SELECT site_id FROM site_members WHERE member_email = $${params.length}))`
+    );
   }
   if (siteId) {
     params.push(siteId);
     queryParts.push(`site_id = $${params.length}`);
   }
-  const where = queryParts.length > 0 ? `WHERE ${queryParts.join(" AND ")}` : "";
-  const result = await getPgPool().query<{
-    id: string; owner_email: string; site_id: string; name: string;
-    weather: string; crew_count: string; notes_template: string; created_at: Date;
-  }>(`SELECT * FROM project_templates ${where} ORDER BY created_at DESC`, params);
+  const where = `WHERE ${queryParts.join(" AND ")}`;
+  const result = await getPgPool().query(`SELECT * FROM project_templates ${where} ORDER BY created_at DESC`, params);
   return result.rows.map(mapTemplate);
 }
 
@@ -959,6 +998,7 @@ export async function createTemplate(
   const tmpl: TemplateRecord = {
     id: uuidv7(),
     ownerEmail: actor.email,
+    companyId: actor.companyId,
     createdAt: new Date().toISOString(),
     ...payload,
   };
@@ -968,14 +1008,11 @@ export async function createTemplate(
     await persistMemory();
     return tmpl;
   }
-  const result = await getPgPool().query<{
-    id: string; owner_email: string; site_id: string; name: string;
-    weather: string; crew_count: string; notes_template: string; created_at: Date;
-  }>(
-    `INSERT INTO project_templates (id, owner_email, site_id, name, weather, crew_count, notes_template)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+  const result = await getPgPool().query(
+    `INSERT INTO project_templates (id, owner_email, company_id, site_id, name, weather, crew_count, notes_template)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
-    [tmpl.id, actor.email, tmpl.siteId, tmpl.name, tmpl.weather, tmpl.crewCount, tmpl.notesTemplate]
+    [tmpl.id, actor.email, actor.companyId, tmpl.siteId, tmpl.name, tmpl.weather, tmpl.crewCount, tmpl.notesTemplate]
   );
   return mapTemplate(result.rows[0]);
 }
@@ -988,22 +1025,21 @@ export async function updateTemplate(
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const current = memory.templates.get(templateId);
-    if (!current || !canAccessOwner(actor, current.ownerEmail)) return null;
+    if (!current || current.companyId !== actor.companyId) return null;
+    if (isCrew(actor) && current.ownerEmail !== actor.email) return null;
     const updated = { ...current, ...patch };
     memory.templates.set(templateId, updated);
     await persistMemory();
     return updated;
   }
-  const existing = await getPgPool().query<{ owner_email: string }>(
-    `SELECT owner_email FROM project_templates WHERE id = $1 LIMIT 1`,
+  const existing = await getPgPool().query<{ owner_email: string; company_id: string }>(
+    `SELECT owner_email, company_id FROM project_templates WHERE id = $1 LIMIT 1`,
     [templateId]
   );
   if (existing.rowCount === 0) return null;
-  if (!canAccessOwner(actor, existing.rows[0].owner_email)) return null;
-  const result = await getPgPool().query<{
-    id: string; owner_email: string; site_id: string; name: string;
-    weather: string; crew_count: string; notes_template: string; created_at: Date;
-  }>(
+  if (existing.rows[0].company_id !== actor.companyId) return null;
+  if (isCrew(actor) && existing.rows[0].owner_email !== actor.email) return null;
+  const result = await getPgPool().query(
     `UPDATE project_templates
      SET name = COALESCE($2, name),
          weather = COALESCE($3, weather),
@@ -1021,20 +1057,22 @@ export async function deleteTemplate(actor: Actor, templateId: string): Promise<
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const tmpl = memory.templates.get(templateId);
-    if (!tmpl || !canAccessOwner(actor, tmpl.ownerEmail)) return false;
+    if (!tmpl || tmpl.companyId !== actor.companyId) return false;
+    if (isCrew(actor) && tmpl.ownerEmail !== actor.email) return false;
     memory.templates.delete(templateId);
     await persistMemory();
     return true;
   }
-  const existing = await getPgPool().query<{ owner_email: string }>(
-    `SELECT owner_email FROM project_templates WHERE id = $1 LIMIT 1`,
+  const existing = await getPgPool().query<{ owner_email: string; company_id: string }>(
+    `SELECT owner_email, company_id FROM project_templates WHERE id = $1 LIMIT 1`,
     [templateId]
   );
   if (existing.rowCount === 0) return false;
-  if (!canAccessOwner(actor, existing.rows[0].owner_email)) return false;
+  if (existing.rows[0].company_id !== actor.companyId) return false;
+  if (isCrew(actor) && existing.rows[0].owner_email !== actor.email) return false;
   const result = await getPgPool().query(
-    `DELETE FROM project_templates WHERE id = $1`,
-    [templateId]
+    `DELETE FROM project_templates WHERE id = $1 AND company_id = $2`,
+    [templateId, actor.companyId]
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -1045,31 +1083,66 @@ function generateInviteToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
+function mapInvite(row: {
+  id: string; site_id: string | null; company_id: string | null;
+  company_role: CompanyRole | null; invited_email: string; invited_by: string;
+  role: string; token: string; expires_at: Date; created_at: Date;
+}): SiteInviteRecord {
+  return {
+    id: row.id,
+    siteId: row.site_id,
+    companyId: row.company_id,
+    companyRole: row.company_role,
+    invitedEmail: row.invited_email,
+    invitedBy: row.invited_by,
+    role: row.role,
+    token: row.token,
+    expiresAt: row.expires_at.toISOString(),
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
 async function canManageSite(actor: Actor, siteId: string): Promise<boolean> {
-  if (isElevatedRole(actor.role)) return true;
+  // Managers and owners manage any site in their company; crew/viewer may only
+  // manage a site they personally own. Cross-company access is always denied.
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const site = memory.sites.get(siteId);
-    return site?.ownerEmail === actor.email;
+    if (!site || site.companyId !== actor.companyId) return false;
+    if (actor.companyRole === "owner" || actor.companyRole === "manager") return true;
+    return site.ownerEmail === actor.email;
   }
-  const r = await getPgPool().query<{ owner_email: string }>(
-    `SELECT owner_email FROM project_sites WHERE id = $1 LIMIT 1`,
+  const r = await getPgPool().query<{ owner_email: string; company_id: string }>(
+    `SELECT owner_email, company_id FROM project_sites WHERE id = $1 LIMIT 1`,
     [siteId]
   );
-  return r.rows[0]?.owner_email === actor.email;
+  const row = r.rows[0];
+  if (!row || row.company_id !== actor.companyId) return false;
+  if (actor.companyRole === "owner" || actor.companyRole === "manager") return true;
+  return row.owner_email === actor.email;
 }
+
+// Sentinel returned when an invite requests the un-assignable 'owner' role.
+export const INVITE_OWNER_REJECTED = "owner_role_not_assignable" as const;
 
 export async function createSiteInvites(
   actor: Actor,
   siteId: string,
   emails: string[],
-  role: string
-): Promise<InviteResult[] | null> {
+  role: string,
+  companyRole?: CompanyRole
+): Promise<InviteResult[] | null | typeof INVITE_OWNER_REJECTED> {
+  // Owner is never assignable via invite — it is only acquired by founding a
+  // company at signup or via explicit owner-to-owner promotion.
+  if (companyRole === "owner") return INVITE_OWNER_REJECTED;
   if (!(await canManageSite(actor, siteId))) return null;
 
   await ensureMemoryLoaded();
   const results: InviteResult[] = [];
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  // Invites always carry the actor's company so acceptance can stamp membership.
+  const inviteCompanyId = actor.companyId;
+  const inviteCompanyRole: CompanyRole = companyRole ?? "crew";
 
   for (const email of emails) {
     const token = generateInviteToken();
@@ -1086,6 +1159,8 @@ export async function createSiteInvites(
         memory.siteInvites.delete(existing.token);
         const resent: SiteInviteRecord = {
           ...existing,
+          companyId: inviteCompanyId,
+          companyRole: inviteCompanyRole,
           token,
           expiresAt,
         };
@@ -1095,6 +1170,8 @@ export async function createSiteInvites(
         const invite: SiteInviteRecord = {
           id: uuidv7(),
           siteId,
+          companyId: inviteCompanyId,
+          companyRole: inviteCompanyRole,
           invitedEmail: email,
           invitedBy: actor.email,
           role,
@@ -1114,16 +1191,14 @@ export async function createSiteInvites(
         results.push({ email, status: "already_member" });
         continue;
       }
-      const upsert = await getPgPool().query<{
-        id: string; site_id: string; invited_email: string; invited_by: string;
-        role: string; token: string; expires_at: Date; created_at: Date;
-      }>(
-        `INSERT INTO site_invites (id, site_id, invited_email, invited_by, role, token, expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (site_id, invited_email) DO UPDATE
-           SET token=$6, expires_at=$7, role=$5, invited_by=$4
+      const upsert = await getPgPool().query(
+        `INSERT INTO site_invites (id, site_id, company_id, company_role, invited_email, invited_by, role, token, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (site_id, invited_email) WHERE site_id IS NOT NULL DO UPDATE
+           SET token=$8, expires_at=$9, role=$7, invited_by=$6,
+               company_id=$3, company_role=$4
          RETURNING *, (xmax = 0) AS inserted`,
-        [uuidv7(), siteId, email, actor.email, role, token, expiresAt]
+        [uuidv7(), siteId, inviteCompanyId, inviteCompanyRole, email, actor.email, role, token, expiresAt]
       );
       const wasNew = (upsert as unknown as { rows: Array<{ xmax: string }> }).rows[0].xmax === "0";
       results.push({ email, status: wasNew ? "sent" : "resent" });
@@ -1132,6 +1207,50 @@ export async function createSiteInvites(
 
   if (!useDatabase()) await persistMemory();
   return results;
+}
+
+// Company-only invite (no site). Adds a user to the company with a company_role.
+export async function createCompanyInvite(
+  actor: Actor,
+  email: string,
+  companyRole: CompanyRole
+): Promise<SiteInviteRecord | typeof INVITE_OWNER_REJECTED> {
+  if (companyRole === "owner") return INVITE_OWNER_REJECTED;
+  await ensureMemoryLoaded();
+  const token = generateInviteToken();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const record: SiteInviteRecord = {
+    id: uuidv7(),
+    siteId: null,
+    companyId: actor.companyId,
+    companyRole,
+    invitedEmail: email,
+    invitedBy: actor.email,
+    role: "worker",
+    token,
+    expiresAt,
+    createdAt: new Date().toISOString(),
+  };
+  if (!useDatabase()) {
+    // Replace any existing company invite for this email.
+    for (const [t, inv] of memory.siteInvites.entries()) {
+      if (inv.siteId === null && inv.companyId === actor.companyId && inv.invitedEmail === email) {
+        memory.siteInvites.delete(t);
+      }
+    }
+    memory.siteInvites.set(token, record);
+    await persistMemory();
+    return record;
+  }
+  const r = await getPgPool().query(
+    `INSERT INTO site_invites (id, site_id, company_id, company_role, invited_email, invited_by, role, token, expires_at)
+     VALUES ($1,NULL,$2,$3,$4,$5,'worker',$6,$7)
+     ON CONFLICT (company_id, invited_email) WHERE company_id IS NOT NULL AND site_id IS NULL DO UPDATE
+       SET token=$6, expires_at=$7, company_role=$3, invited_by=$5
+     RETURNING *`,
+    [record.id, actor.companyId, companyRole, email, actor.email, token, expiresAt]
+  );
+  return mapInvite(r.rows[0]);
 }
 
 export async function listSiteInvites(
@@ -1146,23 +1265,11 @@ export async function listSiteInvites(
       (i) => i.siteId === siteId && i.expiresAt > now
     );
   }
-  const r = await getPgPool().query<{
-    id: string; site_id: string; invited_email: string; invited_by: string;
-    role: string; token: string; expires_at: Date; created_at: Date;
-  }>(
+  const r = await getPgPool().query(
     `SELECT * FROM site_invites WHERE site_id=$1 AND expires_at > NOW() ORDER BY created_at DESC`,
     [siteId]
   );
-  return r.rows.map((row) => ({
-    id: row.id,
-    siteId: row.site_id,
-    invitedEmail: row.invited_email,
-    invitedBy: row.invited_by,
-    role: row.role,
-    token: row.token,
-    expiresAt: row.expires_at.toISOString(),
-    createdAt: row.created_at.toISOString(),
-  }));
+  return r.rows.map(mapInvite);
 }
 
 export async function deleteSiteInvite(
@@ -1189,10 +1296,47 @@ export async function deleteSiteInvite(
   return (r.rowCount ?? 0) > 0;
 }
 
+export type AcceptInviteSuccess = {
+  siteId: string | null;
+  siteName: string | null;
+  role: string;
+  companyId: string | null;
+  companyRole: CompanyRole | null;
+};
+
+export type AcceptInviteResult =
+  | AcceptInviteSuccess
+  | "expired"
+  | "not_found"
+  | "wrong_user"
+  | "already_used"
+  | "already_in_company";
+
+// Applies the company side of an invite to the accepting user. Returns
+// "already_in_company" if the user already belongs to a *different real* company.
+// Solo companies (auto-created on registration) are treated as "no real company"
+// and can be overridden when the user accepts an invite from a real company.
+async function applyCompanyMembership(
+  actorEmail: string,
+  invite: { companyId: string | null; companyRole: CompanyRole | null }
+): Promise<"ok" | "already_in_company"> {
+  if (!invite.companyId) return "ok";
+  const user = await findUserByEmail(actorEmail);
+  const currentCompany = user?.companyId ?? "";
+  const isSoloCompany = currentCompany === soloCompanyIdForEmail(actorEmail);
+  if (currentCompany && !isSoloCompany && currentCompany !== invite.companyId) {
+    return "already_in_company";
+  }
+  if (!currentCompany || currentCompany !== invite.companyId) {
+    await setUserCompany(actorEmail, invite.companyId, invite.companyRole ?? "crew");
+  }
+  return "ok";
+}
+
 export async function acceptSiteInvite(
   actorEmail: string,
   token: string
-): Promise<{ siteId: string; siteName: string; role: string } | "expired" | "not_found" | "wrong_user" | "already_used"> {
+): Promise<AcceptInviteResult> {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const invite = memory.siteInvites.get(token);
@@ -1200,45 +1344,81 @@ export async function acceptSiteInvite(
     if (invite.invitedEmail !== actorEmail) return "wrong_user";
     if (new Date(invite.expiresAt) < new Date()) return "expired";
 
-    // Atomic in the single-threaded JS sense: delete first, then insert
-    memory.siteInvites.delete(token);
-    const memberKey = `${invite.siteId}:${actorEmail}`;
-    if (memory.siteMembers.has(memberKey)) {
-      // Already a member — still return success
-      await persistMemory();
-      const site = memory.sites.get(invite.siteId);
-      return { siteId: invite.siteId, siteName: site?.name ?? invite.siteId, role: invite.role };
+    // Cross-company guard BEFORE consuming the token — a different-company user
+    // is rejected without burning the invite. Solo companies are treated as
+    // "no real company" and can be overridden by an explicit company invite.
+    if (invite.companyId) {
+      const user = await findUserByEmail(actorEmail);
+      const currentCompany = user?.companyId ?? "";
+      const isSoloCompany = currentCompany === soloCompanyIdForEmail(actorEmail);
+      if (currentCompany && !isSoloCompany && currentCompany !== invite.companyId) {
+        return "already_in_company";
+      }
     }
-    memory.siteMembers.set(memberKey, {
-      siteId: invite.siteId,
-      memberEmail: actorEmail,
-      role: invite.role,
-      invitedBy: invite.invitedBy,
-      joinedAt: new Date().toISOString(),
-    });
+
+    // Atomic in the single-threaded JS sense: delete first, then apply.
+    memory.siteInvites.delete(token);
+    await applyCompanyMembership(actorEmail, invite);
+
+    const siteId = invite.siteId;
+    if (siteId) {
+      const memberKey = `${siteId}:${actorEmail}`;
+      if (!memory.siteMembers.has(memberKey)) {
+        memory.siteMembers.set(memberKey, {
+          siteId,
+          memberEmail: actorEmail,
+          role: invite.role,
+          invitedBy: invite.invitedBy,
+          joinedAt: new Date().toISOString(),
+        });
+      }
+    }
     await persistMemory();
-    const site = memory.sites.get(invite.siteId);
-    return { siteId: invite.siteId, siteName: site?.name ?? invite.siteId, role: invite.role };
+    const site = siteId ? memory.sites.get(siteId) : undefined;
+    return {
+      siteId: siteId,
+      siteName: siteId ? site?.name ?? siteId : null,
+      role: invite.role,
+      companyId: invite.companyId,
+      companyRole: invite.companyRole,
+    };
   }
 
   const pool = getPgPool();
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Peek at the invite first (without consuming) so a cross-company rejection
+    // doesn't burn the token.
+    const peek = await client.query<{
+      invited_email: string; company_id: string | null; expires_at: Date;
+    }>(`SELECT invited_email, company_id, expires_at FROM site_invites WHERE token=$1`, [token]);
+    if (peek.rowCount && peek.rows[0].company_id) {
+      if (peek.rows[0].invited_email === actorEmail) {
+        const userRow = await client.query<{ company_id: string | null }>(
+          `SELECT company_id FROM auth_users WHERE email=$1`,
+          [actorEmail]
+        );
+        const currentCompany = userRow.rows[0]?.company_id ?? "";
+        const isSoloCompany = currentCompany === soloCompanyIdForEmail(actorEmail);
+        if (currentCompany && !isSoloCompany && currentCompany !== peek.rows[0].company_id) {
+          await client.query("ROLLBACK");
+          return "already_in_company";
+        }
+      }
+    }
+
     // Atomically claim the token — DELETE RETURNING means only one concurrent
     // request can claim it; subsequent requests get 0 rows.
     const del = await client.query<{
-      id: string; site_id: string; invited_email: string; invited_by: string; role: string;
+      id: string; site_id: string | null; company_id: string | null;
+      company_role: CompanyRole | null; invited_email: string; invited_by: string; role: string;
     }>(
       `DELETE FROM site_invites WHERE token=$1 AND expires_at > NOW() RETURNING *`,
       [token]
     );
     if (del.rowCount === 0) {
-      // Check if it existed but was expired or already used
-      const check = await client.query(
-        `SELECT 1 FROM site_invites WHERE token=$1`,
-        [token]
-      );
+      const check = await client.query(`SELECT 1 FROM site_invites WHERE token=$1`, [token]);
       await client.query("ROLLBACK");
       return check.rowCount === 0 ? "not_found" : "expired";
     }
@@ -1247,21 +1427,39 @@ export async function acceptSiteInvite(
       await client.query("ROLLBACK");
       return "wrong_user";
     }
-    await client.query(
-      `INSERT INTO site_members (site_id, member_email, role, invited_by)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT DO NOTHING`,
-      [invite.site_id, actorEmail, invite.role, invite.invited_by]
-    );
-    const siteRow = await client.query<{ name: string }>(
-      `SELECT name FROM project_sites WHERE id=$1`,
-      [invite.site_id]
-    );
+
+    // Stamp company membership within the same transaction (soft relationship).
+    if (invite.company_id) {
+      await client.query(
+        `UPDATE auth_users
+           SET company_id = $2, company_role = $3
+         WHERE email = $1 AND (company_id IS NULL OR company_id = $2)`,
+        [actorEmail, invite.company_id, invite.company_role ?? "crew"]
+      );
+    }
+
+    let siteName: string | null = null;
+    if (invite.site_id) {
+      await client.query(
+        `INSERT INTO site_members (site_id, member_email, role, invited_by)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT DO NOTHING`,
+        [invite.site_id, actorEmail, invite.role, invite.invited_by]
+      );
+      const siteRow = await client.query<{ name: string }>(
+        `SELECT name FROM project_sites WHERE id=$1`,
+        [invite.site_id]
+      );
+      siteName = siteRow.rows[0]?.name ?? invite.site_id;
+    }
+
     await client.query("COMMIT");
     return {
       siteId: invite.site_id,
-      siteName: siteRow.rows[0]?.name ?? invite.site_id,
+      siteName,
       role: invite.role,
+      companyId: invite.company_id,
+      companyRole: invite.company_role,
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -1300,19 +1498,17 @@ export async function updateSiteProgress(actor: Actor, siteId: string, progressP
   if (!useDatabase()) {
     await ensureMemoryLoaded();
     const existing = memory.sites.get(siteId);
-    if (!existing || !canAccessOwner(actor, existing.ownerEmail) || existing.deletedAt) return null;
+    if (!existing || existing.companyId !== actor.companyId || existing.deletedAt) return null;
+    if (isCrew(actor) && existing.ownerEmail !== actor.email) return null;
     const updated: SiteRecord = { ...existing, progressPercent: pct };
     memory.sites.set(siteId, updated);
     await persistMemory();
     return updated;
   }
-  const result = await getPgPool().query<{
-    id: string; owner_email: string; name: string; address: string; client: string;
-    start_date: string; status: SiteStatus; progress_percent: number;
-    created_at: Date; updated_at: Date; deleted_at: Date | null;
-  }>(
-    `UPDATE project_sites SET progress_percent = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
-    [siteId, pct]
+  const result = await getPgPool().query<SiteRow & { progress_percent: number }>(
+    `UPDATE project_sites SET progress_percent = $2
+     WHERE id = $1 AND company_id = $3 AND deleted_at IS NULL RETURNING *`,
+    [siteId, pct, actor.companyId]
   );
   if (result.rowCount === 0) return null;
   return mapSite(result.rows[0]);

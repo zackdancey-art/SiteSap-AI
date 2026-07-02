@@ -2,13 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { upsertLocation, getAllWorkerLocations } from "../storage/locationStore";
-import { UserRole } from "../utils/authToken";
 
 export const locationRouter: Router = Router();
 
 function getActor(req: unknown) {
   const r = req as AuthenticatedRequest;
-  return { email: r.auth.email, role: r.auth.role as UserRole };
+  return { email: r.auth.email, role: r.auth.role, companyId: r.auth.companyId, companyRole: r.auth.companyRole };
 }
 
 const UpdateSchema = z.object({

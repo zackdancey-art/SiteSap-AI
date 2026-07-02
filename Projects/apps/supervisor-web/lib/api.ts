@@ -1,6 +1,6 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
 
-export type User = { email: string; name: string; role: string };
+export type User = { email: string; name: string; role: string; companyId?: string; companyRole?: string };
 export type Site = { id: string; name: string; client: string; address: string; status: string; startDate?: string };
 export type EntryPhoto = { uri: string; caption?: string };
 export type Entry = { id: string; siteId: string; date: string; notes: string; weather?: string; crewCount?: string; photos?: EntryPhoto[] };
@@ -169,4 +169,36 @@ export async function generateDiary(payload: { siteId: string; period: string; e
 export async function signUploadPaths(paths: string[]): Promise<{ path: string; url: string | null }[]> {
   const data = await request<{ signed: { path: string; url: string | null }[] }>("POST", "/api/uploads/sign", { paths });
   return data.signed;
+}
+
+// ── Company ────────────────────────────────────────────────────────────────────
+
+export type CompanyProfile = { id: string; name: string; country?: string; ownerEmail: string; status: string };
+export type CompanyMember = { email: string; name: string; companyRole: string };
+
+export async function fetchCompanyProfile(): Promise<CompanyProfile> {
+  const data = await request<{ company: CompanyProfile }>("GET", "/api/company/profile");
+  return data.company;
+}
+
+export async function updateCompanyProfile(patch: { name?: string; country?: string }): Promise<CompanyProfile> {
+  const data = await request<{ company: CompanyProfile }>("PATCH", "/api/company/profile", patch);
+  return data.company;
+}
+
+export async function listCompanyMembers(): Promise<CompanyMember[]> {
+  const data = await request<{ members: CompanyMember[] }>("GET", "/api/company/members");
+  return data.members;
+}
+
+export async function inviteCompanyMembers(emails: string[], companyRole: string): Promise<{ results: { email: string; status: string }[] }> {
+  return request<{ results: { email: string; status: string }[] }>("POST", "/api/company/members/invite", { emails, companyRole });
+}
+
+export async function updateMemberRole(email: string, companyRole: string): Promise<void> {
+  await request<unknown>("PATCH", `/api/company/members/${encodeURIComponent(email)}/role`, { companyRole });
+}
+
+export async function removeCompanyMember(email: string): Promise<void> {
+  await request<unknown>("DELETE", `/api/company/members/${encodeURIComponent(email)}`);
 }

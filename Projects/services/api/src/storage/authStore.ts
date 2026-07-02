@@ -1,6 +1,7 @@
 import path from "path";
 import { getPgPool } from "./postgres";
 import { FileBackedStore } from "./fileStore";
+import { CompanyRole, soloCompanyIdForEmail } from "../utils/authToken";
 
 export type AuthUser = {
   email: string;
@@ -8,6 +9,8 @@ export type AuthUser = {
   phone: string | null;
   fullName: string;
   role: "worker" | "supervisor" | "admin";
+  companyId: string;
+  companyRole: CompanyRole;
   createdAt: string;
 };
 
@@ -136,6 +139,8 @@ function mapUser(row: {
   phone: string | null;
   full_name: string;
   role: "worker" | "supervisor" | "admin";
+  company_id: string | null;
+  company_role: CompanyRole | null;
   created_at: Date;
 }): AuthUser {
   return {
@@ -144,9 +149,15 @@ function mapUser(row: {
     phone: row.phone,
     fullName: row.full_name,
     role: row.role,
+    // company_id is NOT NULL post-backfill; coalesce defensively for any
+    // pre-migration row read before 016 ran.
+    companyId: row.company_id ?? soloCompanyIdForEmail(row.email),
+    companyRole: row.company_role ?? "owner",
     createdAt: row.created_at.toISOString(),
   };
 }
+
+const USER_COLUMNS = "email, password_hash, phone, full_name, role, company_id, company_role, created_at";
 
 function mapPending(row: {
   email: string;
@@ -180,9 +191,11 @@ export async function findUserByEmail(email: string): Promise<AuthUser | null> {
     phone: string | null;
     full_name: string;
     role: "worker" | "supervisor" | "admin";
+    company_id: string | null;
+    company_role: CompanyRole | null;
     created_at: Date;
   }>(
-    `SELECT email, password_hash, phone, full_name, role, created_at FROM auth_users WHERE email = $1 LIMIT 1`,
+    `SELECT ${USER_COLUMNS} FROM auth_users WHERE email = $1 LIMIT 1`,
     [email]
   );
   if (result.rowCount === 0) {
@@ -208,10 +221,12 @@ export async function findUserByIdentifier(identifier: string, normalizedPhone: 
     phone: string | null;
     full_name: string;
     role: "worker" | "supervisor" | "admin";
+    company_id: string | null;
+    company_role: CompanyRole | null;
     created_at: Date;
   }>(
     `
-    SELECT email, password_hash, phone, full_name, role, created_at
+    SELECT ${USER_COLUMNS}
     FROM auth_users
     WHERE email = $1 OR phone = $2
     LIMIT 1
@@ -229,7 +244,9 @@ export async function createUser(
   passwordHash: string,
   phone: string | null,
   fullName: string,
-  role: "worker" | "supervisor" | "admin"
+  role: "worker" | "supervisor" | "admin",
+  companyId: string,
+  companyRole: CompanyRole
 ) {
   if (!useDatabase()) {
     await ensureMemoryLoaded();
@@ -248,6 +265,8 @@ export async function createUser(
       phone,
       fullName,
       role,
+      companyId,
+      companyRole,
       createdAt: new Date().toISOString(),
     });
     await persistMemory();
@@ -256,10 +275,10 @@ export async function createUser(
 
   await getPgPool().query(
     `
-    INSERT INTO auth_users (email, password_hash, phone, full_name, role)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO auth_users (email, password_hash, phone, full_name, role, company_id, company_role)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
   `,
-    [email, passwordHash, phone, fullName, role]
+    [email, passwordHash, phone, fullName, role, companyId, companyRole]
   );
 }
 
@@ -468,6 +487,8 @@ export async function updateUserProfile(
     phone: string | null;
     full_name: string;
     role: "worker" | "supervisor" | "admin";
+    company_id: string | null;
+    company_role: CompanyRole | null;
     created_at: Date;
   }>(
     `UPDATE auth_users
@@ -475,8 +496,188 @@ export async function updateUserProfile(
       full_name = COALESCE($2, full_name),
       role = COALESCE($3, role)
      WHERE email = $1
-     RETURNING email, password_hash, phone, full_name, role, created_at`,
+     RETURNING ${USER_COLUMNS}`,
     [email, patch.fullName ?? null, patch.role ?? null]
+  );
+  if (result.rowCount === 0) return null;
+  return mapUser(result.rows[0]);
+}
+
+// ── Company membership + company management ──────────────────────────────────
+
+export type CompanyRecord = {
+  id: string;
+  name: string;
+  country: string;
+  ownerEmail: string | null;
+  status: "active" | "suspended" | "cancelled";
+};
+
+function mapCompany(row: {
+  id: string; name: string; country: string; owner_email: string | null;
+  status: "active" | "suspended" | "cancelled";
+}): CompanyRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    country: row.country,
+    ownerEmail: row.owner_email,
+    status: row.status,
+  };
+}
+
+const memoryCompanies = new Map<string, CompanyRecord>();
+
+export async function createCompany(input: {
+  id: string; name: string; country?: string; ownerEmail: string;
+}): Promise<CompanyRecord> {
+  const record: CompanyRecord = {
+    id: input.id,
+    name: input.name,
+    country: input.country ?? "",
+    ownerEmail: input.ownerEmail,
+    status: "active",
+  };
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    memoryCompanies.set(record.id, record);
+    return record;
+  }
+  const result = await getPgPool().query<{
+    id: string; name: string; country: string; owner_email: string | null;
+    status: "active" | "suspended" | "cancelled";
+  }>(
+    `INSERT INTO companies (id, name, country, owner_email)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id, name, country, owner_email, status`,
+    [record.id, record.name, record.country, record.ownerEmail]
+  );
+  return mapCompany(result.rows[0]);
+}
+
+export async function getCompany(companyId: string): Promise<CompanyRecord | null> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    return memoryCompanies.get(companyId) ?? null;
+  }
+  const result = await getPgPool().query<{
+    id: string; name: string; country: string; owner_email: string | null;
+    status: "active" | "suspended" | "cancelled";
+  }>(`SELECT id, name, country, owner_email, status FROM companies WHERE id = $1 LIMIT 1`, [companyId]);
+  if (result.rowCount === 0) return null;
+  return mapCompany(result.rows[0]);
+}
+
+export async function updateCompanyProfile(
+  companyId: string,
+  patch: { name?: string; country?: string }
+): Promise<CompanyRecord | null> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const existing = memoryCompanies.get(companyId);
+    if (!existing) return null;
+    const updated: CompanyRecord = {
+      ...existing,
+      name: patch.name ?? existing.name,
+      country: patch.country ?? existing.country,
+    };
+    memoryCompanies.set(companyId, updated);
+    return updated;
+  }
+  const result = await getPgPool().query<{
+    id: string; name: string; country: string; owner_email: string | null;
+    status: "active" | "suspended" | "cancelled";
+  }>(
+    `UPDATE companies
+       SET name = COALESCE($2, name), country = COALESCE($3, country)
+     WHERE id = $1
+     RETURNING id, name, country, owner_email, status`,
+    [companyId, patch.name ?? null, patch.country ?? null]
+  );
+  if (result.rowCount === 0) return null;
+  return mapCompany(result.rows[0]);
+}
+
+export async function listCompanyMembers(companyId: string): Promise<AuthUser[]> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    return Array.from(memoryUsers.values()).filter((u) => u.companyId === companyId);
+  }
+  const result = await getPgPool().query<{
+    email: string; password_hash: string; phone: string | null; full_name: string;
+    role: "worker" | "supervisor" | "admin"; company_id: string | null;
+    company_role: CompanyRole | null; created_at: Date;
+  }>(`SELECT ${USER_COLUMNS} FROM auth_users WHERE company_id = $1 ORDER BY created_at ASC`, [companyId]);
+  return result.rows.map(mapUser);
+}
+
+export async function countCompanyOwners(companyId: string): Promise<number> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    return Array.from(memoryUsers.values()).filter(
+      (u) => u.companyId === companyId && u.companyRole === "owner"
+    ).length;
+  }
+  const result = await getPgPool().query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM auth_users WHERE company_id = $1 AND company_role = 'owner'`,
+    [companyId]
+  );
+  return Number(result.rows[0].count);
+}
+
+/** Sets a user's company + company_role (used by invite-accept and admin flows). */
+export async function setUserCompany(
+  email: string,
+  companyId: string | null,
+  companyRole: CompanyRole
+): Promise<AuthUser | null> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const user = memoryUsers.get(email);
+    if (!user) return null;
+    const updated: AuthUser = {
+      ...user,
+      companyId: companyId ?? "",
+      companyRole,
+    };
+    memoryUsers.set(email, updated);
+    await persistMemory();
+    return updated;
+  }
+  const result = await getPgPool().query<{
+    email: string; password_hash: string; phone: string | null; full_name: string;
+    role: "worker" | "supervisor" | "admin"; company_id: string | null;
+    company_role: CompanyRole | null; created_at: Date;
+  }>(
+    `UPDATE auth_users SET company_id = $2, company_role = $3 WHERE email = $1 RETURNING ${USER_COLUMNS}`,
+    [email, companyId, companyRole]
+  );
+  if (result.rowCount === 0) return null;
+  return mapUser(result.rows[0]);
+}
+
+/** Changes only a member's company_role. */
+export async function setUserCompanyRole(
+  email: string,
+  companyRole: CompanyRole
+): Promise<AuthUser | null> {
+  if (!useDatabase()) {
+    await ensureMemoryLoaded();
+    const user = memoryUsers.get(email);
+    if (!user) return null;
+    const updated: AuthUser = { ...user, companyRole };
+    memoryUsers.set(email, updated);
+    await persistMemory();
+    return updated;
+  }
+  const result = await getPgPool().query<{
+    email: string; password_hash: string; phone: string | null; full_name: string;
+    role: "worker" | "supervisor" | "admin"; company_id: string | null;
+    company_role: CompanyRole | null; created_at: Date;
+  }>(
+    `UPDATE auth_users SET company_role = $2 WHERE email = $1 RETURNING ${USER_COLUMNS}`,
+    [email, companyRole]
   );
   if (result.rowCount === 0) return null;
   return mapUser(result.rows[0]);
@@ -530,10 +731,12 @@ export async function resetAuthStoreForTests() {
     await getPgPool().query(`DELETE FROM auth_password_reset_tokens`);
     await getPgPool().query(`DELETE FROM auth_pending_registrations`);
     await getPgPool().query(`DELETE FROM auth_users`);
+    await getPgPool().query(`DELETE FROM companies`);
     return;
   }
   memoryUsers.clear();
   memoryPending.clear();
   memoryResetTokens.clear();
+  memoryCompanies.clear();
   store.resetForTests();
 }

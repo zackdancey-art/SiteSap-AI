@@ -5,13 +5,12 @@ import {
   listTemplates, createTemplate, deleteTemplate,
   listInspections, createInspection, updateInspection, deleteInspection,
 } from "../storage/inspectionStore";
-import { UserRole } from "../utils/authToken";
 
 export const inspectionsRouter: Router = Router();
 
 function getActor(req: unknown) {
   const r = req as AuthenticatedRequest;
-  return { email: r.auth.email, role: r.auth.role as UserRole };
+  return { email: r.auth.email, role: r.auth.role, companyId: r.auth.companyId, companyRole: r.auth.companyRole };
 }
 
 const TemplateSchema = z.object({

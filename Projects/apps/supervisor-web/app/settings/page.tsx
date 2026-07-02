@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
-import { getSavedUser, isAuthenticated, clearToken, changePassword, revokeAllSessions } from "@/lib/api";
+import { getSavedUser, isAuthenticated, clearToken, changePassword, revokeAllSessions, fetchCompanyProfile, updateCompanyProfile } from "@/lib/api";
+import { useRole } from "@/lib/useRole";
 
 // ── Dev-tools gate ───────────────────────────────────────────────────────────
 // The API Connection panel is only shown when NEXT_PUBLIC_SHOW_DEV_TOOLS=true.
@@ -161,6 +162,7 @@ function BtnGhost({ onClick, children, danger }: { onClick: () => void; children
 export default function SettingsPage() {
   const router = useRouter();
   const user = getSavedUser();
+  const { companyRole, isOwner } = useRole();
   const [activeSection, setActiveSection] = useState<SettingsSection>("account");
 
   const [apiUrl, setApiUrl]   = useState(process.env.NEXT_PUBLIC_API_URL ?? "");
@@ -188,6 +190,7 @@ export default function SettingsPage() {
 
   const [orgName, setOrgName]   = useState("");
   const [orgSaved, setOrgSaved] = useState(false);
+  const [orgLoading, setOrgLoading] = useState(false);
 
   const [showPwForm, setShowPwForm] = useState(false);
   const [pwCurrent, setPwCurrent]   = useState("");
@@ -211,8 +214,10 @@ export default function SettingsPage() {
     if (se) { try { setExportPrefs(JSON.parse(se) as ExportPrefs); } catch { /* */ } }
     const sm = localStorage.getItem("sitesnap.mapPrefs");
     if (sm) { try { setMapPrefs(JSON.parse(sm) as MapPrefs); } catch { /* */ } }
-    const so = localStorage.getItem("sitesnap.orgName");
-    if (so) setOrgName(so);
+    fetchCompanyProfile().then((c) => setOrgName(c.name)).catch(() => {
+      const stored = localStorage.getItem("sitesnap.orgName");
+      if (stored) setOrgName(stored);
+    });
   }, [router]);
 
   const saveApiUrl = async () => {
@@ -250,10 +255,19 @@ export default function SettingsPage() {
     localStorage.setItem("sitesnap.mapPrefs", JSON.stringify(next));
   };
 
-  const saveOrg = () => {
-    localStorage.setItem("sitesnap.orgName", orgName);
-    setOrgSaved(true);
-    setTimeout(() => setOrgSaved(false), 2000);
+  const saveOrg = async () => {
+    if (!orgName.trim()) return;
+    setOrgLoading(true);
+    try {
+      await updateCompanyProfile({ name: orgName.trim() });
+      localStorage.setItem("sitesnap.orgName", orgName.trim());
+      setOrgSaved(true);
+      setTimeout(() => setOrgSaved(false), 2000);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to save organisation name.");
+    } finally {
+      setOrgLoading(false);
+    }
   };
 
   const handleSignOut = () => { clearToken(); router.replace("/"); };
@@ -366,9 +380,12 @@ export default function SettingsPage() {
                   <Row label="Email address" sub="Your login and notification email">
                     <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{user?.email ?? "—"}</span>
                   </Row>
-                  <Row label="Role" sub="Determines what you can view and action">
-                    <span className="badge" style={{ background: "#FFF7ED", color: "#E8731A" }}>
-                      {user?.role?.toUpperCase() ?? "SUPERVISOR"}
+                  <Row label="Role" sub="Determines what you can view and action in the dashboard">
+                    <span className="badge" style={{
+                      background: companyRole === "owner" ? "#F5F3FF" : companyRole === "manager" ? "#FFF7ED" : companyRole === "viewer" ? "#F0F9FF" : "#F0FDF4",
+                      color: companyRole === "owner" ? "#7C3AED" : companyRole === "manager" ? "#E8731A" : companyRole === "viewer" ? "#0EA5E9" : "#22C55E",
+                    }}>
+                      {companyRole.toUpperCase()}
                     </span>
                   </Row>
                   <Row label="Password" sub="Update your account password" last={!showPwForm}>
@@ -407,19 +424,28 @@ export default function SettingsPage() {
                   <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
                     Organisation name
                   </label>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <input
-                      type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)}
-                      placeholder="e.g. Acme Construction Pty Ltd"
-                      style={{ flex: 1, height: 38, fontSize: 14, borderRadius: 8, maxWidth: 380 }}
-                    />
-                    <button className="btn-primary" onClick={saveOrg} style={{ padding: "0 20px", whiteSpace: "nowrap" }}>
-                      {orgSaved ? "✓ Saved" : "Save"}
-                    </button>
-                  </div>
-                  <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8, lineHeight: 1.5 }}>
-                    This name appears in the header of all PDF and Word exports, and in diary print-outs.
-                  </p>
+                  {isOwner ? (
+                    <>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <input
+                          type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)}
+                          placeholder="e.g. Acme Construction Pty Ltd"
+                          style={{ flex: 1, height: 38, fontSize: 14, borderRadius: 8, maxWidth: 380 }}
+                        />
+                        <button className="btn-primary" onClick={saveOrg} disabled={orgLoading} style={{ padding: "0 20px", whiteSpace: "nowrap" }}>
+                          {orgSaved ? "✓ Saved" : orgLoading ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                      <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8, lineHeight: 1.5 }}>
+                        This name appears in the header of all PDF and Word exports, and in diary print-outs.
+                      </p>
+                    </>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{orgName || "—"}</span>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--surface-secondary)", padding: "3px 10px", borderRadius: 6 }}>Owner-only edit</span>
+                    </div>
+                  )}
                 </div>
               </Panel>
             )}

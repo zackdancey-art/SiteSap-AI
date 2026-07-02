@@ -531,7 +531,7 @@ async function resolveDiaryRequest(req: AuthenticatedRequest, body: GenerateDiar
     throw new Error("A siteId or entries payload is required.");
   }
 
-  const actor = { email: req.auth.email, role: req.auth.role };
+  const actor = { email: req.auth.email, role: req.auth.role, companyId: req.auth.companyId, companyRole: req.auth.companyRole };
   const [sites, entries] = await Promise.all([listSites(actor), listEntries(actor, siteId)]);
   const site = sites.find((item) => item.id === siteId);
   if (!site) {
