@@ -62,7 +62,8 @@ companyRouter.patch("/company/profile", requireCompanyRole("owner"), async (req,
 companyRouter.get("/company/members", requireAtLeast("manager"), async (req, res) => {
   try {
     const actor = getActor(req as unknown as AuthenticatedRequest);
-    const members = await listCompanyMembers(actor.companyId);
+    const rows = await listCompanyMembers(actor.companyId);
+    const members = rows.map(({ email, fullName, companyRole }) => ({ email, name: fullName, companyRole }));
     return res.json({ members });
   } catch (err) {
     console.error("[company] list members failed", err);
@@ -130,7 +131,8 @@ companyRouter.patch("/company/members/:email/role", requireCompanyRole("owner"),
       }
     }
     const updated = await setUserCompanyRole(targetEmail, parsed.data.companyRole);
-    return res.json({ member: updated });
+    if (!updated) return res.status(404).json({ error: "Member not found." });
+    return res.json({ member: { email: updated.email, name: updated.fullName, companyRole: updated.companyRole } });
   } catch (err) {
     console.error("[company] change role failed", err);
     return res.status(500).json({ error: "Failed to change role." });
