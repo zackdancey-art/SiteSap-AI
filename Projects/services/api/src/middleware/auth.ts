@@ -3,7 +3,7 @@ import { AuthClaims, CompanyRole, UserRole, verifyAuthToken } from "../utils/aut
 
 export type AuthenticatedRequest = Request & { auth: AuthClaims };
 
-function extractBearerToken(req: Request) {
+function extractBearerToken(req: Request): string | null {
   const raw = req.headers.authorization;
   if (!raw) return null;
   const [scheme, token] = raw.split(" ");
@@ -11,8 +11,20 @@ function extractBearerToken(req: Request) {
   return token;
 }
 
+function extractSessionCookie(req: Request): string | null {
+  const raw = req.headers.cookie ?? "";
+  for (const part of raw.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === "sitesnap.session") {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return null;
+}
+
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token = extractBearerToken(req);
+  const token = extractBearerToken(req) ?? extractSessionCookie(req);
   if (!token) {
     return res.status(401).json({ error: "Missing bearer token." });
   }

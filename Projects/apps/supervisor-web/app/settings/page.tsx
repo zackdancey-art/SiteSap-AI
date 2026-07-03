@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
-import { getSavedUser, isAuthenticated, clearToken, changePassword, revokeAllSessions, fetchCompanyProfile, updateCompanyProfile } from "@/lib/api";
+import { getSavedUser, isAuthenticated, logout, changePassword, revokeAllSessions, fetchCompanyProfile, updateCompanyProfile } from "@/lib/api";
 import { useRole } from "@/lib/useRole";
 
 // ── Dev-tools gate ───────────────────────────────────────────────────────────
@@ -270,11 +270,11 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSignOut = () => { clearToken(); router.replace("/"); };
+  const handleSignOut = async () => { await logout(); router.replace("/"); };
 
   const handleSignOutAll = async () => {
-    if (!confirm("This will sign out all other devices. Your current session will remain active. Continue?")) return;
-    try { await revokeAllSessions(); alert("All other sessions have been signed out."); }
+    if (!confirm("This will rotate your session token. Existing tokens expire within 7 days. Continue?")) return;
+    try { await revokeAllSessions(); alert("Session token rotated. Other sessions will expire at their natural TTL."); }
     catch (err: unknown) { alert(err instanceof Error ? err.message : "Failed to revoke sessions."); }
   };
 

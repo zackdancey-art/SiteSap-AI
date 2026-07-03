@@ -24,19 +24,9 @@ export interface BootstrapData {
   diaries: Diary[];
 }
 
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("sitesnap.token");
-}
-
-export function saveToken(token: string) {
-  localStorage.setItem("sitesnap.token", token);
-}
-
-export function clearToken() {
-  localStorage.removeItem("sitesnap.token");
-  localStorage.removeItem("sitesnap.user");
-}
+// Auth token is stored in an httpOnly cookie set by the API — JavaScript cannot
+// read it, which eliminates XSS token theft.  User profile info (non-secret) is
+// kept in localStorage for display purposes only.
 
 export function getSavedUser(): User | null {
   if (typeof window === "undefined") return null;
@@ -50,22 +40,30 @@ export function saveUser(user: User) {
   localStorage.setItem("sitesnap.user", JSON.stringify(user));
 }
 
+function clearLocalSession() {
+  localStorage.removeItem("sitesnap.user");
+}
+
+/** @deprecated Token is now stored in an httpOnly cookie. Kept for callers that
+ *  haven't migrated yet; does nothing meaningful in the cookie model. */
+export function saveToken(_token: string) { /* no-op — cookie is set by API */ }
+
+/** @deprecated Use logout() for async cookie clearing. Kept for sync callers. */
+export function clearToken() { clearLocalSession(); }
+
 export function isAuthenticated(): boolean {
-  return !!getToken();
+  return !!getSavedUser();
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    credentials: "include", // sends the httpOnly session cookie on every request
+    headers: { "Content-Type": "application/json" },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
-    clearToken();
+    clearLocalSession();
     window.location.href = "/";
     throw new Error("Unauthorized");
   }
@@ -80,7 +78,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export async function login(email: string, password: string): Promise<{ token: string; user: User }> {
   const data = await request<{ token: string; user: User }>("POST", "/api/auth/login", { email, password });
-  saveToken(data.token);
+  // API sets the httpOnly session cookie; we only persist display info locally.
   saveUser(data.user);
   return data;
 }
@@ -93,10 +91,9 @@ export async function changePassword(currentPassword: string, newPassword: strin
   await request<{ ok: boolean }>("POST", "/api/auth/change-password", { currentPassword, newPassword });
 }
 
-export async function revokeAllSessions(): Promise<string> {
-  const data = await request<{ token: string }>("POST", "/api/auth/revoke-all");
-  saveToken(data.token);
-  return data.token;
+export async function revokeAllSessions(): Promise<void> {
+  await request<{ token: string }>("POST", "/api/auth/revoke-all");
+  // API rotates the session cookie; no client-side token to update.
 }
 
 export async function forgotPassword(identifier: string): Promise<void> {
@@ -108,7 +105,8 @@ export async function resetPassword(token: string, newPassword: string): Promise
 }
 
 export async function logout() {
-  clearToken();
+  try { await request<{ ok: boolean }>("POST", "/api/auth/logout"); } catch { /* best-effort */ }
+  clearLocalSession();
 }
 
 export type Timecard = {

@@ -10,6 +10,7 @@ import {
   Alert,
   Image,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -68,6 +69,10 @@ export default function SettingsScreen() {
   const [autoSave, setAutoSave] = useState(true);
   const [locationTracking, setLocationTracking] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
@@ -113,6 +118,38 @@ export default function SettingsScreen() {
         },
       ]
     );
+  };
+
+  const handleChangePassword = () => {
+    Alert.alert(
+      "Change Password",
+      "Enter your current password and a new password (minimum 8 characters).",
+      [{ text: "Continue", onPress: () => setChangingPassword(true) }, { text: "Cancel", style: "cancel" }]
+    );
+  };
+
+  const submitPasswordChange = async () => {
+    if (!pwCurrent) { Alert.alert("Error", "Current password is required."); return; }
+    if (pwNew.length < 8) { Alert.alert("Error", "New password must be at least 8 characters."); return; }
+    if (pwNew !== pwConfirm) { Alert.alert("Error", "New passwords do not match."); return; }
+    try {
+      const { resolveApiBaseUrl } = await import("@/lib/api-base-url");
+      const BASE_URL = resolveApiBaseUrl();
+      const res = await fetch(`${BASE_URL}/api/auth/change-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ currentPassword: pwCurrent, newPassword: pwNew }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        throw new Error(data.error || "Failed to change password.");
+      }
+      setPwCurrent(""); setPwNew(""); setPwConfirm("");
+      setChangingPassword(false);
+      Alert.alert("Success", "Your password has been updated.");
+    } catch (err) {
+      Alert.alert("Error", err instanceof Error ? err.message : "Failed to change password.");
+    }
   };
 
   const handleLogout = () => {
@@ -205,11 +242,45 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account Security</Text>
+          <View style={styles.sectionCard}>
+            <SettingRow icon="key-outline" label="Change Password" onPress={handleChangePassword} />
+          </View>
+          {changingPassword && (
+            <View style={[styles.sectionCard, { marginTop: 12, padding: 16, gap: 12 }]}>
+              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.textSecondary }}>Current password</Text>
+              <TextInput
+                style={styles.pwInput} secureTextEntry value={pwCurrent}
+                onChangeText={setPwCurrent} autoComplete="current-password" placeholder="Current password"
+              />
+              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.textSecondary }}>New password (min 8 chars)</Text>
+              <TextInput
+                style={styles.pwInput} secureTextEntry value={pwNew}
+                onChangeText={setPwNew} autoComplete="new-password" placeholder="New password"
+              />
+              <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.textSecondary }}>Confirm new password</Text>
+              <TextInput
+                style={styles.pwInput} secureTextEntry value={pwConfirm}
+                onChangeText={setPwConfirm} autoComplete="new-password" placeholder="Confirm new password"
+              />
+              <Pressable style={styles.pwButton} onPress={submitPasswordChange}>
+                <Text style={styles.pwButtonText}>Update Password</Text>
+              </Pressable>
+              <Pressable onPress={() => { setChangingPassword(false); setPwCurrent(""); setPwNew(""); setPwConfirm(""); }}>
+                <Text style={{ textAlign: "center", fontSize: 13, color: Colors.textTertiary, paddingTop: 4 }}>Cancel</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
           <View style={styles.sectionCard}>
             <SettingRow icon="information-circle-outline" label="Version" value={versionLabel} />
             <View style={styles.divider} />
             <SettingRow icon="shield-checkmark-outline" label="Privacy Policy" onPress={() => router.push("/privacy-policy")} />
+            <View style={styles.divider} />
+            <SettingRow icon="document-text-outline" label="Terms of Service" onPress={() => router.push("/terms-of-service")} />
             <View style={styles.divider} />
             <SettingRow icon="help-circle-outline" label="Help & Support" onPress={() => router.push("/help-support")} />
           </View>
@@ -354,5 +425,28 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: Colors.borderLight,
     marginLeft: 64,
+  },
+  pwInput: {
+    height: 44,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: Colors.text,
+    backgroundColor: Colors.background,
+  },
+  pwButton: {
+    backgroundColor: Colors.accent,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  pwButtonText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.white,
   },
 });
