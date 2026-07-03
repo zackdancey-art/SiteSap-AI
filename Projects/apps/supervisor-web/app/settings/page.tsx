@@ -429,7 +429,7 @@ export default function SettingsPage() {
                       <div style={{ display: "flex", gap: 10 }}>
                         <input
                           type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)}
-                          placeholder="e.g. Acme Construction Pty Ltd"
+                          placeholder="e.g. Acme Construction Ltd"
                           style={{ flex: 1, height: 38, fontSize: 14, borderRadius: 8, maxWidth: 380 }}
                         />
                         <button className="btn-primary" onClick={saveOrg} disabled={orgLoading} style={{ padding: "0 20px", whiteSpace: "nowrap" }}>

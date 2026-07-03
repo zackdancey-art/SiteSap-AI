@@ -36,7 +36,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     runtimeVersion: { policy: "appVersion" },
   }),
   ios: {
-    bundleIdentifier: "com.sitesnapai.app",
+    bundleIdentifier: "nz.getsitesnapai.app",
     supportsTablet: true,
     infoPlist: {
       NSCameraUsageDescription:
@@ -71,7 +71,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
   },
   android: {
-    package: "com.sitesnapai.app",
+    package: "nz.getsitesnapai.app",
     adaptiveIcon: {
       foregroundImage: "./images/icon.png",
       backgroundColor: "#0F2B46",
