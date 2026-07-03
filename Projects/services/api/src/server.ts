@@ -102,11 +102,12 @@ export function createApp(): express.Express {
         if (!origin) return cb(null, true); // same-origin or server-to-server
         if (allowedOrigins.length === 0) {
           if (isProdMode) return cb(new Error("CORS origin blocked: no CORS_ALLOWED_ORIGINS configured"));
-          return cb(null, true); // dev: allow all
+          return cb(null, true); // dev: allow all (origin reflected back, not "*", so credentials work)
         }
         if (allowedOrigins.includes(origin)) return cb(null, true);
         return cb(new Error("CORS origin blocked"));
       },
+      credentials: true, // required for httpOnly session cookie
     })
   );
   app.use(express.json({ limit: "25mb" }));

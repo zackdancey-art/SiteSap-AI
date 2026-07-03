@@ -29,6 +29,23 @@ import { createAuthToken } from "../utils/authToken";
 import { isRateLimitedByIp, isRateLimitedByAccount, LIMITS } from "../middleware/rateLimit";
 import { hashPassword, verifyPassword } from "../utils/password";
 
+const SESSION_COOKIE = "sitesnap.session";
+const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function setSessionCookie(res: Response, token: string) {
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: COOKIE_MAX_AGE_MS,
+    path: "/",
+  });
+}
+
+function clearSessionCookie(res: Response) {
+  res.clearCookie(SESSION_COOKIE, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
+}
+
 const router: Router = Router();
 const verificationTtlMs = Number(process.env.ACCOUNT_VERIFICATION_TTL_MS ?? 10 * 60 * 1000);
 const isProd = process.env.NODE_ENV === "production";
@@ -331,15 +348,17 @@ async function loginHandler(req: Request, res: Response) {
       return res.status(401).json({ error: "Incorrect email or password." });
     }
 
+    const token = createAuthToken({
+      email: existing.email,
+      fullName: existing.fullName,
+      role: existing.role,
+      companyId: existing.companyId,
+      companyRole: existing.companyRole,
+    });
+    setSessionCookie(res, token);
     return res.json({
       ok: true,
-      token: createAuthToken({
-        email: existing.email,
-        fullName: existing.fullName,
-        role: existing.role,
-        companyId: existing.companyId,
-        companyRole: existing.companyRole,
-      }),
+      token,
       user: {
         email: existing.email,
         name: existing.fullName,
@@ -354,7 +373,6 @@ async function loginHandler(req: Request, res: Response) {
   }
 }
 
-router.post("/auth/dev-login", loginHandler);
 router.post("/auth/login", loginHandler);
 
 router.get("/auth/me", requireAuth, async (req: Request, res: Response) => {
@@ -441,14 +459,63 @@ router.delete("/auth/account", requireAuth, async (req: Request, res: Response) 
 router.post("/auth/refresh", requireAuth, async (req: Request, res: Response) => {
   const auth = (req as AuthenticatedRequest).auth;
   const user = await findUserByEmail(auth.email);
-  // Fall back to token claims when no DB (in-memory/dev mode)
   const email = user?.email ?? auth.email;
   const fullName = user?.fullName ?? auth.fullName;
   const role = user?.role ?? auth.role;
   const companyId = user?.companyId ?? auth.companyId;
   const companyRole = user?.companyRole ?? auth.companyRole;
   const token = createAuthToken({ email, fullName, role, companyId, companyRole });
+  setSessionCookie(res, token);
   return res.json({ token, user: { email, name: fullName, role, companyId, companyRole } });
+});
+
+// Change password — requires current password verification
+router.post("/auth/change-password", requireAuth, async (req: Request, res: Response) => {
+  const auth = (req as AuthenticatedRequest).auth;
+  if (await isRateLimitedByAccount(auth.email, "change-password", 5, 15 * 60 * 1000)) {
+    return res.status(429).json({ error: "Too many password change attempts. Please try again shortly." });
+  }
+  const currentPassword = String(req.body?.currentPassword ?? "").trim();
+  const newPassword = String(req.body?.newPassword ?? "").trim();
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: "currentPassword and newPassword are required." });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+  try {
+    const user = await findUserByEmail(auth.email);
+    if (!user) return res.status(404).json({ error: "Account not found." });
+    const ok = await verifyPassword(currentPassword, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: "Current password is incorrect." });
+    const nextHash = await hashPassword(newPassword);
+    await updateUserPassword(auth.email, nextHash);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("[auth] change-password failed", error);
+    return res.status(500).json({ error: "Failed to change password." });
+  }
+});
+
+// Revoke all other sessions by issuing a rotated token for the current session.
+// Without a server-side revocation list, old tokens remain valid until they expire.
+router.post("/auth/revoke-all", requireAuth, async (req: Request, res: Response) => {
+  const auth = (req as AuthenticatedRequest).auth;
+  const user = await findUserByEmail(auth.email);
+  const email = user?.email ?? auth.email;
+  const fullName = user?.fullName ?? auth.fullName;
+  const role = user?.role ?? auth.role;
+  const companyId = user?.companyId ?? auth.companyId;
+  const companyRole = user?.companyRole ?? auth.companyRole;
+  const token = createAuthToken({ email, fullName, role, companyId, companyRole });
+  setSessionCookie(res, token);
+  return res.json({ token });
+});
+
+// Logout — clears the session cookie
+router.post("/auth/logout", (_req, res) => {
+  clearSessionCookie(res);
+  return res.json({ ok: true });
 });
 
 router.post("/auth/forgot-password", async (req, res) => {

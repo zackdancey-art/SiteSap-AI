@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSavedUser, saveUser, clearToken } from "@/lib/api";
+import { getSavedUser, saveUser, logout } from "@/lib/api";
 import type { User } from "@/lib/api";
 
 export default function ProfileDropdown() {
@@ -41,8 +41,8 @@ export default function ProfileDropdown() {
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const handleSignOut = () => {
-    clearToken();
+  const handleSignOut = async () => {
+    await logout();
     router.replace("/");
   };
 

@@ -36,7 +36,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     runtimeVersion: { policy: "appVersion" },
   }),
   ios: {
-    bundleIdentifier: "com.sitesnapai.app",
+    bundleIdentifier: "nz.getsitesnapai.app",
     supportsTablet: true,
     infoPlist: {
       NSCameraUsageDescription:
@@ -51,6 +51,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         "SiteSnap may use the microphone when recording video on site.",
       NSLocalNetworkUsageDescription:
         "SiteSnap uses local network access to communicate with the development API server.",
+      NSUserNotificationsUsageDescription:
+        "SiteSnap sends push notifications to alert you about new site entries, diary approvals, and incidents.",
       ITSAppUsesNonExemptEncryption: false,
       // NSAllowsArbitraryLoads must be false in release builds (App Store requirement).
       // Dev builds allow plain HTTP to reach the local dev API server.
@@ -69,7 +71,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
   },
   android: {
-    package: "com.sitesnapai.app",
+    package: "nz.getsitesnapai.app",
     adaptiveIcon: {
       foregroundImage: "./images/icon.png",
       backgroundColor: "#0F2B46",
