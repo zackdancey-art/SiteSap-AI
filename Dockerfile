@@ -4,8 +4,8 @@
 # Build:  docker build -t sitesnap-api .
 # Run:    docker run -p 4000:4000 --env-file .env.production sitesnap-api
 
-FROM node:20-alpine AS base
-RUN corepack enable && corepack prepare pnpm@latest --activate
+FROM node:22-alpine AS base
+RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
 
 # ── Install stage (prod deps only) ───────────────────────────────────────────
 FROM base AS deps
@@ -31,7 +31,7 @@ RUN pnpm --filter ./shared run build:types
 RUN pnpm --filter ./services/api run build
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /repo/Projects
 
