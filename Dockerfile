@@ -38,6 +38,7 @@ WORKDIR /repo/Projects
 COPY --from=deps /repo/Projects/node_modules ./node_modules
 COPY --from=deps /repo/Projects/services/api/node_modules ./services/api/node_modules
 COPY --from=build /repo/Projects/services/api/dist ./services/api/dist
+COPY --from=build /repo/Projects/services/api/src/storage/migrations ./services/api/dist/storage/migrations
 COPY --from=build /repo/Projects/services/api/package.json ./services/api/package.json
 
 EXPOSE 4000
