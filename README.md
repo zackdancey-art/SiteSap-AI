@@ -1,1 +1,1 @@
-# SiteSap-AI
+# SiteSnap-AI
