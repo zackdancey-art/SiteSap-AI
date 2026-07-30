@@ -6,6 +6,7 @@ import { CompanyRole, soloCompanyIdForEmail } from "../utils/authToken";
 import { Actor, isCrew } from "./actor";
 import { FileBackedStore } from "./fileStore";
 import { findUserByEmail, setUserCompany } from "./authStore";
+import { withTenant } from "./tenant";
 
 type SiteStatus = "active" | "completed" | "on-hold";
 type DiaryStatus = "draft" | "approved";
@@ -369,21 +370,23 @@ export async function listSites(actor: Actor, limit = 200, offset = 0): Promise<
   }
   // Non-crew (viewer/manager/owner): every site in the company.
   // Crew: only sites they own or are a member of, within the company.
-  const result = !isCrew(actor)
-    ? await getPgPool().query<SiteRow>(
-        `SELECT * FROM project_sites
-         WHERE company_id = $1
-         ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-        [actor.companyId, limit, offset]
-      )
-    : await getPgPool().query<SiteRow>(
-        `SELECT * FROM project_sites
-         WHERE company_id = $1
-           AND (owner_email = $2
-                OR id IN (SELECT site_id FROM site_members WHERE member_email = $2))
-         ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
-        [actor.companyId, actor.email, limit, offset]
-      );
+  const result = await withTenant(actor, (client) =>
+    !isCrew(actor)
+      ? client.query<SiteRow>(
+          `SELECT * FROM project_sites
+           WHERE company_id = $1
+           ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+          [actor.companyId, limit, offset]
+        )
+      : client.query<SiteRow>(
+          `SELECT * FROM project_sites
+           WHERE company_id = $1
+             AND (owner_email = $2
+                  OR id IN (SELECT site_id FROM site_members WHERE member_email = $2))
+           ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+          [actor.companyId, actor.email, limit, offset]
+        )
+  );
   return result.rows.map(mapSite);
 }
 
@@ -404,11 +407,13 @@ export async function createSite(
     await persistMemory();
     return site;
   }
-  const result = await getPgPool().query<SiteRow>(
-    `INSERT INTO project_sites (id, owner_email, company_id, name, address, client, start_date, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-     RETURNING *`,
-    [site.id, actor.email, actor.companyId, site.name, site.address, site.client, site.startDate, site.status]
+  const result = await withTenant(actor, (client) =>
+    client.query<SiteRow>(
+      `INSERT INTO project_sites (id, owner_email, company_id, name, address, client, start_date, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING *`,
+      [site.id, actor.email, actor.companyId, site.name, site.address, site.client, site.startDate, site.status]
+    )
   );
   return mapSite(result.rows[0]);
 }
@@ -431,15 +436,17 @@ export async function deleteSite(actor: Actor, siteId: string): Promise<boolean>
     await persistMemory();
     return true;
   }
-  const result = isCrew(actor)
-    ? await getPgPool().query(
-        `DELETE FROM project_sites WHERE id = $1 AND company_id = $2 AND owner_email = $3`,
-        [siteId, actor.companyId, actor.email]
-      )
-    : await getPgPool().query(
-        `DELETE FROM project_sites WHERE id = $1 AND company_id = $2`,
-        [siteId, actor.companyId]
-      );
+  const result = await withTenant(actor, (client) =>
+    isCrew(actor)
+      ? client.query(
+          `DELETE FROM project_sites WHERE id = $1 AND company_id = $2 AND owner_email = $3`,
+          [siteId, actor.companyId, actor.email]
+        )
+      : client.query(
+          `DELETE FROM project_sites WHERE id = $1 AND company_id = $2`,
+          [siteId, actor.companyId]
+        )
+  );
   return (result.rowCount ?? 0) > 0;
 }
 
@@ -473,9 +480,11 @@ export async function listEntries(actor: Actor, siteId?: string, limit = 200, of
   }
   const where = `WHERE ${queryParts.join(" AND ")}`;
   params.push(limit, offset);
-  const result = await getPgPool().query(
-    `SELECT * FROM project_entries ${where} ORDER BY timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `SELECT * FROM project_entries ${where} ORDER BY timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    )
   );
   return result.rows.map(mapEntry);
 }
@@ -497,26 +506,28 @@ export async function createEntry(
     await persistMemory();
     return entry;
   }
-  const result = await getPgPool().query(
-    `INSERT INTO project_entries
-       (id, owner_email, company_id, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
-     RETURNING *`,
-    [
-      entry.id,
-      actor.email,
-      actor.companyId,
-      entry.siteId,
-      entry.date,
-      entry.locationAddress,
-      entry.weather,
-      entry.crewCount,
-      entry.notes,
-      JSON.stringify(entry.photos),
-      entry.swmsRef ?? "",
-      entry.hazardNotes ?? "",
-      entry.toolboxTalk ?? false,
-    ]
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `INSERT INTO project_entries
+         (id, owner_email, company_id, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
+       RETURNING *`,
+      [
+        entry.id,
+        actor.email,
+        actor.companyId,
+        entry.siteId,
+        entry.date,
+        entry.locationAddress,
+        entry.weather,
+        entry.crewCount,
+        entry.notes,
+        JSON.stringify(entry.photos),
+        entry.swmsRef ?? "",
+        entry.hazardNotes ?? "",
+        entry.toolboxTalk ?? false,
+      ]
+    )
   );
   return mapEntry(result.rows[0]);
 }
@@ -544,52 +555,54 @@ export async function updateEntry(
     await persistMemory();
     return updated;
   }
-  const existingResult = await getPgPool().query<{ owner_email: string; company_id: string; site_id: string }>(
-    `SELECT owner_email, company_id, site_id FROM project_entries WHERE id = $1 LIMIT 1`,
-    [entryId]
-  );
-  if (existingResult.rowCount === 0) return null;
-  const existingRow = existingResult.rows[0];
-  // Cross-company guard: a different company's row is invisible (treated as 404).
-  if (existingRow.company_id !== actor.companyId) return null;
-  if (isCrew(actor) && existingRow.owner_email !== actor.email) {
-    const member = await getPgPool().query(
-      `SELECT 1 FROM site_members WHERE site_id = $1 AND member_email = $2`,
-      [existingRow.site_id, actor.email]
+  return withTenant(actor, async (client) => {
+    const existingResult = await client.query<{ owner_email: string; company_id: string; site_id: string }>(
+      `SELECT owner_email, company_id, site_id FROM project_entries WHERE id = $1 LIMIT 1`,
+      [entryId]
     );
-    if (member.rowCount === 0) return null;
-  }
+    if (existingResult.rowCount === 0) return null;
+    const existingRow = existingResult.rows[0];
+    // Cross-company guard: a different company's row is invisible (treated as 404).
+    if (existingRow.company_id !== actor.companyId) return null;
+    if (isCrew(actor) && existingRow.owner_email !== actor.email) {
+      const member = await client.query(
+        `SELECT 1 FROM site_members WHERE site_id = $1 AND member_email = $2`,
+        [existingRow.site_id, actor.email]
+      );
+      if (member.rowCount === 0) return null;
+    }
 
-  const result = await getPgPool().query(
-    `UPDATE project_entries
-     SET
-       date = COALESCE($2, date),
-       location_address = COALESCE($3, location_address),
-       weather = COALESCE($4, weather),
-       crew_count = COALESCE($5, crew_count),
-       notes = COALESCE($6, notes),
-       photos_json = COALESCE($7::jsonb, photos_json),
-       swms_ref = COALESCE($8, swms_ref),
-       hazard_notes = COALESCE($9, hazard_notes),
-       toolbox_talk = COALESCE($10, toolbox_talk),
-       timestamp = NOW()
-     WHERE id = $1
-     RETURNING *`,
-    [
-      entryId,
-      patch.date ?? null,
-      patch.locationAddress ?? null,
-      patch.weather ?? null,
-      patch.crewCount ?? null,
-      patch.notes ?? null,
-      patch.photos ? JSON.stringify(patch.photos) : null,
-      patch.swmsRef ?? null,
-      patch.hazardNotes ?? null,
-      patch.toolboxTalk ?? null,
-    ]
-  );
-  if (result.rowCount === 0) return null;
-  return mapEntry(result.rows[0]);
+    const result = await client.query(
+      `UPDATE project_entries
+       SET
+         date = COALESCE($2, date),
+         location_address = COALESCE($3, location_address),
+         weather = COALESCE($4, weather),
+         crew_count = COALESCE($5, crew_count),
+         notes = COALESCE($6, notes),
+         photos_json = COALESCE($7::jsonb, photos_json),
+         swms_ref = COALESCE($8, swms_ref),
+         hazard_notes = COALESCE($9, hazard_notes),
+         toolbox_talk = COALESCE($10, toolbox_talk),
+         timestamp = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        entryId,
+        patch.date ?? null,
+        patch.locationAddress ?? null,
+        patch.weather ?? null,
+        patch.crewCount ?? null,
+        patch.notes ?? null,
+        patch.photos ? JSON.stringify(patch.photos) : null,
+        patch.swmsRef ?? null,
+        patch.hazardNotes ?? null,
+        patch.toolboxTalk ?? null,
+      ]
+    );
+    if (result.rowCount === 0) return null;
+    return mapEntry(result.rows[0]);
+  });
 }
 
 export async function deleteEntry(actor: Actor, entryId: string): Promise<boolean> {
@@ -602,15 +615,17 @@ export async function deleteEntry(actor: Actor, entryId: string): Promise<boolea
     await persistMemory();
     return true;
   }
-  const result = isCrew(actor)
-    ? await getPgPool().query(
-        `DELETE FROM project_entries WHERE id = $1 AND company_id = $2 AND owner_email = $3`,
-        [entryId, actor.companyId, actor.email]
-      )
-    : await getPgPool().query(
-        `DELETE FROM project_entries WHERE id = $1 AND company_id = $2`,
-        [entryId, actor.companyId]
-      );
+  const result = await withTenant(actor, (client) =>
+    isCrew(actor)
+      ? client.query(
+          `DELETE FROM project_entries WHERE id = $1 AND company_id = $2 AND owner_email = $3`,
+          [entryId, actor.companyId, actor.email]
+        )
+      : client.query(
+          `DELETE FROM project_entries WHERE id = $1 AND company_id = $2`,
+          [entryId, actor.companyId]
+        )
+  );
   return (result.rowCount ?? 0) > 0;
 }
 
@@ -642,9 +657,11 @@ export async function listDiaries(actor: Actor, siteId?: string, limit = 200, of
   }
   const where = `WHERE ${queryParts.join(" AND ")}`;
   params.push(limit, offset);
-  const result = await getPgPool().query(
-    `SELECT * FROM project_diaries ${where} ORDER BY generated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `SELECT * FROM project_diaries ${where} ORDER BY generated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    )
   );
   return result.rows.map(mapDiary);
 }
@@ -667,24 +684,26 @@ export async function createDiary(
     await persistMemory();
     return diary;
   }
-  const result = await getPgPool().query(
-    `INSERT INTO project_diaries (
-      id, owner_email, company_id, site_id, status, summary, report_period, full_report, safety_checklist_json, sections_json
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `INSERT INTO project_diaries (
+        id, owner_email, company_id, site_id, status, summary, report_period, full_report, safety_checklist_json, sections_json
+      )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb)
+       RETURNING *`,
+      [
+        diary.id,
+        actor.email,
+        actor.companyId,
+        diary.siteId,
+        diary.status,
+        diary.summary,
+        diary.reportPeriod,
+        diary.fullReport,
+        JSON.stringify(diary.safetyChecklist),
+        JSON.stringify(diary.sections),
+      ]
     )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb)
-     RETURNING *`,
-    [
-      diary.id,
-      actor.email,
-      actor.companyId,
-      diary.siteId,
-      diary.status,
-      diary.summary,
-      diary.reportPeriod,
-      diary.fullReport,
-      JSON.stringify(diary.safetyChecklist),
-      JSON.stringify(diary.sections),
-    ]
   );
   return mapDiary(result.rows[0]);
 }
@@ -736,83 +755,85 @@ export async function updateDiary(
     return updated;
   }
 
-  const existingResult = await getPgPool().query<{
-    owner_email: string;
-    company_id: string;
-    site_id: string;
-    status: DiaryStatus;
-    summary: string;
-    full_report: string;
-    edit_log: DiaryEditLogEntry[] | null;
-  }>(
-    `SELECT owner_email, company_id, site_id, status, summary, full_report, edit_log FROM project_diaries WHERE id = $1 LIMIT 1`,
-    [diaryId]
-  );
-  if (existingResult.rowCount === 0) return null;
-  const existing = existingResult.rows[0];
-  if (existing.company_id !== actor.companyId) return null;
-  if (isCrew(actor) && existing.owner_email !== actor.email) {
-    const member = await getPgPool().query(
-      `SELECT 1 FROM site_members WHERE site_id = $1 AND member_email = $2`,
-      [existing.site_id, actor.email]
+  return withTenant(actor, async (client) => {
+    const existingResult = await client.query<{
+      owner_email: string;
+      company_id: string;
+      site_id: string;
+      status: DiaryStatus;
+      summary: string;
+      full_report: string;
+      edit_log: DiaryEditLogEntry[] | null;
+    }>(
+      `SELECT owner_email, company_id, site_id, status, summary, full_report, edit_log FROM project_diaries WHERE id = $1 LIMIT 1`,
+      [diaryId]
     );
-    if (member.rowCount === 0) return null;
-  }
+    if (existingResult.rowCount === 0) return null;
+    const existing = existingResult.rows[0];
+    if (existing.company_id !== actor.companyId) return null;
+    if (isCrew(actor) && existing.owner_email !== actor.email) {
+      const member = await client.query(
+        `SELECT 1 FROM site_members WHERE site_id = $1 AND member_email = $2`,
+        [existing.site_id, actor.email]
+      );
+      if (member.rowCount === 0) return null;
+    }
 
-  const currentForAudit: DiaryRecord = {
-    id: diaryId,
-    ownerEmail: existing.owner_email,
-    companyId: existing.company_id,
-    siteId: "",
-    generatedAt: "",
-    status: existing.status,
-    summary: existing.summary,
-    reportPeriod: "daily",
-    fullReport: existing.full_report,
-    safetyChecklist: [],
-    sections: [],
-    editLog: Array.isArray(existing.edit_log) ? existing.edit_log : [],
-  };
-  const auditEntry = buildAuditEntry(currentForAudit, patch, actor, note);
+    const currentForAudit: DiaryRecord = {
+      id: diaryId,
+      ownerEmail: existing.owner_email,
+      companyId: existing.company_id,
+      siteId: "",
+      generatedAt: "",
+      status: existing.status,
+      summary: existing.summary,
+      reportPeriod: "daily",
+      fullReport: existing.full_report,
+      safetyChecklist: [],
+      sections: [],
+      editLog: Array.isArray(existing.edit_log) ? existing.edit_log : [],
+    };
+    const auditEntry = buildAuditEntry(currentForAudit, patch, actor, note);
 
-  const result = await getPgPool().query<{
-    id: string;
-    owner_email: string;
-    company_id: string;
-    site_id: string;
-    generated_at: Date;
-    status: DiaryStatus;
-    summary: string;
-    report_period: string;
-    full_report: string;
-    safety_checklist_json: string[] | null;
-    sections_json: Array<Record<string, unknown>>;
-    edit_log: DiaryEditLogEntry[] | null;
-  }>(
-    `UPDATE project_diaries
-     SET
-       status = COALESCE($2, status),
-       summary = COALESCE($3, summary),
-       report_period = COALESCE($4, report_period),
-       full_report = COALESCE($5, full_report),
-       safety_checklist_json = COALESCE($6::jsonb, safety_checklist_json),
-       sections_json = COALESCE($7::jsonb, sections_json),
-       edit_log = CASE WHEN $8::jsonb IS NOT NULL THEN edit_log || $8::jsonb ELSE edit_log END
-     WHERE id = $1
-     RETURNING *`,
-    [
-      diaryId,
-      patch.status ?? null,
-      patch.summary ?? null,
-      patch.reportPeriod ?? null,
-      patch.fullReport ?? null,
-      patch.safetyChecklist ? JSON.stringify(patch.safetyChecklist) : null,
-      patch.sections ? JSON.stringify(patch.sections) : null,
-      auditEntry ? JSON.stringify([auditEntry]) : null,
-    ]
-  );
-  if (result.rowCount === 0) return null;
-  return mapDiary(result.rows[0]);
+    const result = await client.query<{
+      id: string;
+      owner_email: string;
+      company_id: string;
+      site_id: string;
+      generated_at: Date;
+      status: DiaryStatus;
+      summary: string;
+      report_period: string;
+      full_report: string;
+      safety_checklist_json: string[] | null;
+      sections_json: Array<Record<string, unknown>>;
+      edit_log: DiaryEditLogEntry[] | null;
+    }>(
+      `UPDATE project_diaries
+       SET
+         status = COALESCE($2, status),
+         summary = COALESCE($3, summary),
+         report_period = COALESCE($4, report_period),
+         full_report = COALESCE($5, full_report),
+         safety_checklist_json = COALESCE($6::jsonb, safety_checklist_json),
+         sections_json = COALESCE($7::jsonb, sections_json),
+         edit_log = CASE WHEN $8::jsonb IS NOT NULL THEN edit_log || $8::jsonb ELSE edit_log END
+       WHERE id = $1
+       RETURNING *`,
+      [
+        diaryId,
+        patch.status ?? null,
+        patch.summary ?? null,
+        patch.reportPeriod ?? null,
+        patch.fullReport ?? null,
+        patch.safetyChecklist ? JSON.stringify(patch.safetyChecklist) : null,
+        patch.sections ? JSON.stringify(patch.sections) : null,
+        auditEntry ? JSON.stringify([auditEntry]) : null,
+      ]
+    );
+    if (result.rowCount === 0) return null;
+    return mapDiary(result.rows[0]);
+  });
 }
 
 export async function getScopedBootstrap(actor: Actor) {
@@ -852,32 +873,34 @@ export async function getSupervisorReport(actor: Actor): Promise<SupervisorRepor
     });
   }
 
-  const result = await getPgPool().query<{
-    site_id: string;
-    name: string;
-    client: string;
-    status: SiteStatus;
-    owner_email: string;
-    entries: string;
-    diaries: string;
-    approved_diaries: string;
-  }>(`
-    SELECT
-      s.id AS site_id,
-      s.name,
-      s.client,
-      s.status,
-      s.owner_email,
-      COUNT(DISTINCT e.id) AS entries,
-      COUNT(DISTINCT d.id) AS diaries,
-      COUNT(DISTINCT CASE WHEN d.status = 'approved' THEN d.id END) AS approved_diaries
-    FROM project_sites s
-    LEFT JOIN project_entries e ON e.site_id = s.id
-    LEFT JOIN project_diaries d ON d.site_id = s.id
-    WHERE s.company_id = $1
-    GROUP BY s.id, s.name, s.client, s.status, s.owner_email
-    ORDER BY s.created_at DESC
-  `, [actor.companyId]);
+  const result = await withTenant(actor, (client) =>
+    client.query<{
+      site_id: string;
+      name: string;
+      client: string;
+      status: SiteStatus;
+      owner_email: string;
+      entries: string;
+      diaries: string;
+      approved_diaries: string;
+    }>(`
+      SELECT
+        s.id AS site_id,
+        s.name,
+        s.client,
+        s.status,
+        s.owner_email,
+        COUNT(DISTINCT e.id) AS entries,
+        COUNT(DISTINCT d.id) AS diaries,
+        COUNT(DISTINCT CASE WHEN d.status = 'approved' THEN d.id END) AS approved_diaries
+      FROM project_sites s
+      LEFT JOIN project_entries e ON e.site_id = s.id
+      LEFT JOIN project_diaries d ON d.site_id = s.id
+      WHERE s.company_id = $1
+      GROUP BY s.id, s.name, s.client, s.status, s.owner_email
+      ORDER BY s.created_at DESC
+    `, [actor.companyId])
+  );
 
   return result.rows.map((row) => ({
     siteId: row.site_id,
@@ -909,11 +932,24 @@ export async function deleteAllUserProjectData(email: string): Promise<void> {
     await persistMemory();
     return;
   }
-  // CASCADE constraints handle entries/diaries/templates automatically on site delete
-  await getPgPool().query(`DELETE FROM project_sites WHERE owner_email = $1`, [email]);
-  await getPgPool().query(`DELETE FROM project_entries WHERE owner_email = $1`, [email]);
-  await getPgPool().query(`DELETE FROM project_diaries WHERE owner_email = $1`, [email]);
-  await getPgPool().query(`DELETE FROM project_templates WHERE owner_email = $1`, [email]);
+  // No Actor is available here (called by email during account deletion), so
+  // derive the company to scope the tenant transaction — otherwise these
+  // DELETEs run with no app.company_id set and RLS silently matches zero rows.
+  const user = await findUserByEmail(email);
+  const companyId = user?.companyId || soloCompanyIdForEmail(email);
+  // DELIBERATE: this scopes deletion to the user's CURRENT company. Rows the user
+  // authored under a *former* company (if they later switched) carry that old
+  // company_id and are intentionally left untouched by RLS here — this is
+  // by-design under the soft-cancel + 7-year record-retention model (see
+  // CLAUDE.md §3), not a missed case. It only ever under-deletes the user's own
+  // historical rows; it can never reach another tenant's data.
+  await withTenant({ companyId }, async (client) => {
+    // CASCADE constraints handle entries/diaries/templates automatically on site delete
+    await client.query(`DELETE FROM project_sites WHERE owner_email = $1`, [email]);
+    await client.query(`DELETE FROM project_entries WHERE owner_email = $1`, [email]);
+    await client.query(`DELETE FROM project_diaries WHERE owner_email = $1`, [email]);
+    await client.query(`DELETE FROM project_templates WHERE owner_email = $1`, [email]);
+  });
 }
 
 export async function resetProjectStoreForTests() {
@@ -987,7 +1023,9 @@ export async function listTemplates(actor: Actor, siteId?: string): Promise<Temp
     queryParts.push(`site_id = $${params.length}`);
   }
   const where = `WHERE ${queryParts.join(" AND ")}`;
-  const result = await getPgPool().query(`SELECT * FROM project_templates ${where} ORDER BY created_at DESC`, params);
+  const result = await withTenant(actor, (client) =>
+    client.query(`SELECT * FROM project_templates ${where} ORDER BY created_at DESC`, params)
+  );
   return result.rows.map(mapTemplate);
 }
 
@@ -1008,11 +1046,13 @@ export async function createTemplate(
     await persistMemory();
     return tmpl;
   }
-  const result = await getPgPool().query(
-    `INSERT INTO project_templates (id, owner_email, company_id, site_id, name, weather, crew_count, notes_template)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-     RETURNING *`,
-    [tmpl.id, actor.email, actor.companyId, tmpl.siteId, tmpl.name, tmpl.weather, tmpl.crewCount, tmpl.notesTemplate]
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `INSERT INTO project_templates (id, owner_email, company_id, site_id, name, weather, crew_count, notes_template)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING *`,
+      [tmpl.id, actor.email, actor.companyId, tmpl.siteId, tmpl.name, tmpl.weather, tmpl.crewCount, tmpl.notesTemplate]
+    )
   );
   return mapTemplate(result.rows[0]);
 }
@@ -1032,25 +1072,27 @@ export async function updateTemplate(
     await persistMemory();
     return updated;
   }
-  const existing = await getPgPool().query<{ owner_email: string; company_id: string }>(
-    `SELECT owner_email, company_id FROM project_templates WHERE id = $1 LIMIT 1`,
-    [templateId]
-  );
-  if (existing.rowCount === 0) return null;
-  if (existing.rows[0].company_id !== actor.companyId) return null;
-  if (isCrew(actor) && existing.rows[0].owner_email !== actor.email) return null;
-  const result = await getPgPool().query(
-    `UPDATE project_templates
-     SET name = COALESCE($2, name),
-         weather = COALESCE($3, weather),
-         crew_count = COALESCE($4, crew_count),
-         notes_template = COALESCE($5, notes_template)
-     WHERE id = $1
-     RETURNING *`,
-    [templateId, patch.name ?? null, patch.weather ?? null, patch.crewCount ?? null, patch.notesTemplate ?? null]
-  );
-  if (result.rowCount === 0) return null;
-  return mapTemplate(result.rows[0]);
+  return withTenant(actor, async (client) => {
+    const existing = await client.query<{ owner_email: string; company_id: string }>(
+      `SELECT owner_email, company_id FROM project_templates WHERE id = $1 LIMIT 1`,
+      [templateId]
+    );
+    if (existing.rowCount === 0) return null;
+    if (existing.rows[0].company_id !== actor.companyId) return null;
+    if (isCrew(actor) && existing.rows[0].owner_email !== actor.email) return null;
+    const result = await client.query(
+      `UPDATE project_templates
+       SET name = COALESCE($2, name),
+           weather = COALESCE($3, weather),
+           crew_count = COALESCE($4, crew_count),
+           notes_template = COALESCE($5, notes_template)
+       WHERE id = $1
+       RETURNING *`,
+      [templateId, patch.name ?? null, patch.weather ?? null, patch.crewCount ?? null, patch.notesTemplate ?? null]
+    );
+    if (result.rowCount === 0) return null;
+    return mapTemplate(result.rows[0]);
+  });
 }
 
 export async function deleteTemplate(actor: Actor, templateId: string): Promise<boolean> {
@@ -1063,18 +1105,20 @@ export async function deleteTemplate(actor: Actor, templateId: string): Promise<
     await persistMemory();
     return true;
   }
-  const existing = await getPgPool().query<{ owner_email: string; company_id: string }>(
-    `SELECT owner_email, company_id FROM project_templates WHERE id = $1 LIMIT 1`,
-    [templateId]
-  );
-  if (existing.rowCount === 0) return false;
-  if (existing.rows[0].company_id !== actor.companyId) return false;
-  if (isCrew(actor) && existing.rows[0].owner_email !== actor.email) return false;
-  const result = await getPgPool().query(
-    `DELETE FROM project_templates WHERE id = $1 AND company_id = $2`,
-    [templateId, actor.companyId]
-  );
-  return (result.rowCount ?? 0) > 0;
+  return withTenant(actor, async (client) => {
+    const existing = await client.query<{ owner_email: string; company_id: string }>(
+      `SELECT owner_email, company_id FROM project_templates WHERE id = $1 LIMIT 1`,
+      [templateId]
+    );
+    if (existing.rowCount === 0) return false;
+    if (existing.rows[0].company_id !== actor.companyId) return false;
+    if (isCrew(actor) && existing.rows[0].owner_email !== actor.email) return false;
+    const result = await client.query(
+      `DELETE FROM project_templates WHERE id = $1 AND company_id = $2`,
+      [templateId, actor.companyId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 // ─── Site invites & members ───────────────────────────────────────────────────
@@ -1112,9 +1156,11 @@ async function canManageSite(actor: Actor, siteId: string): Promise<boolean> {
     if (actor.companyRole === "owner" || actor.companyRole === "manager") return true;
     return site.ownerEmail === actor.email;
   }
-  const r = await getPgPool().query<{ owner_email: string; company_id: string }>(
-    `SELECT owner_email, company_id FROM project_sites WHERE id = $1 LIMIT 1`,
-    [siteId]
+  const r = await withTenant(actor, (client) =>
+    client.query<{ owner_email: string; company_id: string }>(
+      `SELECT owner_email, company_id FROM project_sites WHERE id = $1 LIMIT 1`,
+      [siteId]
+    )
   );
   const row = r.rows[0];
   if (!row || row.company_id !== actor.companyId) return false;
@@ -1446,6 +1492,13 @@ export async function acceptSiteInvite(
          ON CONFLICT DO NOTHING`,
         [invite.site_id, actorEmail, invite.role, invite.invited_by]
       );
+      // Cross-company read: the site belongs to the invite's company, which may
+      // differ from the accepter's current company. Scope the RLS-protected
+      // project_sites read to the site's company so the name lookup isn't
+      // fail-closed. (The ?? fallback below still covers a null-company invite.)
+      if (invite.company_id) {
+        await client.query("SELECT set_config('app.company_id', $1, true)", [invite.company_id]);
+      }
       const siteRow = await client.query<{ name: string }>(
         `SELECT name FROM project_sites WHERE id=$1`,
         [invite.site_id]
@@ -1505,10 +1558,12 @@ export async function updateSiteProgress(actor: Actor, siteId: string, progressP
     await persistMemory();
     return updated;
   }
-  const result = await getPgPool().query<SiteRow & { progress_percent: number }>(
-    `UPDATE project_sites SET progress_percent = $2
-     WHERE id = $1 AND company_id = $3 AND deleted_at IS NULL RETURNING *`,
-    [siteId, pct, actor.companyId]
+  const result = await withTenant(actor, (client) =>
+    client.query<SiteRow & { progress_percent: number }>(
+      `UPDATE project_sites SET progress_percent = $2
+       WHERE id = $1 AND company_id = $3 AND deleted_at IS NULL RETURNING *`,
+      [siteId, pct, actor.companyId]
+    )
   );
   if (result.rowCount === 0) return null;
   return mapSite(result.rows[0]);

@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
-import { getPgPool } from "./postgres";
 import { Actor, isCrew } from "./actor";
+import { withTenant } from "./tenant";
 
 export type IncidentSeverity = "near-miss" | "minor" | "major" | "critical";
 export type IncidentStatus = "open" | "closed";
@@ -69,13 +69,17 @@ export async function listIncidents(actor: Actor, siteId?: string): Promise<Inci
       .sort((a, b) => b.date.localeCompare(a.date));
   }
   const params: unknown[] = [actor.companyId];
+  // `company_id = $1` is kept as belt-and-braces alongside the RLS policy
+  // (migration 019), which is the authoritative company filter.
   const conditions = ["deleted_at IS NULL", `company_id = $1`];
   const crew = crewScopeSql(actor, params);
   if (crew) conditions.push(crew);
   if (siteId) { params.push(siteId); conditions.push(`site_id = $${params.length}`); }
-  const result = await getPgPool().query(
-    `SELECT * FROM incidents WHERE ${conditions.join(" AND ")} ORDER BY date DESC`,
-    params
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `SELECT * FROM incidents WHERE ${conditions.join(" AND ")} ORDER BY date DESC`,
+      params
+    )
   );
   return result.rows.map(mapRow);
 }
@@ -83,11 +87,13 @@ export async function listIncidents(actor: Actor, siteId?: string): Promise<Inci
 export async function createIncident(actor: Actor, payload: Omit<IncidentRecord, "id" | "ownerEmail" | "companyId" | "createdAt" | "updatedAt" | "deletedAt">): Promise<IncidentRecord> {
   const record: IncidentRecord = { id: uuidv4(), ownerEmail: actor.email, companyId: actor.companyId, createdAt: new Date().toISOString(), ...payload };
   if (!useDatabase()) { memoryIncidents.set(record.id, record); return record; }
-  const result = await getPgPool().query(
-    `INSERT INTO incidents (id,owner_email,company_id,site_id,date,severity,description,injured_party,corrective_action,status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [record.id, actor.email, actor.companyId, record.siteId, record.date, record.severity, record.description,
-     record.injuredParty || null, record.correctiveAction || null, record.status]
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `INSERT INTO incidents (id,owner_email,company_id,site_id,date,severity,description,injured_party,corrective_action,status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [record.id, actor.email, actor.companyId, record.siteId, record.date, record.severity, record.description,
+       record.injuredParty || null, record.correctiveAction || null, record.status]
+    )
   );
   return mapRow(result.rows[0]);
 }
@@ -100,15 +106,18 @@ export async function updateIncident(actor: Actor, id: string, patch: Partial<Pi
     memoryIncidents.set(id, updated);
     return updated;
   }
-  // Cross-company guard is enforced in the WHERE clause (company_id = actor).
-  const result = await getPgPool().query(
-    `UPDATE incidents SET
-       status = COALESCE($3, status),
-       corrective_action = COALESCE($4, corrective_action),
-       severity = COALESCE($5, severity),
-       updated_at = NOW()
-     WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL RETURNING *`,
-    [id, actor.companyId, patch.status ?? null, patch.correctiveAction ?? null, patch.severity ?? null]
+  // Cross-company guard is enforced by the RLS policy (migration 019); the
+  // `company_id = $2` clause is kept as belt-and-braces.
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `UPDATE incidents SET
+         status = COALESCE($3, status),
+         corrective_action = COALESCE($4, corrective_action),
+         severity = COALESCE($5, severity),
+         updated_at = NOW()
+       WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL RETURNING *`,
+      [id, actor.companyId, patch.status ?? null, patch.correctiveAction ?? null, patch.severity ?? null]
+    )
   );
   if (result.rowCount === 0) return null;
   return mapRow(result.rows[0]);
@@ -121,9 +130,11 @@ export async function deleteIncident(actor: Actor, id: string): Promise<boolean>
     memoryIncidents.set(id, { ...existing, deletedAt: new Date().toISOString() });
     return true;
   }
-  const result = await getPgPool().query(
-    `UPDATE incidents SET deleted_at = NOW() WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL`,
-    [id, actor.companyId]
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `UPDATE incidents SET deleted_at = NOW() WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL`,
+      [id, actor.companyId]
+    )
   );
   return (result.rowCount ?? 0) > 0;
 }

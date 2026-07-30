@@ -51,7 +51,7 @@ incidentsRouter.post("/incidents", requireAuth, async (req, res) => {
     // Notify supervisors for major/critical incidents
     if (["major", "critical"].includes(parsed.data.severity)) {
       try {
-        const tokens = await getAllTokensForEmails([actor.email]);
+        const tokens = await getAllTokensForEmails(actor, [actor.email]);
         const pushTokens = tokens.map((t) => t.token).filter((t) => t.startsWith("ExponentPushToken"));
         if (pushTokens.length > 0) {
           await sendExpoPushNotifications([{

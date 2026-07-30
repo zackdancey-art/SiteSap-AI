@@ -1,0 +1,209 @@
+/**
+ * RLS integration test for AUDIT.md finding H1 ("multi-tenancy is
+ * convention-only" — company scoping was hand-written WHERE clauses with no
+ * database-level backstop). Migrations 019-022 add Postgres Row-Level
+ * Security to the tenanted tables; this is the only test in the suite that
+ * can actually prove RLS works, because the rest of the suite runs against
+ * the in-memory store fallback (DATABASE_URL="" under NODE_ENV=test — see
+ * test-setup.ts) and never touches Postgres at all.
+ *
+ * Guarded: this test needs a real, disposable Postgres database. Without
+ * `TEST_DATABASE_URL` set it registers a single skipped placeholder test and
+ * does nothing else — no live DB connection is attempted. This is the
+ * documented, intended behaviour for the sandbox this suite normally runs
+ * in; it is expected to SKIP here.
+ *
+ * `getPgPool()` (storage/postgres.ts) already special-cases NODE_ENV==="test":
+ * it connects using TEST_DATABASE_URL (never DATABASE_URL, even if a test
+ * accidentally sets it), so we can call it directly with no extra plumbing.
+ *
+ * `incidents` is used as the RLS table under test — migration
+ * 019_rls_incidents_reference.sql documents it as the reference/proof table
+ * (ENABLE + FORCE ROW LEVEL SECURITY, USING/WITH CHECK against
+ * current_setting('app.company_id', true)); project_sites carries the same
+ * policy shape as of migration 022.
+ */
+
+import assert from "node:assert/strict";
+import { test, before, after } from "node:test";
+import fs from "node:fs/promises";
+import path from "node:path";
+import type { Pool } from "pg";
+import { getPgPool } from "./postgres";
+import { withTenant } from "./tenant";
+
+if (!process.env.TEST_DATABASE_URL) {
+  test("RLS integration (skipped: set TEST_DATABASE_URL)", { skip: true }, () => {});
+} else {
+  // ── Migration runner ──────────────────────────────────────────────────────
+  // storage/migrate.ts's runMigrations() is gated on `process.env.DATABASE_URL`
+  // (not TEST_DATABASE_URL) and is a no-op under NODE_ENV=test, so it can't be
+  // reused directly here. This is a minimal, idempotent re-implementation of
+  // the same "schema_migrations tracking table + apply anything new, in
+  // filename order" pattern against whichever pool getPgPool() hands back.
+  //
+  // The compiled test runs from dist/storage/*.test.js, and the build does not
+  // copy the .sql migration files into dist/ (confirmed: no dist/storage/migrations
+  // directory exists after `pnpm run build`). The package's own `test` script
+  // always runs from the services/api package root (via pnpm), so migrations
+  // are read from the *source* tree relative to process.cwd() rather than
+  // __dirname.
+  const MIGRATIONS_DIR = path.join(process.cwd(), "src", "storage", "migrations");
+
+  const applyMigrations = async (pool: Pool): Promise<void> => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    const appliedResult = await pool.query<{ version: string }>(`SELECT version FROM schema_migrations`);
+    const applied = new Set(appliedResult.rows.map((r) => r.version));
+
+    const files = (await fs.readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+    for (const file of files) {
+      const version = file.replace(/\.sql$/, "");
+      if (applied.has(version)) continue;
+      const sql = await fs.readFile(path.join(MIGRATIONS_DIR, file), "utf-8");
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(sql);
+        await client.query(`INSERT INTO schema_migrations (version) VALUES ($1)`, [version]);
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw new Error(`Migration ${version} failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        client.release();
+      }
+    }
+  };
+
+  // ── Fixture identifiers (unique per run so re-runs against a persistent
+  // TEST_DATABASE_URL don't collide with leftovers from a previous run) ──────
+  const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const companyA = `rls-test-company-a-${runId}`;
+  const companyB = `rls-test-company-b-${runId}`;
+  const ownerAEmail = `rls-test-owner-a-${runId}@test.local`;
+  const ownerBEmail = `rls-test-owner-b-${runId}@test.local`;
+  const siteAId = `rls-test-site-a-${runId}`;
+  const siteBId = `rls-test-site-b-${runId}`;
+  const incidentAId = `rls-test-incident-a-${runId}`;
+  const incidentBId = `rls-test-incident-b-${runId}`;
+
+  let pool: Pool;
+
+  before(async () => {
+    pool = getPgPool();
+    await applyMigrations(pool);
+
+    // auth_users has no RLS policy (only company-scoped operational tables
+    // do), so a bare INSERT is fine here.
+    await pool.query(
+      `INSERT INTO auth_users (email, password_hash, full_name, company_id, company_role)
+       VALUES ($1, 'x', 'RLS Test Owner A', $2, 'owner'), ($3, 'x', 'RLS Test Owner B', $4, 'owner')`,
+      [ownerAEmail, companyA, ownerBEmail, companyB]
+    );
+
+    // project_sites and incidents are both FORCE ROW LEVEL SECURITY as of
+    // migrations 022 and 019 respectively, so their INSERTs must run inside
+    // withTenant() for the WITH CHECK clause to see a matching app.company_id.
+    await withTenant({ companyId: companyA }, (client) =>
+      client.query(
+        `INSERT INTO project_sites (id, owner_email, name, address, client, start_date, status, company_id)
+         VALUES ($1, $2, 'RLS Test Site A', '1 Test St', 'Test Client', '2026-01-01', 'active', $3)`,
+        [siteAId, ownerAEmail, companyA]
+      )
+    );
+    await withTenant({ companyId: companyB }, (client) =>
+      client.query(
+        `INSERT INTO project_sites (id, owner_email, name, address, client, start_date, status, company_id)
+         VALUES ($1, $2, 'RLS Test Site B', '1 Test St', 'Test Client', '2026-01-01', 'active', $3)`,
+        [siteBId, ownerBEmail, companyB]
+      )
+    );
+
+    await withTenant({ companyId: companyA }, (client) =>
+      client.query(
+        `INSERT INTO incidents (id, owner_email, site_id, date, severity, description, company_id)
+         VALUES ($1, $2, $3, '2026-01-01', 'minor', 'RLS test incident A', $4)`,
+        [incidentAId, ownerAEmail, siteAId, companyA]
+      )
+    );
+    await withTenant({ companyId: companyB }, (client) =>
+      client.query(
+        `INSERT INTO incidents (id, owner_email, site_id, date, severity, description, company_id)
+         VALUES ($1, $2, $3, '2026-01-01', 'minor', 'RLS test incident B', $4)`,
+        [incidentBId, ownerBEmail, siteBId, companyB]
+      )
+    );
+  });
+
+  after(async () => {
+    // Deletes on the RLS-forced tables must also run inside withTenant() —
+    // a bare-connection DELETE would see zero rows (same fail-closed
+    // behaviour under test below) and silently delete nothing.
+    await withTenant({ companyId: companyA }, async (client) => {
+      await client.query(`DELETE FROM incidents WHERE id = $1`, [incidentAId]);
+      await client.query(`DELETE FROM project_sites WHERE id = $1`, [siteAId]);
+    });
+    await withTenant({ companyId: companyB }, async (client) => {
+      await client.query(`DELETE FROM incidents WHERE id = $1`, [incidentBId]);
+      await client.query(`DELETE FROM project_sites WHERE id = $1`, [siteBId]);
+    });
+    await pool.query(`DELETE FROM auth_users WHERE email = $1`, [ownerAEmail]);
+    await pool.query(`DELETE FROM auth_users WHERE email = $1`, [ownerBEmail]);
+    await pool.end();
+  });
+
+  test("a: withTenant(company A) sees only company A's incident", async () => {
+    const result = await withTenant({ companyId: companyA }, (client) =>
+      client.query<{ id: string; company_id: string }>(
+        `SELECT id, company_id FROM incidents WHERE id IN ($1, $2)`,
+        [incidentAId, incidentBId]
+      )
+    );
+    assert.equal(result.rows.length, 1, `expected exactly 1 visible row, got ${result.rows.length}`);
+    assert.equal(result.rows[0].id, incidentAId);
+    assert.equal(result.rows[0].company_id, companyA);
+  });
+
+  test("b: a bare query with no app.company_id set sees zero rows (fail-closed)", async () => {
+    // Deliberately NOT using withTenant() — this simulates a store call that
+    // forgot to wrap its query, which is exactly the failure mode RLS exists
+    // to catch. FORCE ROW LEVEL SECURITY (migration 019) means even the
+    // table-owning connection the app uses is subject to the policy.
+    const result = await pool.query<{ id: string }>(
+      `SELECT id FROM incidents WHERE id IN ($1, $2)`,
+      [incidentAId, incidentBId]
+    );
+    assert.equal(
+      result.rows.length,
+      0,
+      `expected zero rows outside withTenant(); RLS must fail closed, not leak either tenant's row. Got: ${JSON.stringify(result.rows)}`
+    );
+  });
+
+  test("c: an INSERT whose company_id does not match the tenant context is rejected by WITH CHECK", async () => {
+    const rogueId = `rls-test-incident-rogue-${runId}`;
+    await assert.rejects(
+      () =>
+        withTenant({ companyId: companyA }, (client) =>
+          client.query(
+            `INSERT INTO incidents (id, owner_email, site_id, date, severity, description, company_id)
+             VALUES ($1, $2, $3, '2026-01-01', 'minor', 'should be rejected by WITH CHECK', $4)`,
+            [rogueId, ownerAEmail, siteAId, companyB] // tenant context is A, but company_id column says B
+          )
+        ),
+      /row-level security|permission denied/i,
+      "an INSERT stamping a different company_id than the active tenant context must be rejected by the WITH CHECK policy"
+    );
+
+    // Belt-and-braces: confirm the rejected row was not partially committed.
+    const check = await withTenant({ companyId: companyA }, (client) =>
+      client.query(`SELECT id FROM incidents WHERE id = $1`, [rogueId])
+    );
+    assert.equal(check.rows.length, 0, "rejected INSERT must not have left a row behind");
+  });
+}
