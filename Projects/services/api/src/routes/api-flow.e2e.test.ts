@@ -16,9 +16,6 @@ after(async () => {
 });
 
 test("HTTP API flow persists site and entry data and generates diary by siteId", async () => {
-  delete process.env.DATABASE_URL;
-  delete process.env.OPENAI_API_KEY;
-
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "sitesnap-api-flow-"));
   process.chdir(tempDir);
 

@@ -6,11 +6,6 @@ import { resetAuthStoreForTests } from "../storage/authStore";
 import { resetProjectStoreForTests } from "../storage/projectsStore";
 import { resetRateLimitStoreForTests } from "../middleware/rateLimit";
 
-// Use in-memory mode for all tests
-delete process.env.DATABASE_URL;
-process.env.AUTH_TOKEN_SECRET = "test-secret-for-integration";
-process.env.NODE_ENV = "test";
-
 let server: http.Server;
 let baseUrl: string;
 
@@ -247,7 +242,6 @@ test("pagination limit and offset work", async () => {
 
 test("generate-diary uses local fallback when no OPENAI_API_KEY", async () => {
   const token = await createWorkerToken();
-  delete process.env.OPENAI_API_KEY;
 
   const res = await req<{ success: boolean; diary: { summary: string; sections: unknown[] } }>(
     "POST",

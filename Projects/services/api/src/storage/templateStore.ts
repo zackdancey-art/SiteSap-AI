@@ -1,18 +1,18 @@
 import { v4 as uuidv4 } from "uuid";
 import { getPgPool } from "./postgres";
-import { UserRole } from "../utils/authToken";
+import { Actor } from "./actor";
+import { withTenant } from "./tenant";
 
 export type EntryTemplate = {
   id: string;
   ownerEmail: string;
+  companyId: string;
   name: string;
   notes: string;
   crewCount: string;
   weather: string;
   createdAt: string;
 };
-
-type Actor = { email: string; role: UserRole };
 
 const memory = new Map<string, EntryTemplate>();
 
@@ -21,12 +21,13 @@ function useDatabase() {
 }
 
 function mapRow(row: {
-  id: string; owner_email: string; name: string;
+  id: string; owner_email: string; company_id: string; name: string;
   notes: string; crew_count: string; weather: string; created_at: Date;
 }): EntryTemplate {
   return {
     id: row.id,
     ownerEmail: row.owner_email,
+    companyId: row.company_id,
     name: row.name,
     notes: row.notes,
     crewCount: row.crew_count,
@@ -57,10 +58,17 @@ export async function listTemplates(actor: Actor): Promise<EntryTemplate[]> {
       .filter((t) => t.ownerEmail === actor.email)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
-  const result = await getPgPool().query<{
-    id: string; owner_email: string; name: string;
-    notes: string; crew_count: string; weather: string; created_at: Date;
-  }>(`SELECT * FROM entry_templates WHERE owner_email = $1 ORDER BY name ASC`, [actor.email]);
+  // `company_id = $2` is kept as belt-and-braces alongside the RLS policy
+  // (migration 021), which is the authoritative company filter.
+  const result = await withTenant(actor, (client) =>
+    client.query<{
+      id: string; owner_email: string; company_id: string; name: string;
+      notes: string; crew_count: string; weather: string; created_at: Date;
+    }>(
+      `SELECT * FROM entry_templates WHERE owner_email = $1 AND company_id = $2 ORDER BY name ASC`,
+      [actor.email, actor.companyId]
+    )
+  );
   return result.rows.map(mapRow);
 }
 
@@ -71,6 +79,7 @@ export async function createTemplate(
   const record: EntryTemplate = {
     id: uuidv4(),
     ownerEmail: actor.email,
+    companyId: actor.companyId,
     createdAt: new Date().toISOString(),
     ...payload,
   };
@@ -78,13 +87,15 @@ export async function createTemplate(
     memory.set(record.id, record);
     return record;
   }
-  const result = await getPgPool().query<{
-    id: string; owner_email: string; name: string;
-    notes: string; crew_count: string; weather: string; created_at: Date;
-  }>(
-    `INSERT INTO entry_templates (id, owner_email, name, notes, crew_count, weather)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [record.id, actor.email, payload.name, payload.notes, payload.crewCount, payload.weather]
+  const result = await withTenant(actor, (client) =>
+    client.query<{
+      id: string; owner_email: string; company_id: string; name: string;
+      notes: string; crew_count: string; weather: string; created_at: Date;
+    }>(
+      `INSERT INTO entry_templates (id, owner_email, company_id, name, notes, crew_count, weather)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [record.id, actor.email, actor.companyId, payload.name, payload.notes, payload.crewCount, payload.weather]
+    )
   );
   return mapRow(result.rows[0]);
 }
@@ -96,8 +107,11 @@ export async function deleteTemplate(actor: Actor, id: string): Promise<boolean>
     memory.delete(id);
     return true;
   }
-  const result = await getPgPool().query(
-    `DELETE FROM entry_templates WHERE id = $1 AND owner_email = $2`, [id, actor.email]
+  const result = await withTenant(actor, (client) =>
+    client.query(
+      `DELETE FROM entry_templates WHERE id = $1 AND owner_email = $2 AND company_id = $3`,
+      [id, actor.email, actor.companyId]
+    )
   );
   return (result.rowCount ?? 0) > 0;
 }

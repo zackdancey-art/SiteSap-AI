@@ -96,7 +96,7 @@ export const templatesRouter: Router = Router();
 templatesRouter.use(requireAuth);
 
 function getActor(req: AuthenticatedRequest) {
-  return { email: req.auth.email, role: req.auth.role };
+  return { email: req.auth.email, role: req.auth.role, companyId: req.auth.companyId, companyRole: req.auth.companyRole };
 }
 
 const TemplateSchema = z.object({

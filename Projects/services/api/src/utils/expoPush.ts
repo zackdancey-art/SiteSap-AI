@@ -8,6 +8,13 @@ type ExpoMessage = {
 
 export async function sendExpoPushNotifications(messages: ExpoMessage[]): Promise<void> {
   if (messages.length === 0) return;
+
+  // Structural guard: in test mode, never make a real network call to
+  // exp.host — mirrors the notificationService test-mode short-circuit.
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
+
   try {
     const response = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",

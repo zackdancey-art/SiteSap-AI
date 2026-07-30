@@ -1,9 +1,10 @@
 import { Router } from "express";
 import multer from "multer";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { verifyAuthToken } from "../utils/authToken";
 import { getMediaStorage } from "../storage/mediaStorage";
 import { signUploadPath, verifyUploadSignature } from "../utils/signedUrl";
+import { recordUpload, uploadBelongsToActorCompany } from "../storage/uploadsStore";
 import { rateLimit } from "../middleware/rateLimit";
 
 export const uploadsRouter: Router = Router();
@@ -50,6 +51,10 @@ uploadsRouter.post("/uploads", requireAuth, rateLimit("uploads-post", 30, 60 * 6
       contentType: req.file.mimetype,
     });
 
+    // H7: bind the upload to the authenticated uploader's company at upload time
+    // (unforgeable). Fetch/sign authorize against this record, not entry JSON.
+    await recordUpload((req as AuthenticatedRequest).auth, id, filename);
+
     // Return canonical path only — callers use POST /uploads/sign to get a time-limited URL
     const canonicalPath = `/api/uploads/${id}/${filename}`;
     return res.json({
@@ -67,8 +72,11 @@ uploadsRouter.post("/uploads", requireAuth, rateLimit("uploads-post", 30, 60 * 6
   }
 });
 
-// Batch sign endpoint — accepts an array of canonical paths, returns short-lived HMAC URLs
-uploadsRouter.post("/uploads/sign", requireAuth, (req, res) => {
+// Batch sign endpoint — accepts an array of canonical paths, returns short-lived HMAC URLs.
+// H7: a URL is only minted for a file that belongs to the caller's company, so a
+// signed URL can never be obtained for another tenant's media (this also makes a
+// valid signature sufficient authorization on the fetch path below).
+uploadsRouter.post("/uploads/sign", requireAuth, async (req, res) => {
   const paths = req.body?.paths;
   if (!Array.isArray(paths) || paths.length === 0) {
     return res.status(400).json({ error: "paths must be a non-empty array of strings." });
@@ -77,19 +85,26 @@ uploadsRouter.post("/uploads/sign", requireAuth, (req, res) => {
     return res.status(400).json({ error: "Maximum 50 paths per sign request." });
   }
 
+  const companyId = (req as AuthenticatedRequest).auth.companyId;
   const base = `${req.protocol}://${req.get("host")}`;
-  const signed = (paths as unknown[]).map((raw) => {
-    const path = typeof raw === "string" ? raw.trim() : "";
-    // Extract id and filename from /api/uploads/:id/:filename
-    const match = path.match(/\/api\/uploads\/([^/]+)\/([^/?]+)/);
-    if (!match) return { path, url: null, error: "Invalid upload path." };
-    const [, id, filename] = match;
-    const { sig, exp } = signUploadPath(id, filename);
-    return {
-      path,
-      url: `${base}/api/uploads/${id}/${filename}?sig=${encodeURIComponent(sig)}&exp=${exp}`,
-    };
-  });
+  const signed = await Promise.all(
+    (paths as unknown[]).map(async (raw) => {
+      const path = typeof raw === "string" ? raw.trim() : "";
+      // Extract id and filename from /api/uploads/:id/:filename
+      const match = path.match(/\/api\/uploads\/([^/]+)\/([^/?]+)/);
+      if (!match) return { path, url: null, error: "Invalid upload path." };
+      const [, id, filename] = match;
+      if (!(await uploadBelongsToActorCompany({ companyId }, id))) {
+        // Do not confirm existence of another tenant's file.
+        return { path, url: null, error: "Not found." };
+      }
+      const { sig, exp } = signUploadPath(id, filename);
+      return {
+        path,
+        url: `${base}/api/uploads/${id}/${filename}?sig=${encodeURIComponent(sig)}&exp=${exp}`,
+      };
+    })
+  );
 
   return res.json({ signed });
 });
@@ -105,17 +120,25 @@ uploadsRouter.get("/uploads/:id/:filename", async (req, res) => {
   const authHeader = req.headers.authorization;
   const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
 
-  let authorized = false;
   if (bearerToken) {
-    authorized = Boolean(verifyAuthToken(bearerToken));
+    // H7: a valid token is NOT sufficient — the file must belong to the caller's
+    // company. Otherwise any authenticated user could fetch any tenant's media.
+    const claims = verifyAuthToken(bearerToken);
+    if (!claims) {
+      return res.status(401).json({ error: "Authentication required for media access." });
+    }
+    if (!(await uploadBelongsToActorCompany({ companyId: claims.companyId }, id))) {
+      // 404, not 403 — don't confirm the file exists to another tenant.
+      return res.status(404).json({ error: "Upload not found." });
+    }
   } else {
+    // Signed URLs are minted only by POST /uploads/sign, which is company-gated,
+    // so a valid signature already implies the issuer's company owned the file.
     const sig = typeof req.query.sig === "string" ? req.query.sig : "";
     const exp = typeof req.query.exp === "string" ? req.query.exp : "";
-    authorized = sig !== "" && exp !== "" && verifyUploadSignature(id, filename, sig, exp);
-  }
-
-  if (!authorized) {
-    return res.status(401).json({ error: "Authentication required for media access." });
+    if (!(sig !== "" && exp !== "" && verifyUploadSignature(id, filename, sig, exp))) {
+      return res.status(401).json({ error: "Authentication required for media access." });
+    }
   }
 
   try {

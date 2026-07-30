@@ -4,9 +4,6 @@ type ExpoExtra = {
   apiUrl?: string;
 };
 
-const DEFAULT_LAN_API_URL =
-  process.env.EXPO_PUBLIC_API_FALLBACK_LAN || "http://192.168.4.28:4001";
-
 function getHostFromExpoRuntime(): string | null {
   const expoConfigHostUri = (Constants.expoConfig as { hostUri?: string } | null)?.hostUri;
   if (expoConfigHostUri && typeof expoConfigHostUri === "string") {
@@ -59,12 +56,14 @@ export function resolveApiBaseUrl(): string {
     }
     const host = getHostFromExpoRuntime();
     if (host) {
-      const runtimeGuess = `http://${host}:4001`;
+      const runtimeGuess = `http://${host}:4000`;
       console.warn(`[api] Missing API base URL; using runtime host guess ${runtimeGuess}`);
       return runtimeGuess;
     }
-    console.warn(`[api] Missing API base URL; using fallback ${DEFAULT_LAN_API_URL}`);
-    return DEFAULT_LAN_API_URL;
+    throw new Error(
+      "[api] No API base URL configured and no dev host could be detected. " +
+      "Set EXPO_PUBLIC_API_URL in your .env (e.g. http://<your-machine-LAN-IP>:4000) and restart Expo."
+    );
   }
 
   if (!__DEV__ && (isLocalhostUrl(candidate) || isLanUrl(candidate))) {
@@ -75,8 +74,16 @@ export function resolveApiBaseUrl(): string {
   }
 
   if (isLocalhostUrl(candidate)) {
-    console.warn(`[api] Localhost URL detected (${candidate}); using LAN fallback ${DEFAULT_LAN_API_URL}`);
-    return DEFAULT_LAN_API_URL;
+    const host = getHostFromExpoRuntime();
+    if (host) {
+      const runtimeGuess = `http://${host}:4000`;
+      console.warn(`[api] Localhost URL detected (${candidate}); using detected dev host ${runtimeGuess}`);
+      return runtimeGuess;
+    }
+    throw new Error(
+      `[api] Localhost API URL "${candidate}" won't work from a device/simulator, and no dev host could ` +
+      "be detected. Set EXPO_PUBLIC_API_URL to your machine's LAN IP (e.g. http://192.168.x.x:4000) and restart Expo."
+    );
   }
 
   return candidate;

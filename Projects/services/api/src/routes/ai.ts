@@ -1,11 +1,18 @@
-import fs from "fs/promises";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
 import { getMediaStorage } from "../storage/mediaStorage";
 import { listEntries, listSites } from "../storage/projectsStore";
+import { uploadBelongsToActorCompany } from "../storage/uploadsStore";
+import { Actor } from "../storage/actor";
 import { getOpenAIClient } from "../services/openaiClient";
+
+/** Extract the upload id (<digits>-<hex>) from a storageKey or storagePath. */
+function extractUploadId(ref: string): string | null {
+  const m = ref.match(/(\d+-[0-9a-f]+)-/);
+  return m ? m[1] : null;
+}
 
 type ReportPeriod = "daily" | "weekly" | "monthly";
 
@@ -254,7 +261,7 @@ function buildFullReport(args: {
   return lines.join("\n");
 }
 
-async function normalizeBase64Image(photo: GenerateDiaryPhoto) {
+async function normalizeBase64Image(photo: GenerateDiaryPhoto, actor: Pick<Actor, "companyId">) {
   const raw = String(photo.base64 || "").trim();
   const mimeType = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(
     cleanString(photo.mimeType, "image/jpeg")
@@ -270,26 +277,32 @@ async function normalizeBase64Image(photo: GenerateDiaryPhoto) {
     return `data:${mimeType};base64,${raw}`;
   }
 
-  const storagePath = cleanString(photo.storagePath, "");
   const storageKey = cleanString(photo.storageKey, "");
-  if (storagePath || storageKey) {
+  if (storageKey) {
+    // H7: reading a server-stored file from a CLIENT-supplied reference is a
+    // cross-tenant leak. Require the canonical `uploads/<id>-<filename>` form
+    // (no path traversal / extra separators), verify the caller owns <id>, and
+    // read strictly by that validated key. The raw client `storagePath` is
+    // intentionally NOT used — the ownership check cannot bind it, so a
+    // traversal like `<owned-id>-x/../<victim-id>-f.jpg` would read another
+    // tenant's file despite passing the check.
+    const uploadId = extractUploadId(storageKey);
+    const canonical = /^uploads\/\d+-[0-9a-f]+-[A-Za-z0-9._-]+$/.test(storageKey);
+    if (!uploadId || !canonical || !(await uploadBelongsToActorCompany(actor, uploadId))) {
+      return null;
+    }
     try {
-      const file = storageKey
-        ? await mediaStorage.readFile(
-            storageKey,
-            storageKey.split("/").pop()?.split("-").slice(1).join("-") || "image.jpg",
-            storagePath || undefined
-          )
-        : await fs.readFile(storagePath);
+      const filename = storageKey.slice(`uploads/${uploadId}-`.length);
+      const file = await mediaStorage.readFile(storageKey, filename);
       return `data:${mimeType};base64,${file.toString("base64")}`;
     } catch (error) {
-      console.warn("[ai] Failed to read stored photo for analysis", { storageKey, storagePath, error });
+      console.warn("[ai] Failed to read stored photo for analysis", { storageKey, error });
     }
   }
   return null;
 }
 
-async function buildVisionInputs(entries: GenerateDiaryEntry[]) {
+async function buildVisionInputs(entries: GenerateDiaryEntry[], actor: Pick<Actor, "companyId">) {
   const content: OpenAIContentItem[] = [];
   let includedImages = 0;
   const maxImages = 12;
@@ -298,7 +311,7 @@ async function buildVisionInputs(entries: GenerateDiaryEntry[]) {
     const photos = Array.isArray(entry.photos) ? entry.photos : [];
     for (const [photoIndex, photo] of photos.entries()) {
       if (includedImages >= maxImages) break;
-      const imageUrl = await normalizeBase64Image(photo);
+      const imageUrl = await normalizeBase64Image(photo, actor);
       if (!imageUrl) continue;
       includedImages += 1;
       content.push({
@@ -418,7 +431,7 @@ Return strict JSON with exactly these fields:
   ]
 }`;
 
-async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutput> {
+async function tryGenerateWithOpenAI(body: GenerateDiaryBody, actor: Pick<Actor, "companyId">): Promise<DiaryOutput> {
   const entries = Array.isArray(body.entries) ? body.entries : [];
   const period = normalizePeriod(body.period);
 
@@ -430,7 +443,7 @@ async function tryGenerateWithOpenAI(body: GenerateDiaryBody): Promise<DiaryOutp
   const model = process.env.OPENAI_MODEL || "gpt-4o";
   const client = getOpenAIClient();
 
-  const { content: visionInputs, imageCount } = await buildVisionInputs(entries);
+  const { content: visionInputs, imageCount } = await buildVisionInputs(entries, actor);
 
   const structuredPayload = {
     reportContext: {
@@ -586,7 +599,7 @@ aiRouter.post("/generate-diary", requireAuth, rateLimit("generate-diary", 10, 60
     if (resolved.entries.length === 0) {
       return res.status(400).json({ error: "No entries are available for the selected report period." });
     }
-    const diary = await tryGenerateWithOpenAI(resolved);
+    const diary = await tryGenerateWithOpenAI(resolved, (req as AuthenticatedRequest).auth);
     return res.json({ success: true, diary });
   } catch (err: unknown) {
     const statusFromOpenAI =

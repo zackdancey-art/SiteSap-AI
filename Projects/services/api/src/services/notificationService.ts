@@ -26,6 +26,26 @@ function isConfigured(value?: string) {
   return Boolean(value && value.trim());
 }
 
+function isTestMode() {
+  return process.env.NODE_ENV === "test";
+}
+
+type FakeSend =
+  | { kind: "email"; to: string; subject: string; text: string; html: string; at: number }
+  | { kind: "sms"; to: string; body: string; at: number };
+
+// Belt-and-braces record of what test mode "would have sent" — never used to
+// dispatch anything, just available for tests that want to assert on it.
+const fakeSends: FakeSend[] = [];
+
+export function getFakeSendsForTests(): readonly FakeSend[] {
+  return fakeSends;
+}
+
+export function resetFakeSendsForTests(): void {
+  fakeSends.length = 0;
+}
+
 async function sendWithResend(
   to: string,
   subject: string,
@@ -115,6 +135,25 @@ function getEmailProvider() {
 }
 
 async function sendEmail(to: string, subject: string, text: string, html: string): Promise<DeliveryResult> {
+  // Structural guard: in test mode, never make a real network call — even if
+  // real provider keys are present in the environment (e.g. a contaminated
+  // .env). No branch below this point is reachable in test mode.
+  //
+  // Deliberately `ok: false`, not `ok: true`: routes/auth.ts's registration
+  // and password-reset flows only surface `devCodes`/reset-link fallbacks
+  // when a delivery is unconfigured or fails, and the existing test suite's
+  // `registerAndLogin`/`createWorkerToken` helpers rely on that fallback to
+  // read verification codes without a real inbox. Returning success here
+  // (with real provider keys present in this repo's `.env`) would make the
+  // route believe delivery succeeded and stop returning devCodes, breaking
+  // that path outright — verified experimentally (32/44 tests fail with
+  // `ok: true`, 0 fail with `ok: false`). Both values are equally "no real
+  // network call" for the safety property this guard exists for.
+  if (isTestMode()) {
+    fakeSends.push({ kind: "email", to, subject, text, html, at: Date.now() });
+    return { ok: false, provider: "test-fake", error: "Test mode: email send faked, not dispatched." };
+  }
+
   const provider = getEmailProvider();
   if (provider === "resend") return sendWithResend(to, subject, text, html);
   if (provider === "sendgrid") return sendWithSendGrid(to, subject, text, html);
@@ -134,6 +173,15 @@ function getSmsConfigured() {
 }
 
 async function sendSms(to: string, bodyText: string): Promise<DeliveryResult> {
+  // Structural guard: in test mode, never make a real network call — even if
+  // real provider keys are present in the environment (e.g. a contaminated
+  // .env). No branch below this point is reachable in test mode.
+  // See the matching comment in sendEmail() for why this is `ok: false`.
+  if (isTestMode()) {
+    fakeSends.push({ kind: "sms", to, body: bodyText, at: Date.now() });
+    return { ok: false, provider: "test-fake", error: "Test mode: SMS send faked, not dispatched." };
+  }
+
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM_NUMBER;
