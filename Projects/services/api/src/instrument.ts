@@ -11,8 +11,14 @@ import { config as loadEnv } from "dotenv";
 loadEnv();
 
 const dsn = process.env.SENTRY_DSN?.trim();
+const isTestMode = process.env.NODE_ENV === "test";
 
-if (dsn) {
+// Never initialise Sentry in test mode, even if SENTRY_DSN is set (e.g. a
+// contaminated .env) — Sentry.init() wires up real network transport.
+// Sentry's own exported methods (captureException, etc.) are no-ops when
+// the SDK hasn't been initialised, so every existing call site keeps
+// working without a null check.
+if (dsn && !isTestMode) {
   Sentry.init({
     dsn,
     environment: process.env.NODE_ENV || "development",

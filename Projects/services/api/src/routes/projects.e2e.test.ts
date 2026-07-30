@@ -15,7 +15,6 @@ import { hashPassword } from "../utils/password";
 import { createAuthToken, verifyAuthToken } from "../utils/authToken";
 
 test("RBAC project workflow supports supervisor approval and scoped reads", async () => {
-  delete process.env.DATABASE_URL;
   await resetAuthStoreForTests();
   await resetProjectStoreForTests();
   await initAuthSchema();

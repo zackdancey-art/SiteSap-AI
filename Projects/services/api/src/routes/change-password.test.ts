@@ -18,10 +18,6 @@ import { resetAuthStoreForTests } from "../storage/authStore";
 import { resetProjectStoreForTests } from "../storage/projectsStore";
 import { resetRateLimitStoreForTests } from "../middleware/rateLimit";
 
-delete process.env.DATABASE_URL;
-process.env.AUTH_TOKEN_SECRET = "change-pw-test-secret";
-process.env.NODE_ENV = "test";
-
 let server: http.Server;
 let baseUrl: string;
 
