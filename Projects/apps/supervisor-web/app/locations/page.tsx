@@ -8,7 +8,7 @@ import { getSavedUser, isAuthenticated } from "@/lib/api";
 
 const WorkerMap = dynamic(() => import("@/components/WorkerMap"), { ssr: false });
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 type WorkerLocation = {
   id: string;

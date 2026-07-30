@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export type User = { email: string; name: string; role: string; companyId?: string; companyRole?: string };
 export type Site = { id: string; name: string; client: string; address: string; status: string; startDate?: string };

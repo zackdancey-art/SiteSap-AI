@@ -6,9 +6,11 @@ const withBundleAnalyzer = bundleAnalyzer({
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
 
-// Extract origin from API_URL for CSP connect-src
+// Extract origin from NEXT_PUBLIC_API_URL for CSP connect-src; fall back to 'self'
+// if it isn't set (rather than assuming a dev default the CSP shouldn't hardcode).
 function apiOrigin(url) {
-  try { return new URL(url).origin; } catch { return url; }
+  if (!url) return "'self'";
+  try { return new URL(url).origin; } catch { return "'self'"; }
 }
 
 const cspDirectives = [
@@ -16,7 +18,7 @@ const cspDirectives = [
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // unsafe-eval needed for Next.js dev HMR; tighten in prod if possible
   "style-src 'self' 'unsafe-inline'",
   // img-src already defined above with tile server
-  `connect-src 'self' ${apiOrigin(API_URL)} https://*.tile.openstreetmap.org`,
+  `connect-src 'self' ${apiOrigin(process.env.NEXT_PUBLIC_API_URL)} https://*.tile.openstreetmap.org`,
   "img-src 'self' data: blob: https://*.tile.openstreetmap.org",
   "font-src 'self'",
   "object-src 'none'",
