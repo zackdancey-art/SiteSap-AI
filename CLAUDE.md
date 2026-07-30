@@ -128,3 +128,21 @@ There is exactly **one LLM call site**: `routes/ai.ts` → `tryGenerateWithOpenA
 ## 9. Worktree isolation caveat (mostly for the orchestrator)
 
 A subagent spawned with `isolation: worktree` gets a **fresh checkout with no `node_modules`** — so `pnpm -C Projects … typecheck`/`test` will fail there until dependencies are installed (`pnpm -C Projects install`). Either install first inside the worktree, or don't use worktree isolation for test-running work and serialise it instead. Never spawn parallel worktree agents expected to run tests without accounting for this.
+
+---
+
+## 10. Working method for high-risk changes
+
+This is how the tenancy/security remediation (X1, H3a, H4–H8) was done, and the standard to hold future work of the same kind to. It is not ceremony — it caught real cross-tenant bugs that reasoning alone missed.
+
+- **Findings are the source of truth.** Everything traces to a finding ID in `docs/AUDIT.md` (e.g. `H1`, `H7`). Reference the ID and read that section — never act on a paraphrase. Record new discoveries there as they surface (H4–H8 were all found mid-implementation).
+
+- **Split judgement from execution.** The orchestrator keeps the parts where a subtle error is invisible in review and catastrophic in prod: tenancy/RLS design, the `withTenant` wrapper, security-critical authorization logic, and **every migration** (the orchestrator alone assigns migration numbers — highest is currently **023**). Mechanical execution against a decided spec is delegated (implementer), as are tests (test-author), dead-code removal (janitor), and docs regeneration (docs-scribe). If subagents aren't available, do the same work inline — the *division* matters more than the tooling.
+
+- **Adversarial verification is mandatory, not optional.** Every structural or security change goes through a read-only, adversarial review *before* acceptance, and **never by whoever wrote it**. Treat a `Partial` / `Not fixed` verdict as authoritative. Concretely, this review rejected two live cross-tenant bypasses in H7 — a forgeable "infer ownership from caller-writable entry JSON" design, and a path-traversal decoupling — either of which would have shipped as "fixed" on self-attestation. When the reviewer flags a hole, fix and re-review; don't argue it down.
+
+- **Security fixes on sensitive data (media, auth, tenancy) require a red-on-revert test.** Prove the guard fails when removed — don't rest on code reasoning. Where the path isn't reachable in the in-memory harness (e.g. the OpenAI vision path), mock at the boundary (see the `openaiClient` / `notificationService` `NODE_ENV==="test"` guards) rather than exporting internals or skipping the test.
+
+- **Migrations** are additive and idempotent (`IF NOT EXISTS` / `DROP POLICY IF EXISTS` … `CREATE`), run at boot. RLS uses `FORCE` (the app connects as the DB owner) and fail-closed `current_setting('app.company_id', true)`. A migration that must read another RLS-forced table cross-company (e.g. the H7 backfill reading `project_entries`) lifts `FORCE` for the read inside its own transaction and restores it.
+
+- **Git & secrets.** Feature branches only, never `main`. Real credentials live only in gitignored `.env`; scan the diff before committing. The pre-commit hook runs the full `lint && typecheck && test`; a logical-split commit series may use `--no-verify` because intermediate commits aren't individually green, but the **branch tip must pass all three** before push.
