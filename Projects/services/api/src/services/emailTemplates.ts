@@ -64,12 +64,17 @@ export function buildEmailHtml(opts: EmailTemplateOptions): string {
     <td align="center" style="padding:40px 16px;">
       <table cellpadding="0" cellspacing="0" role="presentation" style="max-width:580px;width:100%;">
 
-        <!-- Header -->
+        <!-- Header — logo-forward, no coloured band. A solid navy background
+             rectangle is exactly what Gmail's mobile dark mode force-inverts
+             (turning #0F2B46 into pale lavender), and no CSS reliably stops it.
+             The brand navy/orange instead lives inside the logo IMAGE, which
+             email clients never invert, so the header renders correctly in both
+             light and dark modes. -->
         <tr>
-          <td style="background-color:#0F2B46;border-radius:12px 12px 0 0;padding:28px 40px;text-align:center;">
-            <img src="${LOGO_URL}" width="52" height="52" alt="SiteSnap AI" style="display:block;margin:0 auto 14px;border-radius:14px;" />
-            <div style="color:#FFFFFF;font-size:20px;font-weight:700;letter-spacing:-0.3px;">SiteSnap AI</div>
-            <div style="color:rgba(255,255,255,0.55);font-size:12px;margin-top:4px;letter-spacing:0.2px;">Construction Site Management</div>
+          <td style="background-color:#FFFFFF;border:1px solid #DDE3EB;border-bottom:none;border-radius:12px 12px 0 0;padding:34px 40px 22px;text-align:center;">
+            <img src="${LOGO_URL}" width="64" height="64" alt="SiteSnap AI" style="display:block;margin:0 auto 14px;border-radius:16px;" />
+            <div style="color:#0F2B46;font-size:22px;font-weight:700;letter-spacing:-0.3px;">SiteSnap AI</div>
+            <div style="color:#6B7C93;font-size:12px;margin-top:4px;letter-spacing:0.2px;">Construction Site Management</div>
           </td>
         </tr>
 
