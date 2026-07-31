@@ -1,4 +1,5 @@
 import { Sentry } from "./instrument";
+import path from "path";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -95,6 +96,16 @@ export function createApp(): express.Express {
   app.use(requestId);
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+  // Public brand asset for transactional emails. Email clients can't load a
+  // data: URI (Gmail strips them) or a repo file, so the logo is served here
+  // as an absolute public URL; emailTemplates.ts LOGO_URL points at this path.
+  // The file is copied into dist/assets by the Dockerfile (tsc doesn't copy
+  // non-.ts files), mirroring how migrations are copied into dist/storage.
+  app.get("/assets/logo.png", (_req, res) => {
+    res.type("png");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.sendFile(path.join(__dirname, "assets", "logo.png"));
   });
   app.use(
     cors({

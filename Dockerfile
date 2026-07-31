@@ -39,6 +39,8 @@ COPY --from=deps /repo/Projects/node_modules ./node_modules
 COPY --from=deps /repo/Projects/services/api/node_modules ./services/api/node_modules
 COPY --from=build /repo/Projects/services/api/dist ./services/api/dist
 COPY --from=build /repo/Projects/services/api/src/storage/migrations ./services/api/dist/storage/migrations
+# Brand assets (email logo) — tsc doesn't copy non-.ts files, same as migrations above.
+COPY --from=build /repo/Projects/services/api/src/assets ./services/api/dist/assets
 COPY --from=build /repo/Projects/services/api/package.json ./services/api/package.json
 
 EXPOSE 4000
