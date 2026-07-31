@@ -37,7 +37,9 @@ CROSS JOIN LATERAL (
   ) AS upload_id
 ) x
 WHERE x.upload_id IS NOT NULL
-ORDER BY x.upload_id, e.created_at ASC
+-- project_entries' insert-time column is `timestamp` (migration 001); there is
+-- no created_at on this table. Earliest entry = genuine uploader.
+ORDER BY x.upload_id, e.timestamp ASC
 ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE project_entries FORCE ROW LEVEL SECURITY;
