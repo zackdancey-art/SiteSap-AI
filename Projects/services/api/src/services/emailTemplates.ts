@@ -1,5 +1,12 @@
 const YEAR = new Date().getFullYear();
 
+// Header logo. Email clients require an ABSOLUTE, publicly-hosted image URL
+// (Gmail strips data: URIs and can't reach a repo file), so the real SiteSnap
+// clipboard logo — the same asset the app/web login screens use — is served by
+// this API at GET /assets/logo.png (see server.ts). Overridable via LOGO_URL
+// for other environments; defaults to the live API host.
+const LOGO_URL = process.env.LOGO_URL || "https://sitesap-ai.onrender.com/assets/logo.png";
+
 type EmailTemplateOptions = {
   heading: string;
   bodyLines: string[];
@@ -40,6 +47,15 @@ export function buildEmailHtml(opts: EmailTemplateOptions): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Opt OUT of the client's automatic dark-mode colour inversion. Without this,
+     Gmail/Apple Mail lightness-invert the navy #0F2B46 header into pale
+     lavender and darken the white body. Declaring the email light-only makes
+     compliant clients render the authored brand colours as-is. -->
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<style>
+  :root { color-scheme: only light; supported-color-schemes: light; }
+</style>
 <title>SiteSnap AI</title>
 </head>
 <body style="margin:0;padding:0;background-color:#F5F7FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
@@ -51,7 +67,7 @@ export function buildEmailHtml(opts: EmailTemplateOptions): string {
         <!-- Header -->
         <tr>
           <td style="background-color:#0F2B46;border-radius:12px 12px 0 0;padding:28px 40px;text-align:center;">
-            <div style="width:52px;height:52px;background-color:#E8731A;border-radius:14px;margin:0 auto 14px;display:inline-flex;align-items:center;justify-content:center;font-size:26px;line-height:1;">📐</div>
+            <img src="${LOGO_URL}" width="52" height="52" alt="SiteSnap AI" style="display:block;margin:0 auto 14px;border-radius:14px;" />
             <div style="color:#FFFFFF;font-size:20px;font-weight:700;letter-spacing:-0.3px;">SiteSnap AI</div>
             <div style="color:rgba(255,255,255,0.55);font-size:12px;margin-top:4px;letter-spacing:0.2px;">Construction Site Management</div>
           </td>
