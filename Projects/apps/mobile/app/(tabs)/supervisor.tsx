@@ -8,7 +8,7 @@ import Colors from "@/constants/colors";
 export default function SupervisorTabScreen() {
   const { sites, entries, diaries } = useData();
   const { user } = useAuth();
-  const canSeeSupervisor = user?.role === "supervisor" || user?.role === "admin";
+  const canSeeSupervisor = user?.companyRole === "owner" || user?.companyRole === "manager";
 
   if (!canSeeSupervisor) {
     return (
