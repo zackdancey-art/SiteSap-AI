@@ -10,7 +10,7 @@ const buildStamp = new Date().toISOString().replace("T", " ").slice(0, 16);
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
-  name: "SiteSnap",
+  name: "SiteSnap AI",
   slug: "sitesnap",
   scheme: "sitesnap",
   version: pkg.version || "1.0.0",
@@ -20,7 +20,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: "./images/icon.png",
   userInterfaceStyle: "automatic",
   splash: {
-    image: "./images/splash-icon.png",
+    image: "./images/splash.png",
     resizeMode: "contain",
     backgroundColor: "#0F2B46",
   },
