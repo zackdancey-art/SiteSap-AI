@@ -96,7 +96,7 @@ test("supervisor can create an invite", async () => {
   const r = await req<{ results: Array<{ email: string; status: string }> }>(
     "POST",
     `/projects/sites/${siteId}/invites`,
-    { emails: ["worker1@example.com"], role: "worker" },
+    { emails: ["worker1@example.com"], role: "crew" },
     supToken
   );
   assert.equal(r.status, 201);
@@ -113,20 +113,20 @@ test("worker (non-supervisor, non-owner) gets 403 when creating invite", async (
   const r = await req<{ error: string }>(
     "POST",
     `/projects/sites/${siteId}/invites`,
-    { emails: ["other@example.com"], role: "worker" },
+    { emails: ["other@example.com"], role: "crew" },
     workerToken
   );
   assert.equal(r.status, 403);
 });
 
-test("site owner (worker role) can create invite for their own site", async () => {
+test("site owner (crew role) can create invite for their own site", async () => {
   const ownerToken = await registerAndLogin("owner@example.com", "+447911000020", "Owner");
   const siteId = await createSite(ownerToken);
 
   const r = await req<{ results: Array<{ email: string; status: string }> }>(
     "POST",
     `/projects/sites/${siteId}/invites`,
-    { emails: ["invited@example.com"], role: "worker" },
+    { emails: ["invited@example.com"], role: "crew" },
     ownerToken
   );
   assert.equal(r.status, 201);
@@ -140,7 +140,7 @@ test("accepted invite registers user as member; token cannot be reused", async (
   // Send invite
   await req(
     "POST", `/projects/sites/${siteId}/invites`,
-    { emails: ["joiner@example.com"], role: "worker" },
+    { emails: ["joiner@example.com"], role: "crew" },
     supToken
   );
 
@@ -164,7 +164,7 @@ test("accepted invite registers user as member; token cannot be reused", async (
   assert.equal(acceptR.status, 200);
   assert.equal(acceptR.body.siteId, siteId);
   assert.equal(acceptR.body.siteName, "Invite Site");
-  assert.equal(acceptR.body.role, "worker");
+  assert.equal(acceptR.body.role, "crew");
 
   // Verify the joiner appears in members list
   const membersR = await req<{ members: Array<{ memberEmail: string }> }>(
@@ -197,7 +197,7 @@ test("wrong-user token is rejected", async () => {
   const siteId = await createSite(supToken);
 
   await req("POST", `/projects/sites/${siteId}/invites`,
-    { emails: ["target@example.com"], role: "worker" }, supToken);
+    { emails: ["target@example.com"], role: "crew" }, supToken);
 
   const listR = await req<{ invites: Array<{ token: string }> }>(
     "GET", `/projects/sites/${siteId}/invites`, undefined, supToken
@@ -227,7 +227,7 @@ test("invited member sees the site in their sites list", async () => {
   const siteId = await createSite(supToken, "Member Site");
 
   await req("POST", `/projects/sites/${siteId}/invites`,
-    { emails: ["member@example.com"], role: "worker" }, supToken);
+    { emails: ["member@example.com"], role: "crew" }, supToken);
 
   const listR = await req<{ invites: Array<{ token: string }> }>(
     "GET", `/projects/sites/${siteId}/invites`, undefined, supToken
@@ -250,7 +250,7 @@ test("supervisor can revoke an invite", async () => {
   const siteId = await createSite(supToken);
 
   await req("POST", `/projects/sites/${siteId}/invites`,
-    { emails: ["revoked@example.com"], role: "worker" }, supToken);
+    { emails: ["revoked@example.com"], role: "crew" }, supToken);
 
   const listR = await req<{ invites: Array<{ id: string; token: string }> }>(
     "GET", `/projects/sites/${siteId}/invites`, undefined, supToken
@@ -276,7 +276,7 @@ test("already_member status returned for existing member", async () => {
 
   // Invite and accept once
   await req("POST", `/projects/sites/${siteId}/invites`,
-    { emails: ["repeat@example.com"], role: "worker" }, supToken);
+    { emails: ["repeat@example.com"], role: "crew" }, supToken);
   const listR = await req<{ invites: Array<{ token: string }> }>(
     "GET", `/projects/sites/${siteId}/invites`, undefined, supToken
   );
@@ -286,7 +286,7 @@ test("already_member status returned for existing member", async () => {
   // Invite again → should return already_member
   const r2 = await req<{ results: Array<{ email: string; status: string }> }>(
     "POST", `/projects/sites/${siteId}/invites`,
-    { emails: ["repeat@example.com"], role: "worker" },
+    { emails: ["repeat@example.com"], role: "crew" },
     supToken
   );
   assert.equal(r2.status, 201);
@@ -298,7 +298,7 @@ test("supervisor can remove a member", async () => {
   const siteId = await createSite(supToken);
 
   await req("POST", `/projects/sites/${siteId}/invites`,
-    { emails: ["leaveme@example.com"], role: "worker" }, supToken);
+    { emails: ["leaveme@example.com"], role: "crew" }, supToken);
   const listR = await req<{ invites: Array<{ token: string }> }>(
     "GET", `/projects/sites/${siteId}/invites`, undefined, supToken
   );
@@ -316,4 +316,101 @@ test("supervisor can remove a member", async () => {
     "GET", "/projects/sites", undefined, memberToken
   );
   assert.ok(!sitesR.body.sites.some((s) => s.id === siteId), "removed member should not see the site");
+});
+
+// ─── Role-mapping contract (invite role → invitee company_role) ───────────────
+
+test("inviting as 'manager' and accepting sets the invitee's companyRole to manager", async () => {
+  const ownerToken = await registerAndLogin("owner-mgr@example.com", "+447911000100", "Owner");
+  const siteId = await createSite(ownerToken, "Manager Invite Site");
+
+  const inviteR = await req<{ results: Array<{ email: string; status: string }> }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["newmanager@example.com"], role: "manager" },
+    ownerToken
+  );
+  assert.equal(inviteR.status, 201);
+  assert.equal(inviteR.body.results[0].status, "sent");
+
+  const listR = await req<{ invites: Array<{ token: string }> }>(
+    "GET", `/projects/sites/${siteId}/invites`, undefined, ownerToken
+  );
+  const token = listR.body.invites[0].token;
+
+  const managerToken = await registerAndLogin("newmanager@example.com", "+447911000101", "NewManager");
+
+  const acceptR = await req<{ companyRole: string; role: string }>(
+    "POST", "/projects/invites/accept",
+    { token },
+    managerToken
+  );
+  assert.equal(acceptR.status, 200);
+  // Must be strictly "manager" — if the code regresses to hardcoding "crew",
+  // this assertion fails.
+  assert.equal(acceptR.body.companyRole, "manager");
+
+  // Independently verify via a fresh read of the persisted user record.
+  const meR = await req<{ user: { companyRole: string } }>(
+    "GET", "/auth/me", undefined, managerToken
+  );
+  assert.equal(meR.status, 200);
+  assert.equal(meR.body.user.companyRole, "manager");
+});
+
+test("inviting as 'crew' and accepting sets the invitee's companyRole to crew", async () => {
+  const ownerToken = await registerAndLogin("owner-crew@example.com", "+447911000110", "Owner");
+  const siteId = await createSite(ownerToken, "Crew Invite Site");
+
+  const inviteR = await req<{ results: Array<{ email: string; status: string }> }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["newcrew@example.com"], role: "crew" },
+    ownerToken
+  );
+  assert.equal(inviteR.status, 201);
+  assert.equal(inviteR.body.results[0].status, "sent");
+
+  const listR = await req<{ invites: Array<{ token: string }> }>(
+    "GET", `/projects/sites/${siteId}/invites`, undefined, ownerToken
+  );
+  const token = listR.body.invites[0].token;
+
+  const crewToken = await registerAndLogin("newcrew@example.com", "+447911000111", "NewCrew");
+
+  const acceptR = await req<{ companyRole: string; role: string }>(
+    "POST", "/projects/invites/accept",
+    { token },
+    crewToken
+  );
+  assert.equal(acceptR.status, 200);
+  assert.equal(acceptR.body.companyRole, "crew");
+
+  const meR = await req<{ user: { companyRole: string } }>(
+    "GET", "/auth/me", undefined, crewToken
+  );
+  assert.equal(meR.status, 200);
+  assert.equal(meR.body.user.companyRole, "crew");
+});
+
+test("legacy role 'worker' is rejected by the invite schema", async () => {
+  const ownerToken = await registerAndLogin("owner-legacy1@example.com", "+447911000120", "Owner");
+  const siteId = await createSite(ownerToken);
+
+  const r = await req<{ error: string }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["someone@example.com"], role: "worker" },
+    ownerToken
+  );
+  assert.equal(r.status, 400, "legacy 'worker' role must be rejected by the schema, not silently accepted");
+});
+
+test("role 'owner' is rejected by the invite schema (owner is not assignable via invite)", async () => {
+  const ownerToken = await registerAndLogin("owner-legacy2@example.com", "+447911000130", "Owner");
+  const siteId = await createSite(ownerToken);
+
+  const r = await req<{ error: string }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["someone-else@example.com"], role: "owner" },
+    ownerToken
+  );
+  assert.equal(r.status, 400, "'owner' must not be assignable via invite");
 });

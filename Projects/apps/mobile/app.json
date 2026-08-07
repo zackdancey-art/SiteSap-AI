@@ -1,12 +1,13 @@
 {
   "expo": {
-    "name": "SiteSnap",
+    "name": "SiteSnap AI",
     "slug": "sitesnap",
     "scheme": "sitesnap",
     "version": "1.0.0",
     "platforms": [
       "ios",
-      "android"
+      "android",
+      "web"
     ],
     "jsEngine": "hermes",
     "plugins": [

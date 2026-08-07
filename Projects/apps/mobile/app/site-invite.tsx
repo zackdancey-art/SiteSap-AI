@@ -16,7 +16,7 @@ import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { InviteResult } from "@/lib/types";
 
-type Role = "worker" | "supervisor";
+type Role = "crew" | "manager";
 
 export default function SiteInviteScreen() {
   const insets = useSafeAreaInsets();
@@ -24,7 +24,7 @@ export default function SiteInviteScreen() {
   const { inviteCrewMembers } = useData();
 
   const [emailsText, setEmailsText] = useState("");
-  const [role, setRole] = useState<Role>("worker");
+  const [role, setRole] = useState<Role>("crew");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<InviteResult[] | null>(null);
 
@@ -101,7 +101,7 @@ export default function SiteInviteScreen() {
 
             <Text style={[styles.label, { marginTop: 24 }]}>Role</Text>
             <View style={styles.roleRow}>
-              {(["worker", "supervisor"] as Role[]).map((r) => (
+              {(["crew", "manager"] as Role[]).map((r) => (
                 <Pressable
                   key={r}
                   style={[styles.roleChip, role === r && styles.roleChipActive]}

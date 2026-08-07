@@ -7,6 +7,7 @@ type User = {
   email: string;
   name: string;
   role: "worker" | "supervisor" | "admin";
+  companyRole: "owner" | "manager" | "viewer" | "crew" | null;
 };
 
 interface AuthContextType {
@@ -82,6 +83,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               parsed.role === "supervisor" || parsed.role === "admin" || parsed.role === "worker"
                 ? parsed.role
                 : "worker",
+            companyRole:
+              parsed.companyRole === "owner" || parsed.companyRole === "manager" ||
+              parsed.companyRole === "viewer" || parsed.companyRole === "crew"
+                ? parsed.companyRole
+                : null,
           };
           setToken(token);
           setUser(normalizedUser);
@@ -123,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const data = (await res.json()) as {
         token?: string;
-        user?: { email?: string; name?: string; role?: "worker" | "supervisor" | "admin" };
+        user?: { email?: string; name?: string; role?: "worker" | "supervisor" | "admin"; companyRole?: "owner" | "manager" | "viewer" | "crew" };
       };
       if (!data.token) {
         throw new Error("No token in response");
@@ -134,6 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email: data.user?.email || email,
         name: data.user?.name || inferNameFromEmail(email),
         role: data.user?.role || "worker",
+        companyRole: data.user?.companyRole ?? null,
       };
       await AsyncStorage.setItem("sitesnap.user", JSON.stringify(userObj));
       await AsyncStorage.setItem("sitesnap.lastEmail", email);
@@ -163,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return null;
-      const data = (await res.json()) as { token?: string; user?: { email?: string; name?: string; role?: "worker" | "supervisor" | "admin" } };
+      const data = (await res.json()) as { token?: string; user?: { email?: string; name?: string; role?: "worker" | "supervisor" | "admin"; companyRole?: "owner" | "manager" | "viewer" | "crew" } };
       if (!data.token) return null;
       await AsyncStorage.setItem("sitesnap.token", data.token);
       setToken(data.token);
@@ -172,6 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: data.user.email || user?.email || "",
           name: data.user.name || user?.name || "",
           role: data.user.role || user?.role || "worker",
+          companyRole: data.user.companyRole ?? user?.companyRole ?? null,
         };
         setUser(nextUser);
         await AsyncStorage.setItem("sitesnap.user", JSON.stringify(nextUser));
@@ -226,12 +234,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const payload = (await res.json()) as {
         token?: string;
-        user?: { email?: string; name?: string; role?: "worker" | "supervisor" | "admin" };
+        user?: { email?: string; name?: string; role?: "worker" | "supervisor" | "admin"; companyRole?: "owner" | "manager" | "viewer" | "crew" };
       };
       const nextUser: User = {
         email: payload.user?.email || user.email,
         name: payload.user?.name || user.name,
         role: payload.user?.role || user.role,
+        companyRole: payload.user?.companyRole ?? user.companyRole ?? null,
       };
       if (payload.token) {
         await AsyncStorage.setItem("sitesnap.token", payload.token);

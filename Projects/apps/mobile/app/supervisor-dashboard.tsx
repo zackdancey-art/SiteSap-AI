@@ -18,7 +18,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 export default function SupervisorDashboardScreen() {
   const { sites, entries, diaries } = useData();
   const { user } = useAuth();
-  const canSeeSupervisor = user?.role === "supervisor" || user?.role === "admin";
+  const canSeeSupervisor = user?.companyRole === "owner" || user?.companyRole === "manager";
 
   if (!canSeeSupervisor) {
     return (
