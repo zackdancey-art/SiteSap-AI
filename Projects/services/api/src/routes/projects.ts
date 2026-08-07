@@ -259,7 +259,7 @@ projectsRouter.delete("/projects/templates/:id", async (req, res) => {
 
 const InviteSchema = z.object({
   emails: z.array(z.string().email()).min(1).max(50),
-  role: z.enum(["worker", "supervisor"]).default("worker"),
+  role: z.enum(["manager", "viewer", "crew"]).default("crew"),
 });
 
 projectsRouter.post("/projects/sites/:siteId/invites", async (req, res) => {
@@ -274,7 +274,7 @@ projectsRouter.post("/projects/sites/:siteId/invites", async (req, res) => {
     return res.status(400).json({ error: "Invalid invite payload.", details: parsed.error.flatten() });
   }
 
-  const results = await createSiteInvites(actor, req.params.siteId, parsed.data.emails, parsed.data.role);
+  const results = await createSiteInvites(actor, req.params.siteId, parsed.data.emails, parsed.data.role, parsed.data.role);
   if (results === null) {
     return res.status(403).json({ error: "Insufficient permissions to manage this site." });
   }
