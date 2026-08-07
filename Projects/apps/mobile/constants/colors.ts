@@ -14,10 +14,27 @@ const Colors = {
   success: "#22C55E",
   error: "#EF4444",
   warning: "#F59E0B",
+  info: "#2E78B7",
   white: "#FFFFFF",
   black: "#000000",
   overlay: "rgba(15, 43, 70, 0.5)",
   cardShadow: "rgba(15, 43, 70, 0.08)",
+
+  // Semantic status tints (background / border / text) for pills, banners and
+  // badges. Consolidated from ~40 ad-hoc hex literals across the incidents,
+  // crew, deliveries and inspections screens so status colour lives in one place.
+  warningBg: "#FEF3C7",
+  warningBorder: "#FCD34D",
+  warningText: "#92400E",
+  errorBg: "#FEE2E2",
+  errorBorder: "#FECACA",
+  errorText: "#991B1B",
+  successBg: "#DCFCE7",
+  successBorder: "#A7F3D0",
+  successText: "#166534",
+  infoBg: "#DBEAFE",
+  infoBorder: "#BFDBFE",
+  infoText: "#1E3A8A",
   light: {
     text: "#0F2B46",
     background: "#F5F7FA",

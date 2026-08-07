@@ -43,11 +43,11 @@ type Incident = {
 };
 
 const SEVERITY_META: Record<Severity, { color: string; label: string }> = {
-  "near-miss": { color: "#F6AD55", label: "Near Miss" },
-  minor:       { color: "#68D391", label: "Minor" },
-  moderate:    { color: "#F6E05E", label: "Moderate" },
-  major:       { color: "#FC8181", label: "Major" },
-  critical:    { color: "#9F1239", label: "Critical" },
+  "near-miss": { color: Colors.accentLight, label: "Near Miss" },
+  minor:       { color: Colors.successBorder, label: "Minor" },
+  moderate:    { color: Colors.warningBorder, label: "Moderate" },
+  major:       { color: Colors.errorBorder, label: "Major" },
+  critical:    { color: Colors.errorText, label: "Critical" },
 };
 
 const TYPE_LABELS: Record<IncidentType, string> = {
@@ -258,7 +258,7 @@ export default function IncidentsScreen() {
           {site && <Text style={styles.headerSub}>{site.name}</Text>}
         </View>
         <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color="#fff" />
+          <Ionicons name="add" size={22} color={Colors.white} />
           <Text style={styles.addBtnText}>Report</Text>
         </Pressable>
       </View>
@@ -276,7 +276,7 @@ export default function IncidentsScreen() {
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
           {incidents.map((inc) => {
-            const sev = SEVERITY_META[inc.severity] ?? { color: "#888", label: inc.severity };
+            const sev = SEVERITY_META[inc.severity] ?? { color: Colors.textTertiary, label: inc.severity };
             const expanded = expandedId === inc.id;
             return (
               <Pressable key={inc.id} style={styles.card} onPress={() => setExpandedId(expanded ? null : inc.id)}>
@@ -320,7 +320,7 @@ export default function IncidentsScreen() {
                         </Pressable>
                       )}
                       <Pressable style={[styles.actionBtn, styles.actionBtnRed]} onPress={() => handleDelete(inc.id)}>
-                        <Ionicons name="trash-outline" size={14} color="#fff" />
+                        <Ionicons name="trash-outline" size={14} color={Colors.white} />
                       </Pressable>
                     </View>
                   </View>
@@ -348,7 +348,7 @@ export default function IncidentsScreen() {
               onPress={handleAdd}
               disabled={saving}
             >
-              {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={formStyles.submitBtnText}>Submit</Text>}
+              {saving ? <ActivityIndicator color={Colors.white} size="small" /> : <Text style={formStyles.submitBtnText}>Submit</Text>}
             </Pressable>
           </View>
 
@@ -442,7 +442,7 @@ export default function IncidentsScreen() {
                 meta={{
                   none:        { color: Colors.textTertiary, label: "None" },
                   "first-aid": { color: Colors.success,      label: "First Aid" },
-                  medical:     { color: "#F6AD55",            label: "Medical" },
+                  medical:     { color: Colors.accentLight,            label: "Medical" },
                   hospital:    { color: Colors.error,         label: "Hospital" },
                 }}
               />
@@ -526,16 +526,16 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 10,
     backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center",
   },
-  headerTitle: { fontSize: 17, fontWeight: "700", color: "#fff" },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: Colors.white },
   headerSub: { fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 1 },
   addBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
   },
-  addBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  addBtnText: { color: Colors.white, fontSize: 14, fontWeight: "700" },
   card: {
-    backgroundColor: "#fff", borderRadius: 16, padding: 14,
-    shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    backgroundColor: Colors.surface, borderRadius: 16, padding: 14,
+    shadowColor: Colors.black, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
   },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   sevBadge: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
@@ -543,10 +543,10 @@ const styles = StyleSheet.create({
   sevText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
   cardDate: { flex: 1, fontSize: 12, color: Colors.textSecondary, textAlign: "right" },
   statusBadge: {
-    backgroundColor: "#FEE2E2", borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
+    backgroundColor: Colors.errorBg, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
   },
-  statusClosed: { backgroundColor: "#D1FAE5" },
-  statusInvestigating: { backgroundColor: "#FEF3C7" },
+  statusClosed: { backgroundColor: Colors.successBg },
+  statusInvestigating: { backgroundColor: Colors.warningBg },
   statusText: { fontSize: 10, fontWeight: "800", color: Colors.text },
   cardType: { fontSize: 11, color: Colors.textTertiary, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.3 },
   cardDesc: { fontSize: 14, color: Colors.text, lineHeight: 20 },
@@ -557,24 +557,24 @@ const styles = StyleSheet.create({
   cardActions: { flexDirection: "row", gap: 8, marginTop: 8 },
   actionBtn: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, alignItems: "center", justifyContent: "center" },
   actionBtnGreen: { backgroundColor: Colors.success },
-  actionBtnAmber: { backgroundColor: "#F6AD55" },
+  actionBtnAmber: { backgroundColor: Colors.accentLight },
   actionBtnRed: { backgroundColor: Colors.error },
-  actionBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  actionBtnText: { color: Colors.white, fontSize: 13, fontWeight: "700" },
   expandRow: { alignItems: "center", marginTop: 6 },
 });
 
 const formStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, backgroundColor: Colors.surface },
   modalHeader: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 20, paddingBottom: 16,
-    borderBottomWidth: 1, borderBottomColor: "#E8EDF5",
+    borderBottomWidth: 1, borderBottomColor: Colors.surfaceSecondary,
   },
   modalTitle: { fontSize: 17, fontWeight: "700", color: Colors.text },
   submitBtn: {
     backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8,
   },
-  submitBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  submitBtnText: { color: Colors.white, fontSize: 14, fontWeight: "700" },
   scroll: { padding: 20, gap: 12 },
   sectionHeader: {
     fontSize: 13, fontWeight: "800", color: Colors.primary,
@@ -586,24 +586,24 @@ const formStyles = StyleSheet.create({
   label: { fontSize: 13, fontWeight: "600", color: Colors.text },
   required: { color: Colors.error },
   input: {
-    borderWidth: 1, borderColor: "#DDE5EF", borderRadius: 12,
-    padding: 12, fontSize: 14, color: Colors.text, backgroundColor: "#FAFBFC",
+    borderWidth: 1, borderColor: Colors.border, borderRadius: 12,
+    padding: 12, fontSize: 14, color: Colors.text, backgroundColor: Colors.background,
   },
   multiline: { minHeight: 80, textAlignVertical: "top" },
   rowFields: { flexDirection: "row", gap: 12 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
-    backgroundColor: "#F0F4FA", borderWidth: 1, borderColor: "#DDE5EF",
+    backgroundColor: Colors.surfaceSecondary, borderWidth: 1, borderColor: Colors.border,
   },
   chipText: { fontSize: 13, color: Colors.text, fontWeight: "600" },
-  chipTextActive: { color: "#fff" },
+  chipTextActive: { color: Colors.white },
   boolRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   boolChip: {
     paddingHorizontal: 20, paddingVertical: 8, borderRadius: 10,
-    backgroundColor: "#F0F4FA", borderWidth: 1, borderColor: "#DDE5EF",
+    backgroundColor: Colors.surfaceSecondary, borderWidth: 1, borderColor: Colors.border,
   },
   boolChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   boolChipText: { fontSize: 14, color: Colors.text, fontWeight: "600" },
-  boolChipTextActive: { color: "#fff" },
+  boolChipTextActive: { color: Colors.white },
 });

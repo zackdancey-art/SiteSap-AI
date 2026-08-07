@@ -47,9 +47,9 @@ function ClassicTabLayout({ canSeeSupervisor }: { canSeeSupervisor: boolean }) {
         },
         tabBarStyle: {
           position: "absolute",
-          backgroundColor: isIOS ? "transparent" : isDark ? "#000" : "#fff",
+          backgroundColor: isIOS ? "transparent" : isDark ? Colors.black : Colors.surface,
           borderTopWidth: isWeb ? 1 : 0,
-          borderTopColor: isDark ? "#333" : Colors.border,
+          borderTopColor: isDark ? Colors.text : Colors.border,
           elevation: 0,
           ...(isWeb ? { height: 84 } : {}),
         },
@@ -61,7 +61,7 @@ function ClassicTabLayout({ canSeeSupervisor }: { canSeeSupervisor: boolean }) {
               style={StyleSheet.absoluteFill}
             />
           ) : isWeb ? (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? "#000" : "#fff" }]} />
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? Colors.black : Colors.surface }]} />
           ) : null,
       }}
     >

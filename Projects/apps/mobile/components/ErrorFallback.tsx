@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
+import Colors from "@/constants/colors";
 
 export type ErrorFallbackProps = {
   error: Error;
@@ -24,12 +25,12 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
   const insets = useSafeAreaInsets();
 
   const theme = {
-    background: isDark ? "#000000" : "#FFFFFF",
-    backgroundSecondary: isDark ? "#1C1C1E" : "#F2F2F7",
-    text: isDark ? "#FFFFFF" : "#000000",
+    background: isDark ? Colors.black : Colors.surface,
+    backgroundSecondary: isDark ? Colors.text : Colors.background,
+    text: isDark ? Colors.surface : Colors.black,
     textSecondary: isDark ? "rgba(255, 255, 255, 0.7)" : "rgba(0, 0, 0, 0.7)",
-    link: "#007AFF",
-    buttonText: "#FFFFFF",
+    link: Colors.info,
+    buttonText: Colors.surface,
   };
 
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -222,7 +223,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 24,
     minWidth: 200,
-    shadowColor: "#000",
+    shadowColor: Colors.black,
     shadowOffset: {
       width: 0,
       height: 2,

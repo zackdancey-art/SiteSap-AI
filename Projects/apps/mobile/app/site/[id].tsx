@@ -534,7 +534,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   progressStepTextActive: {
-    color: "#fff",
+    color: Colors.white,
   },
   actionBarScroll: {
     flexGrow: 0,

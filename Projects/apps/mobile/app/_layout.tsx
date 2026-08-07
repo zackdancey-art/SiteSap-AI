@@ -14,6 +14,7 @@ import { logResolvedApiBaseUrlOnce } from "@/lib/api-base-url";
 import { resumeTrackingIfEnabled } from "@/lib/location-service";
 import { ONBOARDING_COMPLETE_KEY } from "./onboarding";
 import Constants from "expo-constants";
+import Colors from "@/constants/colors";
 
 const sentryDsn = (Constants.expoConfig?.extra as { sentryDsn?: string } | undefined)?.sentryDsn
   || process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -54,7 +55,7 @@ function RootLayoutNav() {
           title: "New Site",
           presentation: "modal",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -75,7 +76,7 @@ function RootLayoutNav() {
           title: "New Entry",
           presentation: "modal",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -96,7 +97,7 @@ function RootLayoutNav() {
           title: "Profile",
           presentation: "modal",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -104,7 +105,7 @@ function RootLayoutNav() {
         options={{
           title: "Export Diaries",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -112,7 +113,7 @@ function RootLayoutNav() {
         options={{
           title: "Backup Data",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -120,7 +121,7 @@ function RootLayoutNav() {
         options={{
           title: "Privacy Policy",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -128,7 +129,7 @@ function RootLayoutNav() {
         options={{
           title: "Help & Support",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -136,7 +137,7 @@ function RootLayoutNav() {
         options={{
           title: "Supervisor Dashboard",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen name="invite" options={{ headerShown: false }} />

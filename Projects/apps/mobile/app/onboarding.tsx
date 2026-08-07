@@ -128,7 +128,7 @@ export default function OnboardingScreen() {
           <Ionicons
             name={isLast ? "checkmark" : "arrow-forward"}
             size={18}
-            color="#fff"
+            color={Colors.white}
           />
         </Pressable>
       </View>
@@ -139,7 +139,7 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: Colors.surface,
   },
   skipButton: {
     alignSelf: "flex-end",
@@ -207,7 +207,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   nextText: {
-    color: "#fff",
+    color: Colors.white,
     fontSize: 17,
     fontWeight: "700",
   },

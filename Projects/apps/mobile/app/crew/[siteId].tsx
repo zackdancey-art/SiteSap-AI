@@ -251,7 +251,7 @@ export default function CrewTimecards() {
           }
         </Pressable>
         <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color="#fff" />
+          <Ionicons name="add" size={22} color={Colors.white} />
         </Pressable>
       </View>
 
@@ -395,7 +395,7 @@ export default function CrewTimecards() {
             </Pressable>
             <Text style={styles.modalTitle}>Add Timecard</Text>
             <Pressable onPress={handleAdd} disabled={saving} style={[styles.modalSaveBtn, saving && { opacity: 0.6 }]}>
-              {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalSaveTxt}>Save</Text>}
+              {saving ? <ActivityIndicator size="small" color={Colors.white} /> : <Text style={styles.modalSaveTxt}>Save</Text>}
             </Pressable>
           </View>
 
@@ -586,7 +586,7 @@ const styles = StyleSheet.create({
   // Worker summary
   workerCard: { backgroundColor: Colors.surface, borderRadius: 16, padding: 16, flexDirection: "row", alignItems: "center", gap: 14, borderWidth: 1, borderColor: Colors.border },
   workerAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.primary, alignItems: "center", justifyContent: "center" },
-  workerAvatarText: { fontSize: 18, fontFamily: "Inter_700Bold", color: "#fff" },
+  workerAvatarText: { fontSize: 18, fontFamily: "Inter_700Bold", color: Colors.white },
   workerName: { fontSize: 15, fontFamily: "Inter_700Bold", color: Colors.text },
   workerTrade: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary, marginTop: 1 },
   workerStats: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
@@ -601,7 +601,7 @@ const styles = StyleSheet.create({
   modalClose: { padding: 4 },
   modalTitle: { flex: 1, fontSize: 18, fontFamily: "Inter_700Bold", color: Colors.text },
   modalSaveBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 8 },
-  modalSaveTxt: { color: "#fff", fontFamily: "Inter_600SemiBold", fontSize: 14 },
+  modalSaveTxt: { color: Colors.white, fontFamily: "Inter_600SemiBold", fontSize: 14 },
   modalContent: { padding: 16, gap: 8, paddingBottom: 40 },
 
   formSectionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.textSecondary, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 8, marginLeft: 4 },

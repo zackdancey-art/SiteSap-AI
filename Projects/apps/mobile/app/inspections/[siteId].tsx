@@ -155,7 +155,7 @@ export default function InspectionsScreen() {
           {site && <Text style={styles.headerSub}>{site.name}</Text>}
         </View>
         <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color="#fff" />
+          <Ionicons name="add" size={22} color={Colors.white} />
         </Pressable>
       </View>
 
@@ -235,7 +235,7 @@ export default function InspectionsScreen() {
             )}
             <Text style={styles.previewLabel}>{getItems().length} checklist items will be created</Text>
             <Pressable style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={handleCreate} disabled={saving}>
-              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Create Inspection</Text>}
+              {saving ? <ActivityIndicator color={Colors.white} /> : <Text style={styles.saveBtnText}>Create Inspection</Text>}
             </Pressable>
           </ScrollView>
         </View>
@@ -261,13 +261,13 @@ export default function InspectionsScreen() {
                       style={[styles.resultBtn, result.passed === true && styles.resultBtnPass]}
                       onPress={() => handleUpdateResult(showActive, idx, result.passed === true ? null : true)}
                     >
-                      <Ionicons name="checkmark" size={16} color={result.passed === true ? "#fff" : Colors.success} />
+                      <Ionicons name="checkmark" size={16} color={result.passed === true ? Colors.surface : Colors.success} />
                     </Pressable>
                     <Pressable
                       style={[styles.resultBtn, result.passed === false && styles.resultBtnFail]}
                       onPress={() => handleUpdateResult(showActive, idx, result.passed === false ? null : false)}
                     >
-                      <Ionicons name="close" size={16} color={result.passed === false ? "#fff" : Colors.error} />
+                      <Ionicons name="close" size={16} color={result.passed === false ? Colors.surface : Colors.error} />
                     </Pressable>
                   </View>
                 </View>
@@ -282,12 +282,12 @@ export default function InspectionsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: { flexDirection: "row", alignItems: "center", padding: 16, gap: 12, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#E8EDF5" },
+  header: { flexDirection: "row", alignItems: "center", padding: 16, gap: 12, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.surfaceSecondary },
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 17, fontWeight: "700", color: Colors.text },
   headerSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 1 },
   addBtn: { backgroundColor: Colors.primary, borderRadius: 10, padding: 8 },
-  card: { backgroundColor: "#fff", borderRadius: 14, padding: 16, flexDirection: "row", alignItems: "center", gap: 12, shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
+  card: { backgroundColor: Colors.surface, borderRadius: 14, padding: 16, flexDirection: "row", alignItems: "center", gap: 12, shadowColor: Colors.black, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
   cardName: { fontSize: 15, fontWeight: "700", color: Colors.text, flex: 1 },
   cardMeta: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
   passRate: { fontSize: 13, fontWeight: "600", marginTop: 4 },
@@ -297,19 +297,19 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 11, fontWeight: "700" },
   badgeCompleteText: { color: Colors.success },
   badgePendingText: { color: Colors.warning },
-  modal: { flex: 1, backgroundColor: "#fff" },
-  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: "#E8EDF5" },
+  modal: { flex: 1, backgroundColor: Colors.surface },
+  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: Colors.surfaceSecondary },
   modalTitle: { fontSize: 18, fontWeight: "700", color: Colors.text },
-  input: { borderWidth: 1, borderColor: "#DDE5EF", borderRadius: 12, padding: 14, fontSize: 15, color: Colors.text, backgroundColor: "#fff" },
+  input: { borderWidth: 1, borderColor: Colors.border, borderRadius: 12, padding: 14, fontSize: 15, color: Colors.text, backgroundColor: Colors.surface },
   inputLabel: { fontSize: 13, color: Colors.textSecondary, marginBottom: 2 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: Colors.border, backgroundColor: "#fff" },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
   chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { fontSize: 13, color: Colors.textSecondary, fontWeight: "600" },
-  chipTextActive: { color: "#fff" },
+  chipTextActive: { color: Colors.white },
   previewLabel: { fontSize: 13, color: Colors.textTertiary, textAlign: "center" },
   saveBtn: { backgroundColor: Colors.primary, borderRadius: 14, padding: 16, alignItems: "center" },
-  saveBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  resultRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#F8FAFB", borderRadius: 12, padding: 14 },
+  saveBtnText: { color: Colors.white, fontSize: 16, fontWeight: "700" },
+  resultRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: Colors.background, borderRadius: 12, padding: 14 },
   resultItem: { flex: 1, fontSize: 14, color: Colors.text },
   resultBtns: { flexDirection: "row", gap: 8 },
   resultBtn: { width: 36, height: 36, borderRadius: 10, borderWidth: 1.5, borderColor: Colors.border, alignItems: "center", justifyContent: "center" },
