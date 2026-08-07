@@ -16,7 +16,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: pkg.version || "1.0.0",
   orientation: "portrait",
   jsEngine: "hermes",
-  platforms: ["ios", "android"],
+  platforms: ["ios", "android", "web"],
   icon: "./images/icon.png",
   userInterfaceStyle: "automatic",
   splash: {
