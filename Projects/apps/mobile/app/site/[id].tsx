@@ -109,7 +109,7 @@ export default function SiteDetailScreen() {
     );
   }, [allEntries, search]);
 
-  const canManage = user?.role === "supervisor" || user?.role === "admin";
+  const canManage = user?.companyRole === "owner" || user?.companyRole === "manager";
 
   useEffect(() => {
     if (!id) return;
