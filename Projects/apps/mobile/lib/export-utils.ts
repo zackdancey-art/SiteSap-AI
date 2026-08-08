@@ -4,6 +4,7 @@ import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 import { Paths } from "expo-file-system";
 import type { DiarySection, GeneratedDiary, Photo, Site } from "@/lib/types";
+import { LOGO_DATA_URI } from "@/lib/logo";
 
 export type ReportExportFormat = "pdf" | "doc";
 
@@ -44,10 +45,6 @@ function buildSectionTable(section: DiarySection) {
 
   return `<table class="detail-table">${rows}</table>`;
 }
-
-// Public brand logo (same asset the transactional emails use). Served by the
-// API; must be an absolute public URL so it resolves inside exported documents.
-const LOGO_URL = "https://sitesap-ai.onrender.com/assets/logo.png";
 
 export function buildHtmlDocument(args: {
   title: string;
@@ -233,7 +230,7 @@ export function buildHtmlDocument(args: {
     <div class="page">
       <div class="shell">
         <div class="hero">
-          <img class="hero-logo" src="${LOGO_URL}" alt="SiteSnap AI" />
+          <img class="hero-logo" src="${LOGO_DATA_URI}" alt="SiteSnap AI" />
           <div class="hero-text">
             ${args.eyebrow ? `<div class="eyebrow">${escapeHtml(args.eyebrow)}</div>` : ""}
             <h1>${escapeHtml(args.title)}</h1>
