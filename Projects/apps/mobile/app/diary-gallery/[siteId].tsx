@@ -6,7 +6,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import Colors from "@/constants/colors";
 import { useData } from "@/lib/data-context";
 import { Photo } from "@/lib/types";
-import { exportReportDocument } from "@/lib/export-utils";
+import { exportReportDocument, buildHtmlDocument } from "@/lib/export-utils";
 
 type GalleryItem = {
   id: string;
@@ -72,20 +72,17 @@ export default function DiaryGalleryScreen() {
       })
       .join("");
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#eef2f7; color:#0f2b46; margin:0; }
-      .page { padding:32px; }
-      .shell { background:#fff; border-radius:20px; overflow:hidden; }
-      .hero { background:#0f2b46; color:#fff; padding:28px 32px; }
-      .hero h1 { margin:0; font-size:30px; }
-      .hero p { margin:10px 0 0; color:rgba(255,255,255,0.82); }
-      .content { padding:24px 32px 32px; }
-      .section { border:1px solid #e3eaf2; border-radius:18px; padding:18px; margin-bottom:16px; page-break-inside:avoid; }
-      .section h2 { margin:0 0 12px; }
-      .detail-table { width:100%; border-collapse:collapse; }
-      .detail-table th, .detail-table td { border-top:1px solid #e6edf5; text-align:left; vertical-align:top; padding:10px 0; font-size:13px; line-height:1.55; }
-      .detail-table th { width:150px; color:#6f8095; padding-right:14px; }
-    </style></head><body><div class="page"><div class="shell"><div class="hero"><h1>${site.name} Gallery</h1><p>${site.client} • ${galleryItems.length} photos</p></div><div class="content">${cards}</div></div></div></body></html>`;
+    const html = buildHtmlDocument({
+      eyebrow: "Photo Gallery",
+      title: `${site.name} Gallery`,
+      subtitle: `${site.client} • ${galleryItems.length} photos`,
+      meta: [
+        { label: "Photos", value: String(galleryItems.length) },
+        { label: "Site", value: site.name },
+        { label: "Client", value: site.client },
+      ],
+      body: cards,
+    });
 
     Alert.alert("Export Gallery", "Choose an export format.", [
       { text: "Cancel", style: "cancel" },

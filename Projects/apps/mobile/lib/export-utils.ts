@@ -45,7 +45,11 @@ function buildSectionTable(section: DiarySection) {
   return `<table class="detail-table">${rows}</table>`;
 }
 
-function buildHtmlDocument(args: {
+// Public brand logo (same asset the transactional emails use). Served by the
+// API; must be an absolute public URL so it resolves inside exported documents.
+const LOGO_URL = "https://sitesap-ai.onrender.com/assets/logo.png";
+
+export function buildHtmlDocument(args: {
   title: string;
   subtitle?: string;
   eyebrow?: string;
@@ -90,7 +94,17 @@ function buildHtmlDocument(args: {
         background: linear-gradient(135deg, #0f2b46 0%, #143a5b 100%);
         color: #ffffff;
         padding: 28px 32px;
+        display: flex;
+        align-items: center;
+        gap: 20px;
       }
+      .hero-logo {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        flex-shrink: 0;
+      }
+      .hero-text { min-width: 0; }
       .eyebrow {
         letter-spacing: 0.18em;
         text-transform: uppercase;
@@ -183,6 +197,28 @@ function buildHtmlDocument(args: {
         font-weight: 600;
         padding-right: 16px;
       }
+      /* Multi-column data table (timesheets, registers). */
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .data-table thead th {
+        background: #f6f8fb;
+        padding: 10px 12px;
+        text-align: left;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #6f8095;
+        border-bottom: 2px solid #dde5ef;
+      }
+      .data-table tbody td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #edf1f7;
+        vertical-align: middle;
+      }
+      .data-table tbody tr:last-child td { border-bottom: none; }
       .footer {
         padding-top: 6px;
         color: #6f8095;
@@ -197,9 +233,12 @@ function buildHtmlDocument(args: {
     <div class="page">
       <div class="shell">
         <div class="hero">
-          ${args.eyebrow ? `<div class="eyebrow">${escapeHtml(args.eyebrow)}</div>` : ""}
-          <h1>${escapeHtml(args.title)}</h1>
-          ${args.subtitle ? `<div class="subtitle">${escapeHtml(args.subtitle)}</div>` : ""}
+          <img class="hero-logo" src="${LOGO_URL}" alt="SiteSnap AI" />
+          <div class="hero-text">
+            ${args.eyebrow ? `<div class="eyebrow">${escapeHtml(args.eyebrow)}</div>` : ""}
+            <h1>${escapeHtml(args.title)}</h1>
+            ${args.subtitle ? `<div class="subtitle">${escapeHtml(args.subtitle)}</div>` : ""}
+          </div>
         </div>
         ${metaBlock ? `<div class="meta-grid">${metaBlock}</div>` : ""}
         <div class="content">
