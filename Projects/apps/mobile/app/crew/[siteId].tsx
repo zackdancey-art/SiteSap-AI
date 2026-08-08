@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
+import { formatDate } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
 import { useData } from "@/lib/data-context";
 import { useAuth } from "@/lib/auth-context";
@@ -78,7 +79,7 @@ function buildTimecardHtml(timecards: Timecard[], siteName: string) {
   const totalOT  = timecards.reduce((s, t) => s + t.hoursOvertime, 0);
   const rows = timecards.map((tc) => `
     <tr>
-      <td>${tc.date}</td>
+      <td>${formatDate(tc.date)}</td>
       <td>${tc.workerName}</td>
       <td>${tc.trade || "—"}</td>
       <td>${formatTime(tc.startTime || "")}</td>

@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
+import { formatDate } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import { useData } from "@/lib/data-context";
@@ -321,15 +322,23 @@ export default function DeliveriesScreen() {
             const cond = d.conditionOnArrival ? CONDITION_META[d.conditionOnArrival] : null;
             const status = d.deliveryStatus ? STATUS_META[d.deliveryStatus] : null;
             const expanded = expandedId === d.id;
+            // Card title: supplier if present, else fall back to the docket number,
+            // else the date — never a broken-looking "Unknown Supplier" placeholder.
+            const supplierName = d.supplier?.trim();
+            const usedDocketAsTitle = !supplierName && !!d.docketNumber;
+            const usedDateAsTitle = !supplierName && !d.docketNumber;
+            const cardTitle = supplierName || (d.docketNumber ? `Docket #${d.docketNumber}` : formatDate(d.date));
+            const cardMeta = [
+              usedDateAsTitle ? null : formatDate(d.date),
+              d.time || null,
+              d.docketNumber && !usedDocketAsTitle ? `Docket #${d.docketNumber}` : null,
+            ].filter(Boolean).join(" · ");
             return (
               <Pressable key={d.id} style={styles.card} onPress={() => setExpandedId(expanded ? null : d.id)}>
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardSupplier}>{d.supplier || "Unknown Supplier"}</Text>
-                    <Text style={styles.cardMeta}>
-                      {d.date}{d.time ? ` · ${d.time}` : ""}
-                      {d.docketNumber ? ` · Docket #${d.docketNumber}` : ""}
-                    </Text>
+                    <Text style={styles.cardSupplier}>{cardTitle}</Text>
+                    {!!cardMeta && <Text style={styles.cardMeta}>{cardMeta}</Text>}
                   </View>
                   <View style={{ gap: 4, alignItems: "flex-end" }}>
                     {cond && (

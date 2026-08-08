@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
+import { formatDate } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
 import { useData } from "@/lib/data-context";
 import { getApiBaseUrl } from "@/lib/api-base-url";
@@ -65,6 +66,12 @@ const TREATMENT_LABELS: Record<Treatment, string> = {
   "first-aid": "First Aid",
   medical:     "Medical Treatment",
   hospital:    "Hospital",
+};
+
+const STATUS_LABELS: Record<IncidentStatus, string> = {
+  open:          "Open",
+  investigating: "Investigating",
+  closed:        "Closed",
 };
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -286,9 +293,9 @@ export default function IncidentsScreen() {
                     <View style={[styles.sevDot, { backgroundColor: sev.color }]} />
                     <Text style={[styles.sevText, { color: sev.color }]}>{sev.label.toUpperCase()}</Text>
                   </View>
-                  <Text style={styles.cardDate}>{inc.date}{inc.time ? ` · ${inc.time}` : ""}</Text>
+                  <Text style={styles.cardDate}>{formatDate(inc.date)}{inc.time ? ` · ${inc.time}` : ""}</Text>
                   <View style={[styles.statusBadge, inc.status === "closed" && styles.statusClosed, inc.status === "investigating" && styles.statusInvestigating]}>
-                    <Text style={styles.statusText}>{inc.status.toUpperCase()}</Text>
+                    <Text style={styles.statusText}>{STATUS_LABELS[inc.status]}</Text>
                   </View>
                 </View>
 

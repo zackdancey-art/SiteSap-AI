@@ -416,7 +416,7 @@ export function buildEntryPhotosReportHtml(args: {
     .map((photo, index) => {
       const imageMarkup = photo.base64
         ? `<img src="data:${escapeHtml(photo.mimeType || "image/jpeg")};base64,${photo.base64}" style="width:100%;max-height:320px;object-fit:cover;border-radius:14px;margin-bottom:12px;" />`
-        : `<p>Original image file available on device: ${escapeHtml(photo.uri)}</p>`;
+        : `<p style="color:#6f8095;font-style:italic;margin:0 0 12px;">Image unavailable</p>`;
       return `
         <section class="section">
           <h2>Photo ${index + 1}</h2>
