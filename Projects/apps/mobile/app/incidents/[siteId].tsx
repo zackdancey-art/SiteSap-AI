@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
 import { formatDate } from "@/lib/format";
+import { buildHtmlDocument, exportReportDocument, escapeHtml } from "@/lib/export-utils";
 import { EmptyState } from "@/components/EmptyState";
 import { useData } from "@/lib/data-context";
 import { getApiBaseUrl } from "@/lib/api-base-url";
@@ -73,6 +74,47 @@ const STATUS_LABELS: Record<IncidentStatus, string> = {
   investigating: "Investigating",
   closed:        "Closed",
 };
+
+/** Single-incident formal report (compliance/insurance record). */
+function buildIncidentHtml(inc: Incident, siteName: string, client: string): string {
+  const rows: Array<[string, string]> = [];
+  const push = (label: string, value?: string | null) => {
+    if (value && value.trim()) rows.push([label, value.trim()]);
+  };
+  push("Location", inc.locationArea);
+  push("Person Involved", [inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · "));
+  push("Nature of Injury", [inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", "));
+  if (inc.treatmentRequired && inc.treatmentRequired !== "none") push("Treatment", TREATMENT_LABELS[inc.treatmentRequired]);
+  push("Witnesses", inc.witnesses);
+  push("Immediate Actions", inc.immediateActions);
+  push("Root Cause", inc.rootCause);
+  push("Corrective Actions", inc.correctiveAction);
+  push("Reported By", inc.reportedBy);
+  if (inc.supervisorNotified) push("Supervisor Notified", inc.supervisorName || "Yes");
+
+  const detailRows = rows
+    .map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`)
+    .join("");
+
+  return buildHtmlDocument({
+    eyebrow: "Incident Report",
+    title: inc.type ? TYPE_LABELS[inc.type] : "Incident",
+    subtitle: `${siteName}${client ? ` · ${client}` : ""} · ${formatDate(inc.date)}${inc.time ? ` · ${inc.time}` : ""}`,
+    meta: [
+      { label: "Date", value: `${formatDate(inc.date)}${inc.time ? ` · ${inc.time}` : ""}` },
+      { label: "Severity", value: SEVERITY_META[inc.severity]?.label ?? inc.severity },
+      { label: "Type", value: inc.type ? TYPE_LABELS[inc.type] : "—" },
+      { label: "Status", value: STATUS_LABELS[inc.status] },
+    ],
+    body: `
+      <section class="section">
+        <h2>Description</h2>
+        <p>${escapeHtml(inc.description || "No description recorded.")}</p>
+      </section>
+      ${detailRows ? `<section class="section"><h2>Details</h2><table class="detail-table">${detailRows}</table></section>` : ""}
+    `,
+  });
+}
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await AsyncStorage.getItem("sitesnap.token");
@@ -237,6 +279,17 @@ export default function IncidentsScreen() {
     setIncidents((prev) => prev.map((i) => (i.id === id ? { ...i, status } : i)));
   };
 
+  const handleExportIncident = (inc: Incident) => {
+    if (!site) return;
+    const html = buildIncidentHtml(inc, site.name, site.client);
+    const base = `sitesnap-incident-${inc.date}-${inc.id}`;
+    Alert.alert("Export Incident Report", "Choose a format.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Word", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "doc" }) },
+      { text: "PDF", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "pdf" }) },
+    ]);
+  };
+
   const handleDelete = (id: string) => {
     Alert.alert("Delete Incident", "Remove this incident record permanently?", [
       { text: "Cancel", style: "cancel" },
@@ -326,6 +379,10 @@ export default function IncidentsScreen() {
                           <Text style={styles.actionBtnText}>Close</Text>
                         </Pressable>
                       )}
+                      <Pressable style={[styles.actionBtn, styles.actionBtnExport]} onPress={() => handleExportIncident(inc)}>
+                        <Ionicons name="download-outline" size={14} color={Colors.white} />
+                        <Text style={styles.actionBtnText}>Export</Text>
+                      </Pressable>
                       <Pressable style={[styles.actionBtn, styles.actionBtnRed]} onPress={() => handleDelete(inc.id)}>
                         <Ionicons name="trash-outline" size={14} color={Colors.white} />
                       </Pressable>
@@ -566,6 +623,7 @@ const styles = StyleSheet.create({
   actionBtnGreen: { backgroundColor: Colors.success },
   actionBtnAmber: { backgroundColor: Colors.accentLight },
   actionBtnRed: { backgroundColor: Colors.error },
+  actionBtnExport: { backgroundColor: Colors.primary, flexDirection: "row", gap: 5 },
   actionBtnText: { color: Colors.white, fontSize: 13, fontWeight: "700" },
   expandRow: { alignItems: "center", marginTop: 6 },
 });

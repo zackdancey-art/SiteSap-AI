@@ -8,7 +8,7 @@ import { LOGO_DATA_URI } from "@/lib/logo";
 
 export type ReportExportFormat = "pdf" | "doc";
 
-function escapeHtml(value: string) {
+export function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
