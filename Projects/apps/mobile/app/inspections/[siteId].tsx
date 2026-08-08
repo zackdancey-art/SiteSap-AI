@@ -8,6 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
+import { formatDate } from "@/lib/format";
+import { buildHtmlDocument, exportReportDocument, escapeHtml } from "@/lib/export-utils";
 import { EmptyState } from "@/components/EmptyState";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import { useData } from "@/lib/data-context";
@@ -18,6 +20,44 @@ type Inspection = {
   results: InspectionResult[]; status: "pending" | "complete";
 };
 type Template = { id: string; name: string; items: string[] };
+
+/** Single-inspection checklist report. */
+function buildInspectionHtml(insp: Inspection, siteName: string, client: string): string {
+  const answered = insp.results.filter((r) => r.passed !== null);
+  const passed = answered.filter((r) => r.passed).length;
+  const rate = answered.length ? Math.round((passed / answered.length) * 100) : null;
+
+  const rows = insp.results
+    .map((r) => {
+      const result =
+        r.passed === true ? `<span style="color:#166534;font-weight:700;">Pass</span>`
+        : r.passed === false ? `<span style="color:#991b1b;font-weight:700;">Fail</span>`
+        : `<span style="color:#6f8095;">—</span>`;
+      return `<tr><td>${escapeHtml(r.item)}</td><td>${result}</td><td>${escapeHtml(r.notes || "")}</td></tr>`;
+    })
+    .join("");
+
+  return buildHtmlDocument({
+    eyebrow: "Inspection Report",
+    title: insp.name,
+    subtitle: `${siteName}${client ? ` · ${client}` : ""} · ${formatDate(insp.date)}`,
+    meta: [
+      { label: "Date", value: formatDate(insp.date) },
+      { label: "Status", value: insp.status === "complete" ? "Complete" : "Pending" },
+      { label: "Pass Rate", value: rate === null ? "—" : `${rate}%` },
+      { label: "Answered", value: `${answered.length}/${insp.results.length}` },
+    ],
+    body: `
+      <section class="section">
+        <h2>Checklist</h2>
+        <table class="data-table">
+          <thead><tr><th>Item</th><th>Result</th><th>Notes</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </section>
+    `,
+  });
+}
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await AsyncStorage.getItem("sitesnap.token");
@@ -123,6 +163,17 @@ export default function InspectionsScreen() {
     } catch {
       Alert.alert("Error", "Failed to save result.");
     }
+  };
+
+  const handleExportInspection = (insp: Inspection) => {
+    if (!site) return;
+    const html = buildInspectionHtml(insp, site.name, site.client);
+    const base = `sitesnap-inspection-${insp.date}-${insp.id}`;
+    Alert.alert("Export Inspection Report", "Choose a format.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Word", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "doc" }) },
+      { text: "PDF", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "pdf" }) },
+    ]);
   };
 
   const handleDelete = (id: string) => {
@@ -248,8 +299,11 @@ export default function InspectionsScreen() {
             <View style={styles.modalHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalTitle}>{showActive.name}</Text>
-                <Text style={{ fontSize: 13, color: Colors.textSecondary, marginTop: 2 }}>{showActive.date}</Text>
+                <Text style={{ fontSize: 13, color: Colors.textSecondary, marginTop: 2 }}>{formatDate(showActive.date)}</Text>
               </View>
+              <Pressable onPress={() => handleExportInspection(showActive)} hitSlop={8} style={{ marginRight: 16 }}>
+                <Ionicons name="download-outline" size={22} color={Colors.primary} />
+              </Pressable>
               <Pressable onPress={() => setShowActive(null)}><Ionicons name="close" size={24} color={Colors.text} /></Pressable>
             </View>
             <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
