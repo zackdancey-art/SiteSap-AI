@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
 import { formatDate } from "@/lib/format";
+import { buildHtmlDocument, exportReportDocument, escapeHtml } from "@/lib/export-utils";
 import { EmptyState } from "@/components/EmptyState";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import { useData } from "@/lib/data-context";
@@ -52,6 +53,45 @@ const STATUS_META: Record<DeliveryStatus, { label: string; color: string }> = {
   accepted: { label: "Accepted", color: Colors.success },
   rejected: { label: "Rejected", color: Colors.error },
 };
+
+/** Single-delivery docket (proof of delivery). */
+function buildDeliveryHtml(d: Delivery, siteName: string, client: string): string {
+  const rows: Array<[string, string]> = [];
+  const push = (label: string, value?: string | null) => {
+    if (value && value.trim()) rows.push([label, value.trim()]);
+  };
+  push("Supplier Contact", d.supplierContact);
+  push("Purchase Order", d.purchaseOrder);
+  push("Driver", [d.driverName, d.vehicleReg].filter(Boolean).join(" · "));
+  push("Received By", d.receivedBy);
+  if (d.conditionOnArrival) push("Condition on Arrival", CONDITION_META[d.conditionOnArrival].label);
+  push("Quantity", d.quantity);
+  push("Storage Location", d.storageLocation);
+  push("Damage", d.damageDescription);
+  push("Non-Conformances", d.nonConformances);
+  push("Notes", d.notes);
+
+  const detailRows = rows
+    .map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`)
+    .join("");
+  const itemsList = d.items.filter(Boolean).map((it) => `<li>${escapeHtml(it)}</li>`).join("");
+
+  return buildHtmlDocument({
+    eyebrow: "Delivery Docket",
+    title: d.supplier?.trim() || (d.docketNumber ? `Docket #${d.docketNumber}` : "Delivery"),
+    subtitle: `${siteName}${client ? ` · ${client}` : ""} · ${formatDate(d.date)}${d.time ? ` · ${d.time}` : ""}`,
+    meta: [
+      { label: "Date", value: `${formatDate(d.date)}${d.time ? ` · ${d.time}` : ""}` },
+      { label: "Docket #", value: d.docketNumber || "—" },
+      { label: "Supplier", value: d.supplier?.trim() || "—" },
+      { label: "Status", value: d.deliveryStatus ? STATUS_META[d.deliveryStatus].label : "—" },
+    ],
+    body: `
+      ${itemsList ? `<section class="section"><h2>Items</h2><ul class="checklist">${itemsList}</ul></section>` : ""}
+      ${detailRows ? `<section class="section"><h2>Details</h2><table class="detail-table">${detailRows}</table></section>` : ""}
+    `,
+  });
+}
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await AsyncStorage.getItem("sitesnap.token");
@@ -268,6 +308,17 @@ export default function DeliveriesScreen() {
     }
   };
 
+  const handleExportDelivery = (d: Delivery) => {
+    if (!site) return;
+    const html = buildDeliveryHtml(d, site.name, site.client);
+    const base = `sitesnap-docket-${d.date}-${d.id}`;
+    Alert.alert("Export Delivery Docket", "Choose a format.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Word", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "doc" }) },
+      { text: "PDF", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "pdf" }) },
+    ]);
+  };
+
   const handleDelete = (id: string) => {
     Alert.alert("Delete Delivery", "Remove this delivery record?", [
       { text: "Cancel", style: "cancel" },
@@ -378,6 +429,10 @@ export default function DeliveriesScreen() {
                     {!!d.nonConformances && <DetailRow icon="alert-circle-outline" label="Non-Conformances" value={d.nonConformances} />}
                     {!!d.notes && <DetailRow icon="chatbubble-outline" label="Notes" value={d.notes} />}
                     <View style={styles.deleteRow}>
+                      <Pressable style={styles.exportBtn} onPress={() => handleExportDelivery(d)}>
+                        <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                        <Text style={styles.exportBtnText}>Export Docket</Text>
+                      </Pressable>
                       <Pressable style={styles.deleteBtn} onPress={() => handleDelete(d.id)}>
                         <Ionicons name="trash-outline" size={14} color={Colors.error} />
                         <Text style={styles.deleteBtnText}>Delete Record</Text>
@@ -590,9 +645,11 @@ const styles = StyleSheet.create({
   detailRow: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
   detailLabel: { fontSize: 11, color: Colors.textTertiary, textTransform: "uppercase", letterSpacing: 0.2 },
   detailValue: { fontSize: 13, color: Colors.text, lineHeight: 18 },
-  deleteRow: { flexDirection: "row", justifyContent: "flex-end", marginTop: 4 },
+  deleteRow: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 4 },
   deleteBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.error + "44" },
   deleteBtnText: { fontSize: 13, color: Colors.error, fontWeight: "600" },
+  exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.primary + "44" },
+  exportBtnText: { fontSize: 13, color: Colors.primary, fontWeight: "600" },
   expandIndicator: { alignItems: "center", marginTop: 6 },
 });
 
