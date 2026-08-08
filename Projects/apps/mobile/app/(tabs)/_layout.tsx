@@ -1,8 +1,7 @@
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Tabs } from "expo-router";
 import { NativeTabs, Icon, Label } from "expo-router/unstable-native-tabs";
-import { BlurView } from "expo-blur";
-import { Platform, StyleSheet, useColorScheme, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import Colors from "@/constants/colors";
@@ -10,7 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 
 function NativeTabLayout({ canSeeSupervisor }: { canSeeSupervisor: boolean }) {
   return (
-    <NativeTabs>
+    <NativeTabs backgroundColor={Colors.primary} tintColor={Colors.accent}>
       <NativeTabs.Trigger name="index">
         <Icon sf={{ default: "building.2", selected: "building.2.fill" }} />
         <Label>Sites</Label>
@@ -30,8 +29,6 @@ function NativeTabLayout({ canSeeSupervisor }: { canSeeSupervisor: boolean }) {
 }
 
 function ClassicTabLayout({ canSeeSupervisor }: { canSeeSupervisor: boolean }) {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
   const isWeb = Platform.OS === "web";
   const isIOS = Platform.OS === "ios";
 
@@ -40,28 +37,24 @@ function ClassicTabLayout({ canSeeSupervisor }: { canSeeSupervisor: boolean }) {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: Colors.accent,
-        tabBarInactiveTintColor: Colors.light.tabIconDefault,
+        tabBarInactiveTintColor: Colors.onPrimaryMuted,
         tabBarLabelStyle: {
           fontFamily: "Inter_500Medium",
           fontSize: 11,
         },
+        // Navy-forward chrome: solid brand navy tab bar on every platform (was
+        // a light/translucent bar). Active tab = orange, inactive = muted white.
         tabBarStyle: {
           position: "absolute",
-          backgroundColor: isIOS ? "transparent" : isDark ? Colors.black : Colors.surface,
-          borderTopWidth: isWeb ? 1 : 0,
-          borderTopColor: isDark ? Colors.text : Colors.border,
+          backgroundColor: Colors.primary,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: Colors.onPrimaryBorder,
           elevation: 0,
           ...(isWeb ? { height: 84 } : {}),
         },
         tabBarBackground: () =>
-          isIOS ? (
-            <BlurView
-              intensity={100}
-              tint={isDark ? "dark" : "light"}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : isWeb ? (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? Colors.black : Colors.surface }]} />
+          isIOS || isWeb ? (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.primary }]} />
           ) : null,
       }}
     >

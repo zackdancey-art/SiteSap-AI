@@ -384,11 +384,13 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: Colors.textSecondary,
+    color: Colors.text,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 8,
-    marginLeft: 4,
+    paddingLeft: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.accent,
   },
   sectionCard: {
     backgroundColor: Colors.surface,

@@ -577,10 +577,10 @@ const formStyles = StyleSheet.create({
   submitBtnText: { color: Colors.white, fontSize: 14, fontWeight: "700" },
   scroll: { padding: 20, gap: 12 },
   sectionHeader: {
-    fontSize: 13, fontWeight: "800", color: Colors.primary,
+    fontSize: 13, fontWeight: "800", color: Colors.text,
     textTransform: "uppercase", letterSpacing: 0.6,
-    marginTop: 8, marginBottom: 4,
-    paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: Colors.border,
+    marginTop: 8, marginBottom: 8,
+    paddingLeft: 10, borderLeftWidth: 3, borderLeftColor: Colors.accent,
   },
   field: { gap: 6 },
   label: { fontSize: 13, fontWeight: "600", color: Colors.text },

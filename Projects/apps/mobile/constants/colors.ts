@@ -20,6 +20,11 @@ const Colors = {
   overlay: "rgba(15, 43, 70, 0.5)",
   cardShadow: "rgba(15, 43, 70, 0.08)",
 
+  // On-navy chrome: muted foreground (inactive tab icons/labels, secondary text
+  // on a navy surface) and a subtle divider that reads on navy.
+  onPrimaryMuted: "rgba(255, 255, 255, 0.6)",
+  onPrimaryBorder: "rgba(255, 255, 255, 0.12)",
+
   // Semantic status tints (background / border / text) for pills, banners and
   // badges. Consolidated from ~40 ad-hoc hex literals across the incidents,
   // crew, deliveries and inspections screens so status colour lives in one place.
