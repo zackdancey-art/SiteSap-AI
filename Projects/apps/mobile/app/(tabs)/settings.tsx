@@ -23,6 +23,7 @@ import { DEFAULT_PROFILE, getLocalProfile } from "@/lib/profile-store";
 interface SettingRowProps {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  description?: string;
   value?: string;
   toggle?: boolean;
   toggleValue?: boolean;
@@ -31,13 +32,16 @@ interface SettingRowProps {
   danger?: boolean;
 }
 
-function SettingRow({ icon, label, value, toggle, toggleValue, onToggle, onPress, danger }: SettingRowProps) {
+function SettingRow({ icon, label, description, value, toggle, toggleValue, onToggle, onPress, danger }: SettingRowProps) {
   const content = (
     <View style={styles.settingRow}>
       <View style={[styles.settingIcon, danger && { backgroundColor: Colors.error + "14" }]}>
         <Ionicons name={icon} size={20} color={danger ? Colors.error : Colors.accent} />
       </View>
-      <Text style={[styles.settingLabel, danger && { color: Colors.error }]}>{label}</Text>
+      <View style={styles.settingLabelCol}>
+        <Text style={[styles.settingLabelText, danger && { color: Colors.error }]}>{label}</Text>
+        {!!description && <Text style={styles.settingDescription}>{description}</Text>}
+      </View>
       {toggle && (
         <Switch
           value={toggleValue}
@@ -65,10 +69,10 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { user, logout, token } = useAuth();
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
-  const [notifications, setNotifications] = useState(true);
-  const [autoSave, setAutoSave] = useState(true);
-  const [locationTracking, setLocationTracking] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const roleLabel = user?.companyRole
+    ? user.companyRole.charAt(0).toUpperCase() + user.companyRole.slice(1)
+    : null;
   const [changingPassword, setChangingPassword] = useState(false);
   const [pwCurrent, setPwCurrent] = useState("");
   const [pwNew, setPwNew] = useState("");
@@ -202,49 +206,28 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Preferences</Text>
+          <Text style={styles.sectionTitle}>Account</Text>
+          <Text style={styles.sectionDesc}>Your profile and how you sign in.</Text>
           <View style={styles.sectionCard}>
             <SettingRow
-              icon="notifications-outline"
-              label="Push Notifications"
-              toggle
-              toggleValue={notifications}
-              onToggle={setNotifications}
+              icon="person-outline"
+              label="Edit profile"
+              description="Your name, job title and contact details. These appear on the diaries, dockets and reports you generate."
+              onPress={() => router.push("/profile")}
             />
+            {roleLabel && (
+              <>
+                <View style={styles.divider} />
+                <SettingRow icon="ribbon-outline" label="Role" description="Your access level in this company." value={roleLabel} />
+              </>
+            )}
             <View style={styles.divider} />
             <SettingRow
-              icon="save-outline"
-              label="Auto-save Entries"
-              toggle
-              toggleValue={autoSave}
-              onToggle={setAutoSave}
+              icon="key-outline"
+              label="Change password"
+              description="Update the password you use to sign in."
+              onPress={handleChangePassword}
             />
-            <View style={styles.divider} />
-            <SettingRow
-              icon="location-outline"
-              label="Location Tracking"
-              toggle
-              toggleValue={locationTracking}
-              onToggle={setLocationTracking}
-            />
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Data & Export</Text>
-          <View style={styles.sectionCard}>
-            <SettingRow icon="download-outline" label="Export All Diaries" onPress={() => router.push("/export-diaries")} />
-            <View style={styles.divider} />
-            <SettingRow icon="cloud-upload-outline" label="Backup Data" onPress={() => router.push("/backup-data")} />
-            <View style={styles.divider} />
-            <SettingRow icon="document-outline" label="Export Format" value="PDF / Word" />
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Security</Text>
-          <View style={styles.sectionCard}>
-            <SettingRow icon="key-outline" label="Change Password" onPress={handleChangePassword} />
           </View>
           {changingPassword && (
             <View style={[styles.sectionCard, { marginTop: 12, padding: 16, gap: 12 }]}>
@@ -274,15 +257,66 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About</Text>
+          <Text style={styles.sectionTitle}>Notifications</Text>
           <View style={styles.sectionCard}>
-            <SettingRow icon="information-circle-outline" label="Version" value={versionLabel} />
+            <Text style={styles.cardBody}>
+              Notifications are on by default. We’ll alert you when a diary is approved, a new site entry is added, or an incident is logged on one of your sites.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Data & Privacy</Text>
+          <Text style={styles.sectionDesc}>Where your data lives and who can see it.</Text>
+          <View style={styles.sectionCard}>
+            <Text style={styles.cardBody}>
+              <Text style={styles.cardBodyStrong}>Company-scoped access. </Text>
+              Your company’s sites, diaries and records are isolated from every other company. This is enforced in the database with row-level security — not just hidden in the app — so a query can’t cross between companies.
+            </Text>
+            <View style={styles.dividerFull} />
+            <Text style={styles.cardBody}>
+              <Text style={styles.cardBodyStrong}>Where it’s stored. </Text>
+              The app and database run in Render’s Singapore region. Site photos and files are held in Amazon S3 in Sydney (ap-southeast-2).
+            </Text>
+            <View style={styles.dividerFull} />
+            <Text style={styles.cardBody}>
+              <Text style={styles.cardBodyStrong}>Deletion & retention. </Text>
+              Deleting a record removes it from your app straight away. A copy is kept for 7 years to meet construction and WorkSafe record-keeping requirements, then permanently purged.
+            </Text>
+          </View>
+          {/* TODO(legal): add an NZ Privacy Act / AU Privacy Principles statement here once the Privacy Policy has been reviewed by a lawyer. Do NOT assert compliance until then. */}
+          <View style={[styles.sectionCard, { marginTop: 12 }]}>
+            <SettingRow icon="download-outline" label="Export your data" description="Export diaries, dockets and reports as PDF or Word from the records screens." onPress={() => router.push("/export-diaries")} />
+            <View style={styles.divider} />
+            <SettingRow icon="cloud-upload-outline" label="Back up data" description="Save a copy of your records to this device." onPress={() => router.push("/backup-data")} />
             <View style={styles.divider} />
             <SettingRow icon="shield-checkmark-outline" label="Privacy Policy" onPress={() => router.push("/privacy-policy")} />
             <View style={styles.divider} />
             <SettingRow icon="document-text-outline" label="Terms of Service" onPress={() => router.push("/terms-of-service")} />
-            <View style={styles.divider} />
-            <SettingRow icon="help-circle-outline" label="Help & Support" onPress={() => router.push("/help-support")} />
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Support</Text>
+          <View style={styles.sectionCard}>
+            <SettingRow
+              icon="mail-outline"
+              label="Contact support"
+              description="Email support@getsitesnapai.com. Include your site name and what you were doing when the problem happened — it gets us to an answer faster."
+              onPress={() => router.push("/help-support")}
+            />
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>About</Text>
+          <View style={styles.sectionCard}>
+            <Text style={styles.cardBody}>
+              <Text style={styles.cardBodyStrong}>SiteSnap AI </Text>
+              is a construction site-records app for builders and site managers. Capture daily site diaries, photos, incidents, deliveries, inspections and timesheets from the field, then generate clean, shareable PDF and Word reports. Built for how NZ and AU sites run.
+            </Text>
+            <View style={styles.dividerFull} />
+            <SettingRow icon="information-circle-outline" label="Version" value={versionLabel} />
           </View>
         </View>
 
@@ -396,6 +430,44 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderRadius: 16,
     overflow: "hidden",
+  },
+  sectionDesc: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    lineHeight: 19,
+    marginTop: -2,
+    marginBottom: 10,
+    paddingLeft: 2,
+  },
+  cardBody: {
+    fontSize: 14,
+    color: Colors.text,
+    lineHeight: 21,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  cardBodyStrong: {
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+  },
+  settingLabelCol: {
+    flex: 1,
+    gap: 2,
+  },
+  settingLabelText: {
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: Colors.text,
+  },
+  settingDescription: {
+    fontSize: 12.5,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  dividerFull: {
+    height: 1,
+    backgroundColor: Colors.borderLight,
   },
   settingRow: {
     flexDirection: "row",
