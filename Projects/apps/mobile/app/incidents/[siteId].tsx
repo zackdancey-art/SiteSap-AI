@@ -77,24 +77,40 @@ const STATUS_LABELS: Record<IncidentStatus, string> = {
 
 /** Single-incident formal report (compliance/insurance record). */
 function buildIncidentHtml(inc: Incident, siteName: string, client: string): string {
-  const rows: Array<[string, string]> = [];
-  const push = (label: string, value?: string | null) => {
-    if (value && value.trim()) rows.push([label, value.trim()]);
-  };
-  push("Location", inc.locationArea);
-  push("Person Involved", [inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · "));
-  push("Nature of Injury", [inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", "));
-  if (inc.treatmentRequired && inc.treatmentRequired !== "none") push("Treatment", TREATMENT_LABELS[inc.treatmentRequired]);
-  push("Witnesses", inc.witnesses);
-  push("Immediate Actions", inc.immediateActions);
-  push("Root Cause", inc.rootCause);
-  push("Corrective Actions", inc.correctiveAction);
-  push("Reported By", inc.reportedBy);
-  if (inc.supervisorNotified) push("Supervisor Notified", inc.supervisorName || "Yes");
+  // Structured to mirror WorkSafe NZ's Accident Investigation Form. Each group
+  // renders only if it has content; empty groups are omitted from the document,
+  // and fields we don't yet capture (property damage, contributing factors,
+  // WorkSafe notification, corrective-action owner/due date, investigator,
+  // signature) simply slot into their group once the schema adds them.
+  const row = (label: string, value?: string | null) =>
+    value && value.trim() ? `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value.trim())}</td></tr>` : "";
+  const table = (rows: string) => (rows ? `<table class="detail-table">${rows}</table>` : "");
+  const section = (title: string, inner: string) =>
+    inner.trim() ? `<section class="section"><h2>${escapeHtml(title)}</h2>${inner}</section>` : "";
 
-  const detailRows = rows
-    .map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`)
-    .join("");
+  const eventDetails = table(
+    row("Date", `${formatDate(inc.date)}${inc.time ? ` · ${inc.time}` : ""}`) +
+    row("Site", siteName) +
+    row("Location", inc.locationArea) +
+    row("Severity", SEVERITY_META[inc.severity]?.label ?? inc.severity) +
+    row("Type", inc.type ? TYPE_LABELS[inc.type] : "") +
+    row("Status", STATUS_LABELS[inc.status])
+  );
+  const people = table(
+    row("Person Involved", [inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · ")) +
+    row("Witnesses", inc.witnesses) +
+    row("Reported By", inc.reportedBy)
+  );
+  const whatHappened =
+    `<p>${escapeHtml(inc.description || "No description recorded.")}</p>` +
+    table(row("Nature of Injury", [inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", ")));
+  const immediate = table(
+    row("Treatment", inc.treatmentRequired && inc.treatmentRequired !== "none" ? TREATMENT_LABELS[inc.treatmentRequired] : "") +
+    row("Immediate Actions", inc.immediateActions)
+  );
+  const analysis = table(row("Root Cause", inc.rootCause));
+  const corrective = table(row("Corrective Actions", inc.correctiveAction));
+  const signoff = table(inc.supervisorNotified ? row("Supervisor Notified", inc.supervisorName || "Yes") : "");
 
   return buildHtmlDocument({
     eyebrow: "Incident Report",
@@ -106,13 +122,14 @@ function buildIncidentHtml(inc: Incident, siteName: string, client: string): str
       { label: "Type", value: inc.type ? TYPE_LABELS[inc.type] : "—" },
       { label: "Status", value: STATUS_LABELS[inc.status] },
     ],
-    body: `
-      <section class="section">
-        <h2>Description</h2>
-        <p>${escapeHtml(inc.description || "No description recorded.")}</p>
-      </section>
-      ${detailRows ? `<section class="section"><h2>Details</h2><table class="detail-table">${detailRows}</table></section>` : ""}
-    `,
+    body:
+      section("1 · Event details", eventDetails) +
+      section("2 · People", people) +
+      section("3 · What happened", whatHappened) +
+      section("4 · Immediate response", immediate) +
+      section("5 · Analysis", analysis) +
+      section("6 · Corrective actions", corrective) +
+      section("7 · Notification & sign-off", signoff),
   });
 }
 
@@ -357,16 +374,54 @@ export default function IncidentsScreen() {
 
                 {expanded && (
                   <View style={styles.cardDetail}>
-                    {!!inc.locationArea && <DetailRow icon="location-outline" label="Location" value={inc.locationArea} />}
-                    {!!inc.injuredParty && <DetailRow icon="person-outline" label="Person Involved" value={[inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · ")} />}
-                    {!!inc.natureOfInjury && <DetailRow icon="bandage-outline" label="Nature of Injury" value={[inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", ")} />}
-                    {inc.treatmentRequired && inc.treatmentRequired !== "none" && <DetailRow icon="medkit-outline" label="Treatment" value={TREATMENT_LABELS[inc.treatmentRequired]} />}
-                    {!!inc.witnesses && <DetailRow icon="people-outline" label="Witnesses" value={inc.witnesses} />}
-                    {!!inc.immediateActions && <DetailRow icon="flash-outline" label="Immediate Actions" value={inc.immediateActions} />}
-                    {!!inc.rootCause && <DetailRow icon="search-outline" label="Root Cause" value={inc.rootCause} />}
-                    {!!inc.correctiveAction && <DetailRow icon="checkmark-done-outline" label="Corrective Actions" value={inc.correctiveAction} />}
-                    {!!inc.reportedBy && <DetailRow icon="create-outline" label="Reported By" value={inc.reportedBy} />}
-                    {inc.supervisorNotified && <DetailRow icon="call-outline" label="Supervisor Notified" value={inc.supervisorName || "Yes"} />}
+                    {/* Grouped to mirror WorkSafe NZ's Accident Investigation Form.
+                        Each group shows only if it has content; missing fields
+                        slot into their group once the schema adds them. */}
+                    {!!inc.locationArea && (
+                      <>
+                        <Text style={styles.detailGroup}>Event details</Text>
+                        <DetailRow icon="location-outline" label="Location" value={inc.locationArea} />
+                      </>
+                    )}
+                    {(!!inc.injuredParty || !!inc.witnesses || !!inc.reportedBy) && (
+                      <>
+                        <Text style={styles.detailGroup}>People</Text>
+                        {!!inc.injuredParty && <DetailRow icon="person-outline" label="Person Involved" value={[inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · ")} />}
+                        {!!inc.witnesses && <DetailRow icon="people-outline" label="Witnesses" value={inc.witnesses} />}
+                        {!!inc.reportedBy && <DetailRow icon="create-outline" label="Reported By" value={inc.reportedBy} />}
+                      </>
+                    )}
+                    {!!inc.natureOfInjury && (
+                      <>
+                        <Text style={styles.detailGroup}>What happened</Text>
+                        <DetailRow icon="bandage-outline" label="Nature of Injury" value={[inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", ")} />
+                      </>
+                    )}
+                    {((!!inc.treatmentRequired && inc.treatmentRequired !== "none") || !!inc.immediateActions) && (
+                      <>
+                        <Text style={styles.detailGroup}>Immediate response</Text>
+                        {inc.treatmentRequired && inc.treatmentRequired !== "none" && <DetailRow icon="medkit-outline" label="Treatment" value={TREATMENT_LABELS[inc.treatmentRequired]} />}
+                        {!!inc.immediateActions && <DetailRow icon="flash-outline" label="Immediate Actions" value={inc.immediateActions} />}
+                      </>
+                    )}
+                    {!!inc.rootCause && (
+                      <>
+                        <Text style={styles.detailGroup}>Analysis</Text>
+                        <DetailRow icon="search-outline" label="Root Cause" value={inc.rootCause} />
+                      </>
+                    )}
+                    {!!inc.correctiveAction && (
+                      <>
+                        <Text style={styles.detailGroup}>Corrective actions</Text>
+                        <DetailRow icon="checkmark-done-outline" label="Corrective Actions" value={inc.correctiveAction} />
+                      </>
+                    )}
+                    {inc.supervisorNotified && (
+                      <>
+                        <Text style={styles.detailGroup}>Notification & sign-off</Text>
+                        <DetailRow icon="call-outline" label="Supervisor Notified" value={inc.supervisorName || "Yes"} />
+                      </>
+                    )}
 
                     <View style={styles.cardActions}>
                       {inc.status === "open" && (
@@ -417,17 +472,14 @@ export default function IncidentsScreen() {
           </View>
 
           <ScrollView contentContainerStyle={formStyles.scroll} keyboardShouldPersistTaps="handled">
-            {/* Section 1 – Classification */}
-            <SectionHeader title="1 · Incident Classification" />
+            {/* 1 · Event details */}
+            <SectionHeader title="1 · Event details" />
             <Field label="Incident Type" required>
               <ChipGroup options={types} value={type} onChange={setType} meta={Object.fromEntries(types.map((t) => [t, { color: Colors.primary, label: TYPE_LABELS[t] }]))} />
             </Field>
             <Field label="Severity" required>
               <ChipGroup options={severities} value={severity} onChange={setSeverity} meta={SEVERITY_META} />
             </Field>
-
-            {/* Section 2 – Incident Details */}
-            <SectionHeader title="2 · Incident Details" />
             <View style={formStyles.rowFields}>
               <View style={{ flex: 1 }}>
                 <Field label="Date" required>
@@ -443,20 +495,9 @@ export default function IncidentsScreen() {
             <Field label="Location / Site Area">
               <TextInput style={formStyles.input} value={locationArea} onChangeText={setLocationArea} placeholder="e.g. Level 2, North face, Plant room" placeholderTextColor={Colors.textTertiary} />
             </Field>
-            <Field label="Description of Incident" required>
-              <TextInput
-                style={[formStyles.input, formStyles.multiline]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Describe what happened, the sequence of events, and any relevant context…"
-                placeholderTextColor={Colors.textTertiary}
-                multiline
-                textAlignVertical="top"
-              />
-            </Field>
 
-            {/* Section 3 – Persons Involved */}
-            <SectionHeader title="3 · Persons Involved" />
+            {/* 2 · People */}
+            <SectionHeader title="2 · People" />
             <Field label="Name of Injured / Involved Person">
               <TextInput style={formStyles.input} value={injuredParty} onChangeText={setInjuredParty} placeholder="Full name" placeholderTextColor={Colors.textTertiary} />
             </Field>
@@ -483,9 +524,23 @@ export default function IncidentsScreen() {
                 textAlignVertical="top"
               />
             </Field>
+            <Field label="Reported By">
+              <TextInput style={formStyles.input} value={reportedBy} onChangeText={setReportedBy} placeholder="Your name" placeholderTextColor={Colors.textTertiary} />
+            </Field>
 
-            {/* Section 4 – Injury Details */}
-            <SectionHeader title="4 · Injury / Damage Details" />
+            {/* 3 · What happened */}
+            <SectionHeader title="3 · What happened" />
+            <Field label="Description of Incident" required>
+              <TextInput
+                style={[formStyles.input, formStyles.multiline]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Describe what happened, the sequence of events, and any relevant context…"
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                textAlignVertical="top"
+              />
+            </Field>
             <View style={formStyles.rowFields}>
               <View style={{ flex: 1 }}>
                 <Field label="Nature of Injury">
@@ -498,6 +553,9 @@ export default function IncidentsScreen() {
                 </Field>
               </View>
             </View>
+
+            {/* 4 · Immediate response */}
+            <SectionHeader title="4 · Immediate response" />
             <Field label="Treatment Required">
               <ChipGroup
                 options={treatments}
@@ -511,9 +569,6 @@ export default function IncidentsScreen() {
                 }}
               />
             </Field>
-
-            {/* Section 5 – Cause & Actions */}
-            <SectionHeader title="5 · Cause Analysis & Actions" />
             <Field label="Immediate Actions Taken">
               <TextInput
                 style={[formStyles.input, formStyles.multiline]}
@@ -525,34 +580,37 @@ export default function IncidentsScreen() {
                 textAlignVertical="top"
               />
             </Field>
-            <Field label="Root Cause / Contributing Factors">
+
+            {/* 5 · Analysis */}
+            <SectionHeader title="5 · Analysis" />
+            <Field label="Root Cause">
               <TextInput
                 style={[formStyles.input, formStyles.multiline]}
                 value={rootCause}
                 onChangeText={setRootCause}
-                placeholder="Identify root causes — environment, equipment, procedure, human factors…"
-                placeholderTextColor={Colors.textTertiary}
-                multiline
-                textAlignVertical="top"
-              />
-            </Field>
-            <Field label="Corrective Actions Required">
-              <TextInput
-                style={[formStyles.input, formStyles.multiline]}
-                value={correctiveAction}
-                onChangeText={setCorrectiveAction}
-                placeholder="Actions to prevent recurrence, responsible person, due date…"
+                placeholder="Identify the underlying cause — environment, equipment, procedure, human factors…"
                 placeholderTextColor={Colors.textTertiary}
                 multiline
                 textAlignVertical="top"
               />
             </Field>
 
-            {/* Section 6 – Sign-off */}
-            <SectionHeader title="6 · Sign-off" />
-            <Field label="Reported By">
-              <TextInput style={formStyles.input} value={reportedBy} onChangeText={setReportedBy} placeholder="Your name" placeholderTextColor={Colors.textTertiary} />
+            {/* 6 · Corrective actions */}
+            <SectionHeader title="6 · Corrective actions" />
+            <Field label="Corrective Actions Required">
+              <TextInput
+                style={[formStyles.input, formStyles.multiline]}
+                value={correctiveAction}
+                onChangeText={setCorrectiveAction}
+                placeholder="Actions to prevent recurrence…"
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                textAlignVertical="top"
+              />
             </Field>
+
+            {/* 7 · Notification & sign-off */}
+            <SectionHeader title="7 · Notification & sign-off" />
             <BoolField label="Supervisor Notified?" value={supervisorNotified} onChange={setSupervisorNotified} />
             {supervisorNotified && (
               <Field label="Supervisor Name">
@@ -615,6 +673,7 @@ const styles = StyleSheet.create({
   cardType: { fontSize: 11, color: Colors.textTertiary, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.3 },
   cardDesc: { fontSize: 14, color: Colors.text, lineHeight: 20 },
   cardDetail: { marginTop: 12, gap: 8, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.border },
+  detailGroup: { fontSize: 11, fontWeight: "700", color: Colors.accent, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 8, marginBottom: -2 },
   detailRow: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
   detailLabel: { fontSize: 11, color: Colors.textTertiary, textTransform: "uppercase", letterSpacing: 0.2 },
   detailValue: { fontSize: 13, color: Colors.text, lineHeight: 18 },
