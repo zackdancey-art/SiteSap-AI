@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
 import { getPgPool } from "./postgres";
 import { Actor, isCrew } from "./actor";
+import { withTenant } from "./tenant";
+import { computeInspectionContentHash, voidStaleSignaturesOnClient, voidStaleSignaturesInMemory } from "./signatureStore";
 
 export type InspectionTemplateRecord = {
   id: string;
@@ -15,6 +17,7 @@ export type InspectionResultItem = {
   item: string;
   passed: boolean | null;
   notes: string;
+  na?: boolean;
 };
 
 export type InspectionDefectItem = {
@@ -51,6 +54,10 @@ export type InspectionRecord = {
 };
 
 function useDatabase() {
+  // In test mode DATABASE_URL is deliberately unset (the harness forbids it), so
+  // an explicit TEST_DATABASE_URL selects the Postgres path. Without this the
+  // store's DB code is never exercised by any test.
+  if (process.env.NODE_ENV === "test") return Boolean(process.env.TEST_DATABASE_URL?.trim());
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
 }
 
@@ -162,6 +169,24 @@ export async function listInspections(actor: Actor, siteId?: string): Promise<In
   return result.rows.map(mapInspection);
 }
 
+export async function getInspection(actor: Actor, id: string): Promise<InspectionRecord | null> {
+  if (!useDatabase()) {
+    const existing = memoryInspections.get(id);
+    if (!existing || !canAccess(actor, existing.companyId, existing.ownerEmail) || existing.deletedAt) return null;
+    return existing;
+  }
+  const params: unknown[] = [id, actor.companyId];
+  const conditions = ["id = $1", "company_id = $2", "deleted_at IS NULL"];
+  const crew = crewScopeSql(actor, params, true);
+  if (crew) conditions.push(crew);
+  const result = await getPgPool().query(
+    `SELECT * FROM inspections WHERE ${conditions.join(" AND ")}`,
+    params
+  );
+  if (result.rowCount === 0) return null;
+  return mapInspection(result.rows[0]);
+}
+
 export async function createInspection(actor: Actor, payload: Omit<InspectionRecord, "id" | "ownerEmail" | "companyId" | "createdAt" | "updatedAt" | "deletedAt">): Promise<InspectionRecord> {
   const record: InspectionRecord = { id: uuidv4(), ownerEmail: actor.email, companyId: actor.companyId, createdAt: new Date().toISOString(), ...payload };
   if (!useDatabase()) { memoryInspections.set(record.id, record); return record; }
@@ -185,24 +210,70 @@ export async function createInspection(actor: Actor, payload: Omit<InspectionRec
   return mapInspection(result.rows[0]);
 }
 
-export async function updateInspection(actor: Actor, id: string, patch: { results?: InspectionResultItem[]; status?: "pending" | "complete" }): Promise<InspectionRecord | null> {
+export type InspectionPatch = {
+  results?: InspectionResultItem[];
+  status?: "pending" | "complete";
+  scope?: string;
+  areaInspected?: string;
+  time?: string;
+  inspectorName?: string;
+  inspectorRole?: string;
+  inspectorCompany?: string;
+  defects?: InspectionDefectItem[];
+  overallOutcome?: string;
+  followUpRequired?: boolean;
+};
+
+export async function updateInspection(actor: Actor, id: string, patch: InspectionPatch): Promise<InspectionRecord | null> {
   if (!useDatabase()) {
     const existing = memoryInspections.get(id);
     if (!existing || !canAccess(actor, existing.companyId, existing.ownerEmail) || existing.deletedAt) return null;
     const updated = { ...existing, ...patch };
     memoryInspections.set(id, updated);
+    const { hash } = computeInspectionContentHash(updated);
+    voidStaleSignaturesInMemory(actor.companyId, id, hash, "Inspection content changed after signing");
     return updated;
   }
-  const result = await getPgPool().query(
-    `UPDATE inspections SET
-       results_json = COALESCE($3::jsonb, results_json),
-       status = COALESCE($4, status),
-       updated_at = NOW()
-     WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL RETURNING *`,
-    [id, actor.companyId, patch.results ? JSON.stringify(patch.results) : null, patch.status ?? null]
-  );
-  if (result.rowCount === 0) return null;
-  return mapInspection(result.rows[0]);
+  // Wrapped in withTenant so the auto-void of stale signatures below runs with
+  // app.company_id set — inspection_signatures is FORCE RLS, so the void
+  // UPDATE would silently match zero rows without it.
+  return withTenant(actor, async (client) => {
+    const result = await client.query(
+      `UPDATE inspections SET
+         results_json = COALESCE($3::jsonb, results_json),
+         status = COALESCE($4, status),
+         scope = COALESCE($5, scope),
+         area_inspected = COALESCE($6, area_inspected),
+         time = COALESCE($7, time),
+         inspector_name = COALESCE($8, inspector_name),
+         inspector_role = COALESCE($9, inspector_role),
+         inspector_company = COALESCE($10, inspector_company),
+         defects = COALESCE($11::jsonb, defects),
+         overall_outcome = COALESCE($12, overall_outcome),
+         follow_up_required = COALESCE($13, follow_up_required),
+         updated_at = NOW()
+       WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL RETURNING *`,
+      [
+        id, actor.companyId,
+        patch.results ? JSON.stringify(patch.results) : null,
+        patch.status ?? null,
+        patch.scope ?? null,
+        patch.areaInspected ?? null,
+        patch.time ?? null,
+        patch.inspectorName ?? null,
+        patch.inspectorRole ?? null,
+        patch.inspectorCompany ?? null,
+        patch.defects ? JSON.stringify(patch.defects) : null,
+        patch.overallOutcome ?? null,
+        patch.followUpRequired ?? null,
+      ]
+    );
+    if (result.rowCount === 0) return null;
+    const record = mapInspection(result.rows[0]);
+    const { hash } = computeInspectionContentHash(record);
+    await voidStaleSignaturesOnClient(client, actor.companyId, id, hash, "Inspection content changed after signing");
+    return record;
+  });
 }
 
 export async function deleteInspection(actor: Actor, id: string): Promise<boolean> {
