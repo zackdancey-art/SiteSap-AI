@@ -8,6 +8,17 @@ export interface Site {
   createdAt: string;
 }
 
+export interface AnnotationStroke {
+  path: string;
+  color: string;
+  width: number;
+}
+
+export interface AnnotationVector {
+  viewBox: string;
+  strokes: AnnotationStroke[];
+}
+
 export interface Photo {
   id: string;
   uri: string;
@@ -19,6 +30,14 @@ export interface Photo {
   storageKey?: string;
   latitude?: number;
   longitude?: number;
+  kind?: "original" | "annotated";
+  derivedFromId?: string;
+  annotationVector?: AnnotationVector;
+}
+
+export interface HourlyNote {
+  hour: number;
+  note: string;
 }
 
 export interface DailyEntry {
@@ -35,6 +54,8 @@ export interface DailyEntry {
   createdAt?: string;
   timestamp: string;
   isPending?: boolean;
+  notesMode?: "free" | "hourly";
+  hourlyNotes?: HourlyNote[];
 }
 
 export interface DiaryEditLogEntry {

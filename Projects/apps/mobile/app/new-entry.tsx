@@ -8,7 +8,6 @@ import {
   StyleSheet,
   Platform,
   KeyboardAvoidingView,
-  Image,
   Alert,
   ActivityIndicator,
   Modal,
@@ -21,9 +20,27 @@ import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
-import { Photo } from "@/lib/types";
+import { AnnotationVector, HourlyNote, Photo } from "@/lib/types";
 import { AddressSuggestion, fetchAddressSuggestions } from "@/lib/geo";
 import { saveDraft, loadDraft, clearDraft } from "@/lib/draft-store";
+import { PhotoAnnotator } from "@/components/PhotoAnnotator";
+import { AnnotatedImage } from "@/components/AnnotatedImage";
+
+const DEFAULT_HOUR_START = 7;
+const DEFAULT_HOUR_END = 17;
+
+function formatHour(hour: number) {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+function buildHourlyWindow(start: number, end: number, existing: HourlyNote[]): HourlyNote[] {
+  const byHour = new Map(existing.map((h) => [h.hour, h.note]));
+  const next: HourlyNote[] = [];
+  for (let h = start; h <= end; h++) {
+    next.push({ hour: h, note: byHour.get(h) ?? "" });
+  }
+  return next;
+}
 
 type PhotoWithBase64 = Photo & { base64?: string | null };
 
@@ -84,7 +101,12 @@ export default function NewEntryScreen() {
   const [addressLoading, setAddressLoading] = useState(false);
   const [crewCount, setCrewCount] = useState("");
   const [notes, setNotes] = useState("");
+  const [notesMode, setNotesMode] = useState<"free" | "hourly">(existingEntry?.notesMode ?? "free");
+  const [hourStart, setHourStart] = useState(DEFAULT_HOUR_START);
+  const [hourEnd, setHourEnd] = useState(DEFAULT_HOUR_END);
+  const [hourlyNotes, setHourlyNotes] = useState<HourlyNote[]>([]);
   const [photos, setPhotos] = useState<PhotoWithBase64[]>([]);
+  const [annotatingPhoto, setAnnotatingPhoto] = useState<PhotoWithBase64 | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pickingPhoto, setPickingPhoto] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
@@ -108,7 +130,20 @@ export default function NewEntryScreen() {
     setCrewCount(existingEntry.crewCount);
     setNotes(existingEntry.notes);
     setPhotos(existingEntry.photos as PhotoWithBase64[]);
+    setNotesMode(existingEntry.notesMode ?? "free");
+    if (existingEntry.hourlyNotes && existingEntry.hourlyNotes.length > 0) {
+      const hours = existingEntry.hourlyNotes.map((h) => h.hour);
+      setHourStart(Math.min(...hours));
+      setHourEnd(Math.max(...hours));
+      setHourlyNotes(existingEntry.hourlyNotes);
+    }
   }, [existingEntry]);
+
+  // Keep hourlyNotes in sync with the [hourStart, hourEnd] window, preserving
+  // any notes already entered for hours that remain in range.
+  useEffect(() => {
+    setHourlyNotes((prev) => buildHourlyWindow(hourStart, hourEnd, prev));
+  }, [hourStart, hourEnd]);
 
   // On mount for new entries: restore draft or offer roll-over from last entry
   useEffect(() => {
@@ -207,7 +242,11 @@ export default function NewEntryScreen() {
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
-    if (!notes.trim()) newErrors.notes = "Notes are required";
+    if (notesMode === "hourly") {
+      if (!hourlyNotes.some((h) => h.note.trim())) newErrors.notes = "Add at least one hourly note";
+    } else if (!notes.trim()) {
+      newErrors.notes = "Notes are required";
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -306,6 +345,45 @@ export default function NewEntryScreen() {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
   };
 
+  const handleSaveAnnotation = (vector: AnnotationVector) => {
+    if (!annotatingPhoto) return;
+    const sourceId = annotatingPhoto.id;
+    setPhotos((prev) => {
+      const withOriginalMarked = prev.map((p) =>
+        p.id === sourceId && !p.kind ? { ...p, kind: "original" as const } : p
+      );
+      const source = withOriginalMarked.find((p) => p.id === sourceId) ?? annotatingPhoto;
+      const derivative: PhotoWithBase64 = {
+        id: Crypto.randomUUID(),
+        uri: source.uri,
+        base64: source.base64,
+        mimeType: source.mimeType,
+        caption: source.caption,
+        timestamp: new Date().toISOString(),
+        latitude: source.latitude,
+        longitude: source.longitude,
+        kind: "annotated",
+        derivedFromId: source.id,
+        annotationVector: vector,
+      };
+      return [...withOriginalMarked, derivative];
+    });
+    setAnnotatingPhoto(null);
+  };
+
+  const adjustHourStart = (delta: number) => {
+    setHourStart((prev) => Math.max(0, Math.min(hourEnd - 1, prev + delta)));
+  };
+
+  const adjustHourEnd = (delta: number) => {
+    setHourEnd((prev) => Math.max(hourStart + 1, Math.min(23, prev + delta)));
+  };
+
+  const updateHourlyNote = (hour: number, text: string) => {
+    setHourlyNotes((prev) => prev.map((h) => (h.hour === hour ? { ...h, note: text } : h)));
+    setErrors((e) => ({ ...e, notes: "" }));
+  };
+
   const applyTemplate = (tmpl: { weather: string; crewCount: string; notesTemplate: string }) => {
     if (tmpl.weather) setWeather(tmpl.weather);
     if (tmpl.crewCount) setCrewCount(tmpl.crewCount);
@@ -328,6 +406,8 @@ export default function NewEntryScreen() {
       crewCount,
       notes: notes.trim(),
       photos: photosForApi,
+      notesMode,
+      hourlyNotes,
     };
     try {
       if (isEditing && entryId) {
@@ -570,7 +650,19 @@ export default function NewEntryScreen() {
             >
               {photos.map((photo) => (
                 <View key={photo.id} style={styles.photoThumb}>
-                  <Image source={{ uri: photo.uri }} style={styles.photoImage} />
+                  <AnnotatedImage photo={photo} />
+                  {photo.kind === "annotated" ? (
+                    <View style={styles.photoBadge}>
+                      <Text style={styles.photoBadgeText}>Annotated</Text>
+                    </View>
+                  ) : (
+                    <Pressable
+                      style={styles.photoAnnotate}
+                      onPress={() => setAnnotatingPhoto(photo)}
+                    >
+                      <Ionicons name="brush-outline" size={13} color={Colors.white} />
+                    </Pressable>
+                  )}
                   <Pressable
                     style={styles.photoRemove}
                     onPress={() => removePhoto(photo.id)}
@@ -607,18 +699,97 @@ export default function NewEntryScreen() {
           </View>
         </View>
 
+        <Modal
+          visible={!!annotatingPhoto}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setAnnotatingPhoto(null)}
+        >
+          {annotatingPhoto && (
+            <PhotoAnnotator
+              photo={annotatingPhoto}
+              onSave={handleSaveAnnotation}
+              onCancel={() => setAnnotatingPhoto(null)}
+            />
+          )}
+        </Modal>
+
         <View style={styles.formGroup}>
-          <Text style={styles.label}>Notes & Observations</Text>
-          <TextInput
-            style={[styles.textArea, !!errors.notes && styles.inputError]}
-            placeholder="Describe today's work, progress, issues, safety observations..."
-            placeholderTextColor={Colors.textTertiary}
-            value={notes}
-            onChangeText={(t) => { setNotes(t); setErrors((e) => ({ ...e, notes: "" })); }}
-            multiline
-            textAlignVertical="top"
-          />
-          {!!errors.notes && <Text style={styles.errorText}>{errors.notes}</Text>}
+          <View style={styles.notesHeaderRow}>
+            <Text style={styles.label}>Notes & Observations</Text>
+            <View style={styles.segmentedControl}>
+              <Pressable
+                style={[styles.segment, notesMode === "free" && styles.segmentActive]}
+                onPress={() => setNotesMode("free")}
+              >
+                <Text style={[styles.segmentText, notesMode === "free" && styles.segmentTextActive]}>Free</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.segment, notesMode === "hourly" && styles.segmentActive]}
+                onPress={() => setNotesMode("hourly")}
+              >
+                <Text style={[styles.segmentText, notesMode === "hourly" && styles.segmentTextActive]}>Hourly</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          {notesMode === "hourly" ? (
+            <View style={styles.hourlyWrap}>
+              <View style={styles.hourlyWindowRow}>
+                <View style={styles.hourStepper}>
+                  <Text style={styles.hourStepperLabel}>Start</Text>
+                  <View style={styles.stepperControls}>
+                    <Pressable style={styles.stepperBtn} onPress={() => adjustHourStart(-1)} hitSlop={6}>
+                      <Ionicons name="remove" size={16} color={Colors.accent} />
+                    </Pressable>
+                    <Text style={styles.stepperValue}>{formatHour(hourStart)}</Text>
+                    <Pressable style={styles.stepperBtn} onPress={() => adjustHourStart(1)} hitSlop={6}>
+                      <Ionicons name="add" size={16} color={Colors.accent} />
+                    </Pressable>
+                  </View>
+                </View>
+                <View style={styles.hourStepper}>
+                  <Text style={styles.hourStepperLabel}>End</Text>
+                  <View style={styles.stepperControls}>
+                    <Pressable style={styles.stepperBtn} onPress={() => adjustHourEnd(-1)} hitSlop={6}>
+                      <Ionicons name="remove" size={16} color={Colors.accent} />
+                    </Pressable>
+                    <Text style={styles.stepperValue}>{formatHour(hourEnd)}</Text>
+                    <Pressable style={styles.stepperBtn} onPress={() => adjustHourEnd(1)} hitSlop={6}>
+                      <Ionicons name="add" size={16} color={Colors.accent} />
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+
+              {hourlyNotes.map((entry) => (
+                <View key={entry.hour} style={styles.hourlyRow}>
+                  <Text style={styles.hourlyRowLabel}>{formatHour(entry.hour)}</Text>
+                  <TextInput
+                    style={styles.hourlyRowInput}
+                    placeholder="Note for this hour..."
+                    placeholderTextColor={Colors.textTertiary}
+                    value={entry.note}
+                    onChangeText={(t) => updateHourlyNote(entry.hour, t)}
+                  />
+                </View>
+              ))}
+              {!!errors.notes && <Text style={styles.errorText}>{errors.notes}</Text>}
+            </View>
+          ) : (
+            <>
+              <TextInput
+                style={[styles.textArea, !!errors.notes && styles.inputError]}
+                placeholder="Describe today's work, progress, issues, safety observations..."
+                placeholderTextColor={Colors.textTertiary}
+                value={notes}
+                onChangeText={(t) => { setNotes(t); setErrors((e) => ({ ...e, notes: "" })); }}
+                multiline
+                textAlignVertical="top"
+              />
+              {!!errors.notes && <Text style={styles.errorText}>{errors.notes}</Text>}
+            </>
+          )}
         </View>
 
         <Pressable
@@ -775,11 +946,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
   },
-  photoImage: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 12,
-  },
   photoRemove: {
     position: "absolute",
     top: 4,
@@ -790,6 +956,32 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.6)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  photoAnnotate: {
+    position: "absolute",
+    bottom: 4,
+    left: 4,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  photoBadge: {
+    position: "absolute",
+    bottom: 4,
+    left: 4,
+    right: 4,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+  },
+  photoBadgeText: {
+    fontSize: 9,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.white,
   },
   photoActions: {
     flexDirection: "row",
@@ -1030,6 +1222,96 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: Colors.text,
     lineHeight: 22,
+  },
+  notesHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: 10,
+    padding: 2,
+  },
+  segment: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  segmentActive: {
+    backgroundColor: Colors.accent,
+  },
+  segmentText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.textSecondary,
+  },
+  segmentTextActive: {
+    color: Colors.white,
+  },
+  hourlyWrap: {
+    gap: 10,
+  },
+  hourlyWindowRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  hourStepper: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 4,
+  },
+  hourStepperLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: Colors.textSecondary,
+  },
+  stepperControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  stepperBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: `${Colors.accent}14`,
+  },
+  stepperValue: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: Colors.text,
+  },
+  hourlyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  hourlyRowLabel: {
+    width: 52,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.textSecondary,
+  },
+  hourlyRowInput: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 14,
+    height: 44,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.text,
   },
   saveButton: {
     flexDirection: "row",

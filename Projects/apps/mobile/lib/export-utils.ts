@@ -3,7 +3,7 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 import { Paths } from "expo-file-system";
-import type { DiarySection, GeneratedDiary, Photo, Site } from "@/lib/types";
+import type { DiarySection, GeneratedDiary, HourlyNote, Photo, Site } from "@/lib/types";
 import { LOGO_DATA_URI } from "@/lib/logo";
 
 export type ReportExportFormat = "pdf" | "doc";
@@ -19,6 +19,38 @@ export function escapeHtml(value: string) {
 
 function normalizeFilename(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+function buildAnnotationOverlayHtml(photo: Photo) {
+  if (photo.kind !== "annotated" || !photo.annotationVector) return "";
+  const { viewBox, strokes } = photo.annotationVector;
+  const paths = strokes
+    .map((s) => `<path d="${escapeHtml(s.path)}" fill="none" stroke="${escapeHtml(s.color)}" stroke-width="${s.width}"/>`)
+    .join("");
+  return `<svg viewBox="${escapeHtml(viewBox)}" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">${paths}</svg>`;
+}
+
+function buildHourlyLogTableHtml(hourlyNotes: HourlyNote[]) {
+  const rows = hourlyNotes
+    .filter((h) => h.note && h.note.trim())
+    .map(
+      (h) => `
+        <tr>
+          <td>${escapeHtml(`${String(h.hour).padStart(2, "0")}:00`)}</td>
+          <td>${escapeHtml(h.note)}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  if (!rows) return `<p>No hourly notes recorded.</p>`;
+
+  return `
+    <table class="data-table">
+      <thead><tr><th>Time</th><th>Note</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function buildSectionTable(section: DiarySection) {
@@ -447,15 +479,17 @@ export function buildEntryPhotosReportHtml(args: {
   entryDate: string;
   notes: string;
   photos: Photo[];
+  notesMode?: "free" | "hourly";
+  hourlyNotes?: HourlyNote[];
 }) {
   const photoCards = args.photos
     .map((photo, index) => {
       const imageMarkup = photo.base64
-        ? `<img src="data:${escapeHtml(photo.mimeType || "image/jpeg")};base64,${photo.base64}" style="width:100%;max-height:320px;object-fit:cover;border-radius:14px;margin-bottom:12px;" />`
+        ? `<div style="position:relative;margin-bottom:12px;"><img src="data:${escapeHtml(photo.mimeType || "image/jpeg")};base64,${photo.base64}" style="width:100%;max-height:320px;object-fit:cover;border-radius:14px;display:block;" />${buildAnnotationOverlayHtml(photo)}</div>`
         : `<p style="color:#6f8095;font-style:italic;margin:0 0 12px;">Image unavailable</p>`;
       return `
         <section class="section">
-          <h2>Photo ${index + 1}</h2>
+          <h2>Photo ${index + 1}${photo.kind === "annotated" ? " (Annotated)" : ""}</h2>
           ${imageMarkup}
           <table class="detail-table">
             <tr><th>Captured</th><td>${escapeHtml(new Date(photo.timestamp).toLocaleString("en-AU"))}</td></tr>
@@ -465,6 +499,11 @@ export function buildEntryPhotosReportHtml(args: {
       `;
     })
     .join("");
+
+  const notesMarkup =
+    args.notesMode === "hourly"
+      ? buildHourlyLogTableHtml(args.hourlyNotes || [])
+      : `<p>${escapeHtml(args.notes || "No notes recorded.")}</p>`;
 
   return buildHtmlDocument({
     title: `${args.site.name} Entry Photos`,
@@ -478,8 +517,8 @@ export function buildEntryPhotosReportHtml(args: {
     ],
     body: `
       <section class="section">
-        <h2>Entry Notes</h2>
-        <p>${escapeHtml(args.notes || "No notes recorded.")}</p>
+        <h2>${args.notesMode === "hourly" ? "Hourly Log" : "Entry Notes"}</h2>
+        ${notesMarkup}
       </section>
       ${photoCards || `<section class="section"><h2>No Photos</h2><p>No photos were attached to this entry.</p></section>`}
     `,
