@@ -24,6 +24,14 @@ const ResultItemSchema = z.object({
   notes: z.string().default(""),
 });
 
+const DefectItemSchema = z.object({
+  description: z.string(),
+  severity: z.string(),
+  owner: z.string(),
+  dueDate: z.string().nullable(),
+  status: z.string(),
+});
+
 const InspectionSchema = z.object({
   siteId: z.string().min(1),
   templateId: z.string().nullable().optional(),
@@ -31,6 +39,16 @@ const InspectionSchema = z.object({
   date: z.string().min(1),
   results: z.array(ResultItemSchema).default([]),
   status: z.enum(["pending", "complete"]).default("pending"),
+  // Defensible-inspection fields (024):
+  scope: z.string().default(""),
+  areaInspected: z.string().default(""),
+  time: z.string().default(""),
+  inspectorName: z.string().default(""),
+  inspectorRole: z.string().default(""),
+  inspectorCompany: z.string().default(""),
+  defects: z.array(DefectItemSchema).default([]),
+  overallOutcome: z.string().default(""),
+  followUpRequired: z.boolean().default(false),
 });
 
 const InspectionPatchSchema = z.object({

@@ -17,6 +17,14 @@ export type InspectionResultItem = {
   notes: string;
 };
 
+export type InspectionDefectItem = {
+  description: string;
+  severity: string;
+  owner: string;
+  dueDate: string | null;
+  status: string;
+};
+
 export type InspectionRecord = {
   id: string;
   ownerEmail: string;
@@ -30,6 +38,16 @@ export type InspectionRecord = {
   createdAt: string;
   updatedAt?: string;
   deletedAt?: string | null;
+  // Defensible-inspection fields (024):
+  scope: string;
+  areaInspected: string;
+  time: string;
+  inspectorName: string;
+  inspectorRole: string;
+  inspectorCompany: string;
+  defects: InspectionDefectItem[];
+  overallOutcome: string;
+  followUpRequired: boolean;
 };
 
 function useDatabase() {
@@ -105,6 +123,9 @@ function mapInspection(row: {
   id: string; owner_email: string; company_id: string; site_id: string; template_id: string | null; name: string; date: string;
   results_json: InspectionResultItem[]; status: "pending" | "complete";
   created_at: Date; updated_at?: Date | null; deleted_at?: Date | null;
+  scope?: string | null; area_inspected?: string | null; time?: string | null;
+  inspector_name?: string | null; inspector_role?: string | null; inspector_company?: string | null;
+  defects?: InspectionDefectItem[] | null; overall_outcome?: string | null; follow_up_required?: boolean | null;
 }): InspectionRecord {
   return {
     id: row.id, ownerEmail: row.owner_email, companyId: row.company_id, siteId: row.site_id,
@@ -113,6 +134,11 @@ function mapInspection(row: {
     status: row.status, createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
     deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
+    scope: row.scope || "", areaInspected: row.area_inspected || "", time: row.time || "",
+    inspectorName: row.inspector_name || "", inspectorRole: row.inspector_role || "",
+    inspectorCompany: row.inspector_company || "",
+    defects: Array.isArray(row.defects) ? row.defects : [],
+    overallOutcome: row.overall_outcome || "", followUpRequired: row.follow_up_required ?? false,
   };
 }
 
@@ -140,10 +166,21 @@ export async function createInspection(actor: Actor, payload: Omit<InspectionRec
   const record: InspectionRecord = { id: uuidv4(), ownerEmail: actor.email, companyId: actor.companyId, createdAt: new Date().toISOString(), ...payload };
   if (!useDatabase()) { memoryInspections.set(record.id, record); return record; }
   const result = await getPgPool().query(
-    `INSERT INTO inspections (id, owner_email, company_id, site_id, template_id, name, date, results_json, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9) RETURNING *`,
+    `INSERT INTO inspections (
+       id, owner_email, company_id, site_id, template_id, name, date, results_json, status,
+       scope, area_inspected, time, inspector_name, inspector_role, inspector_company,
+       defects, overall_outcome, follow_up_required
+     )
+     VALUES (
+       $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,
+       $10,$11,$12,$13,$14,$15,
+       $16::jsonb,$17,$18
+     ) RETURNING *`,
     [record.id, actor.email, actor.companyId, record.siteId, record.templateId ?? null, record.name, record.date,
-     JSON.stringify(record.results), record.status]
+     JSON.stringify(record.results), record.status,
+     record.scope || null, record.areaInspected || null, record.time || null, record.inspectorName || null,
+     record.inspectorRole || null, record.inspectorCompany || null,
+     JSON.stringify(record.defects || []), record.overallOutcome || null, record.followUpRequired ?? false]
   );
   return mapInspection(result.rows[0]);
 }
