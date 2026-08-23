@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
   },
   ctaText: {
-    color: "#fff",
+    color: Colors.white,
     fontSize: 15,
     fontWeight: "700",
   },

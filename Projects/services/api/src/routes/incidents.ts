@@ -12,6 +12,20 @@ function getActor(req: unknown) {
   return { email: r.auth.email, role: r.auth.role, companyId: r.auth.companyId, companyRole: r.auth.companyRole };
 }
 
+const ContributingFactorsSchema = z.object({
+  environment: z.string().optional(),
+  human: z.string().optional(),
+  equipment: z.string().optional(),
+  methods: z.string().optional(),
+}).default({});
+
+const CorrectiveActionItemSchema = z.object({
+  action: z.string(),
+  owner: z.string(),
+  dueDate: z.string().nullable(),
+  status: z.string(),
+});
+
 const IncidentSchema = z.object({
   siteId: z.string().min(1),
   date: z.string().min(1),
@@ -20,6 +34,30 @@ const IncidentSchema = z.object({
   injuredParty: z.string().default(""),
   correctiveAction: z.string().default(""),
   status: z.enum(["open", "closed"]).default("open"),
+  // Pre-existing-but-previously-dropped fields (024):
+  time: z.string().default(""),
+  type: z.string().default(""),
+  locationArea: z.string().default(""),
+  injuredRole: z.string().default(""),
+  injuredEmployer: z.string().default(""),
+  natureOfInjury: z.string().default(""),
+  bodyPart: z.string().default(""),
+  treatmentRequired: z.string().default(""),
+  witnesses: z.string().default(""),
+  immediateActions: z.string().default(""),
+  rootCause: z.string().default(""),
+  reportedBy: z.string().default(""),
+  supervisorNotified: z.boolean().default(false),
+  supervisorName: z.string().default(""),
+  // New WorkSafe NZ investigation fields (024):
+  propertyDamage: z.string().default(""),
+  firstAiderName: z.string().default(""),
+  contributingFactors: ContributingFactorsSchema,
+  worksafeNotified: z.boolean().default(false),
+  worksafeNotifiedAt: z.string().nullable().default(null),
+  worksafeNotifiedHow: z.string().default(""),
+  investigatorName: z.string().default(""),
+  correctiveActions: z.array(CorrectiveActionItemSchema).default([]),
 });
 
 const IncidentPatchSchema = z.object({

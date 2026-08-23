@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/react-native";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -14,6 +15,7 @@ import { logResolvedApiBaseUrlOnce } from "@/lib/api-base-url";
 import { resumeTrackingIfEnabled } from "@/lib/location-service";
 import { ONBOARDING_COMPLETE_KEY } from "./onboarding";
 import Constants from "expo-constants";
+import Colors from "@/constants/colors";
 
 const sentryDsn = (Constants.expoConfig?.extra as { sentryDsn?: string } | undefined)?.sentryDsn
   || process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -41,6 +43,9 @@ SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
   return (
+    <>
+      {/* Navy-forward chrome: navy headers/tab bar need light status-bar content. */}
+      <StatusBar style="light" />
       <Stack screenOptions={{ headerBackTitle: "Back" }}>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
@@ -54,7 +59,7 @@ function RootLayoutNav() {
           title: "New Site",
           presentation: "modal",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -75,7 +80,7 @@ function RootLayoutNav() {
           title: "New Entry",
           presentation: "modal",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -96,7 +101,7 @@ function RootLayoutNav() {
           title: "Profile",
           presentation: "modal",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -104,7 +109,7 @@ function RootLayoutNav() {
         options={{
           title: "Export Diaries",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -112,7 +117,7 @@ function RootLayoutNav() {
         options={{
           title: "Backup Data",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -120,7 +125,7 @@ function RootLayoutNav() {
         options={{
           title: "Privacy Policy",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -128,7 +133,7 @@ function RootLayoutNav() {
         options={{
           title: "Help & Support",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen
@@ -136,7 +141,7 @@ function RootLayoutNav() {
         options={{
           title: "Supervisor Dashboard",
           headerShown: true,
-          headerTintColor: "#0F2B46",
+          headerTintColor: Colors.primary,
         }}
       />
       <Stack.Screen name="invite" options={{ headerShown: false }} />
@@ -147,6 +152,7 @@ function RootLayoutNav() {
       <Stack.Screen name="inspections/[siteId]" options={{ headerShown: false }} />
       <Stack.Screen name="deliveries/[siteId]" options={{ headerShown: false }} />
     </Stack>
+    </>
   );
 }
 

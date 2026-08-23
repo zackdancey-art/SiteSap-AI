@@ -120,16 +120,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: 16, gap: 14, paddingBottom: 40 },
   draftBanner: {
-    backgroundColor: "#FEF3C7",
+    backgroundColor: Colors.warningBg,
     borderWidth: 1,
-    borderColor: "#FCD34D",
+    borderColor: Colors.warningBorder,
     borderRadius: 12,
     padding: 14,
   },
   draftText: {
     fontSize: 12,
     fontFamily: "Inter_500Medium",
-    color: "#92400E",
+    color: Colors.warningText,
     lineHeight: 18,
   },
   hero: {

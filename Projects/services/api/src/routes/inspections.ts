@@ -3,8 +3,12 @@ import { z } from "zod";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth";
 import {
   listTemplates, createTemplate, deleteTemplate,
-  listInspections, createInspection, updateInspection, deleteInspection,
+  listInspections, createInspection, updateInspection, deleteInspection, getInspection,
 } from "../storage/inspectionStore";
+import {
+  createSignature, listSignatures, voidSignature, computeInspectionContentHash,
+  InspectionSignatureRole,
+} from "../storage/signatureStore";
 
 export const inspectionsRouter: Router = Router();
 
@@ -22,6 +26,18 @@ const ResultItemSchema = z.object({
   item: z.string(),
   passed: z.boolean().nullable().default(null),
   notes: z.string().default(""),
+  // N/A is a distinct checklist outcome from unanswered (passed === null). It
+  // lives inside results_json (JSONB) so it needs no DDL. It IS signed content —
+  // computeInspectionContentHash includes it.
+  na: z.boolean().default(false),
+});
+
+const DefectItemSchema = z.object({
+  description: z.string(),
+  severity: z.string(),
+  owner: z.string(),
+  dueDate: z.string().nullable(),
+  status: z.string(),
 });
 
 const InspectionSchema = z.object({
@@ -31,11 +47,41 @@ const InspectionSchema = z.object({
   date: z.string().min(1),
   results: z.array(ResultItemSchema).default([]),
   status: z.enum(["pending", "complete"]).default("pending"),
+  // Defensible-inspection fields (024):
+  scope: z.string().default(""),
+  areaInspected: z.string().default(""),
+  time: z.string().default(""),
+  inspectorName: z.string().default(""),
+  inspectorRole: z.string().default(""),
+  inspectorCompany: z.string().default(""),
+  defects: z.array(DefectItemSchema).default([]),
+  overallOutcome: z.string().default(""),
+  followUpRequired: z.boolean().default(false),
 });
 
 const InspectionPatchSchema = z.object({
   results: z.array(ResultItemSchema).optional(),
   status: z.enum(["pending", "complete"]).optional(),
+  scope: z.string().optional(),
+  areaInspected: z.string().optional(),
+  time: z.string().optional(),
+  inspectorName: z.string().optional(),
+  inspectorRole: z.string().optional(),
+  inspectorCompany: z.string().optional(),
+  defects: z.array(DefectItemSchema).optional(),
+  overallOutcome: z.string().optional(),
+  followUpRequired: z.boolean().optional(),
+});
+
+const SignatureCreateSchema = z.object({
+  role: z.enum(["inspector", "manager", "client"]),
+  signerName: z.string().min(1),
+  path: z.string().min(1),
+  viewBox: z.string().min(1),
+});
+
+const SignatureVoidSchema = z.object({
+  reason: z.string().min(1),
 });
 
 // ─── Templates ──────────────────────────────────────────────────────────────
@@ -128,5 +174,58 @@ inspectionsRouter.delete("/inspections/:id", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("[inspections] delete failed", err);
     return res.status(500).json({ error: "Failed to delete inspection." });
+  }
+});
+
+// ─── Signatures ─────────────────────────────────────────────────────────────
+
+inspectionsRouter.post("/inspections/:id/signatures", requireAuth, async (req, res) => {
+  try {
+    const parsed = SignatureCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid signature payload.", details: parsed.error.flatten() });
+    }
+    const actor = getActor(req);
+    const inspection = await getInspection(actor, req.params.id);
+    if (!inspection) return res.status(404).json({ error: "Inspection not found." });
+    const { hash, snapshot } = computeInspectionContentHash(inspection);
+    const signature = await createSignature(actor, {
+      inspectionId: req.params.id,
+      role: parsed.data.role as InspectionSignatureRole,
+      signerName: parsed.data.signerName,
+      path: parsed.data.path,
+      viewBox: parsed.data.viewBox,
+      contentHash: hash,
+      snapshot,
+    });
+    return res.status(201).json({ signature });
+  } catch (err) {
+    console.error("[inspections] create signature failed", err);
+    return res.status(500).json({ error: "Failed to create signature." });
+  }
+});
+
+inspectionsRouter.get("/inspections/:id/signatures", requireAuth, async (req, res) => {
+  try {
+    const signatures = await listSignatures(getActor(req), req.params.id);
+    return res.json({ signatures });
+  } catch (err) {
+    console.error("[inspections] list signatures failed", err);
+    return res.status(500).json({ error: "Failed to list signatures." });
+  }
+});
+
+inspectionsRouter.post("/inspections/:id/signatures/:sigId/void", requireAuth, async (req, res) => {
+  try {
+    const parsed = SignatureVoidSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid void payload.", details: parsed.error.flatten() });
+    }
+    const signature = await voidSignature(getActor(req), req.params.sigId, parsed.data.reason);
+    if (!signature) return res.status(404).json({ error: "Signature not found." });
+    return res.json({ signature });
+  } catch (err) {
+    console.error("[inspections] void signature failed", err);
+    return res.status(500).json({ error: "Failed to void signature." });
   }
 });

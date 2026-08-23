@@ -8,6 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
+import { formatDate } from "@/lib/format";
+import { buildHtmlDocument, exportReportDocument, escapeHtml } from "@/lib/export-utils";
 import { EmptyState } from "@/components/EmptyState";
 import { useData } from "@/lib/data-context";
 import { getApiBaseUrl } from "@/lib/api-base-url";
@@ -43,11 +45,11 @@ type Incident = {
 };
 
 const SEVERITY_META: Record<Severity, { color: string; label: string }> = {
-  "near-miss": { color: "#F6AD55", label: "Near Miss" },
-  minor:       { color: "#68D391", label: "Minor" },
-  moderate:    { color: "#F6E05E", label: "Moderate" },
-  major:       { color: "#FC8181", label: "Major" },
-  critical:    { color: "#9F1239", label: "Critical" },
+  "near-miss": { color: Colors.accentLight, label: "Near Miss" },
+  minor:       { color: Colors.successBorder, label: "Minor" },
+  moderate:    { color: Colors.warningBorder, label: "Moderate" },
+  major:       { color: Colors.errorBorder, label: "Major" },
+  critical:    { color: Colors.errorText, label: "Critical" },
 };
 
 const TYPE_LABELS: Record<IncidentType, string> = {
@@ -66,6 +68,70 @@ const TREATMENT_LABELS: Record<Treatment, string> = {
   medical:     "Medical Treatment",
   hospital:    "Hospital",
 };
+
+const STATUS_LABELS: Record<IncidentStatus, string> = {
+  open:          "Open",
+  investigating: "Investigating",
+  closed:        "Closed",
+};
+
+/** Single-incident formal report (compliance/insurance record). */
+function buildIncidentHtml(inc: Incident, siteName: string, client: string): string {
+  // Structured to mirror WorkSafe NZ's Accident Investigation Form. Each group
+  // renders only if it has content; empty groups are omitted from the document,
+  // and fields we don't yet capture (property damage, contributing factors,
+  // WorkSafe notification, corrective-action owner/due date, investigator,
+  // signature) simply slot into their group once the schema adds them.
+  const row = (label: string, value?: string | null) =>
+    value && value.trim() ? `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value.trim())}</td></tr>` : "";
+  const table = (rows: string) => (rows ? `<table class="detail-table">${rows}</table>` : "");
+  const section = (title: string, inner: string) =>
+    inner.trim() ? `<section class="section"><h2>${escapeHtml(title)}</h2>${inner}</section>` : "";
+
+  const eventDetails = table(
+    row("Date", `${formatDate(inc.date)}${inc.time ? ` · ${inc.time}` : ""}`) +
+    row("Site", siteName) +
+    row("Location", inc.locationArea) +
+    row("Severity", SEVERITY_META[inc.severity]?.label ?? inc.severity) +
+    row("Type", inc.type ? TYPE_LABELS[inc.type] : "") +
+    row("Status", STATUS_LABELS[inc.status])
+  );
+  const people = table(
+    row("Person Involved", [inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · ")) +
+    row("Witnesses", inc.witnesses) +
+    row("Reported By", inc.reportedBy)
+  );
+  const whatHappened =
+    `<p>${escapeHtml(inc.description || "No description recorded.")}</p>` +
+    table(row("Nature of Injury", [inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", ")));
+  const immediate = table(
+    row("Treatment", inc.treatmentRequired && inc.treatmentRequired !== "none" ? TREATMENT_LABELS[inc.treatmentRequired] : "") +
+    row("Immediate Actions", inc.immediateActions)
+  );
+  const analysis = table(row("Root Cause", inc.rootCause));
+  const corrective = table(row("Corrective Actions", inc.correctiveAction));
+  const signoff = table(inc.supervisorNotified ? row("Supervisor Notified", inc.supervisorName || "Yes") : "");
+
+  return buildHtmlDocument({
+    eyebrow: "Incident Report",
+    title: inc.type ? TYPE_LABELS[inc.type] : "Incident",
+    subtitle: `${siteName}${client ? ` · ${client}` : ""} · ${formatDate(inc.date)}${inc.time ? ` · ${inc.time}` : ""}`,
+    meta: [
+      { label: "Date", value: `${formatDate(inc.date)}${inc.time ? ` · ${inc.time}` : ""}` },
+      { label: "Severity", value: SEVERITY_META[inc.severity]?.label ?? inc.severity },
+      { label: "Type", value: inc.type ? TYPE_LABELS[inc.type] : "—" },
+      { label: "Status", value: STATUS_LABELS[inc.status] },
+    ],
+    body:
+      section("1 · Event details", eventDetails) +
+      section("2 · People", people) +
+      section("3 · What happened", whatHappened) +
+      section("4 · Immediate response", immediate) +
+      section("5 · Analysis", analysis) +
+      section("6 · Corrective actions", corrective) +
+      section("7 · Notification & sign-off", signoff),
+  });
+}
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await AsyncStorage.getItem("sitesnap.token");
@@ -230,6 +296,17 @@ export default function IncidentsScreen() {
     setIncidents((prev) => prev.map((i) => (i.id === id ? { ...i, status } : i)));
   };
 
+  const handleExportIncident = (inc: Incident) => {
+    if (!site) return;
+    const html = buildIncidentHtml(inc, site.name, site.client);
+    const base = `sitesnap-incident-${inc.date}-${inc.id}`;
+    Alert.alert("Export Incident Report", "Choose a format.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Word", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "doc" }) },
+      { text: "PDF", onPress: () => void exportReportDocument({ filenameBase: base, html, format: "pdf" }) },
+    ]);
+  };
+
   const handleDelete = (id: string) => {
     Alert.alert("Delete Incident", "Remove this incident record permanently?", [
       { text: "Cancel", style: "cancel" },
@@ -258,7 +335,7 @@ export default function IncidentsScreen() {
           {site && <Text style={styles.headerSub}>{site.name}</Text>}
         </View>
         <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color="#fff" />
+          <Ionicons name="add" size={22} color={Colors.white} />
           <Text style={styles.addBtnText}>Report</Text>
         </Pressable>
       </View>
@@ -276,7 +353,7 @@ export default function IncidentsScreen() {
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
           {incidents.map((inc) => {
-            const sev = SEVERITY_META[inc.severity] ?? { color: "#888", label: inc.severity };
+            const sev = SEVERITY_META[inc.severity] ?? { color: Colors.textTertiary, label: inc.severity };
             const expanded = expandedId === inc.id;
             return (
               <Pressable key={inc.id} style={styles.card} onPress={() => setExpandedId(expanded ? null : inc.id)}>
@@ -286,9 +363,9 @@ export default function IncidentsScreen() {
                     <View style={[styles.sevDot, { backgroundColor: sev.color }]} />
                     <Text style={[styles.sevText, { color: sev.color }]}>{sev.label.toUpperCase()}</Text>
                   </View>
-                  <Text style={styles.cardDate}>{inc.date}{inc.time ? ` · ${inc.time}` : ""}</Text>
+                  <Text style={styles.cardDate}>{formatDate(inc.date)}{inc.time ? ` · ${inc.time}` : ""}</Text>
                   <View style={[styles.statusBadge, inc.status === "closed" && styles.statusClosed, inc.status === "investigating" && styles.statusInvestigating]}>
-                    <Text style={styles.statusText}>{inc.status.toUpperCase()}</Text>
+                    <Text style={styles.statusText}>{STATUS_LABELS[inc.status]}</Text>
                   </View>
                 </View>
 
@@ -297,16 +374,54 @@ export default function IncidentsScreen() {
 
                 {expanded && (
                   <View style={styles.cardDetail}>
-                    {!!inc.locationArea && <DetailRow icon="location-outline" label="Location" value={inc.locationArea} />}
-                    {!!inc.injuredParty && <DetailRow icon="person-outline" label="Person Involved" value={[inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · ")} />}
-                    {!!inc.natureOfInjury && <DetailRow icon="bandage-outline" label="Nature of Injury" value={[inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", ")} />}
-                    {inc.treatmentRequired && inc.treatmentRequired !== "none" && <DetailRow icon="medkit-outline" label="Treatment" value={TREATMENT_LABELS[inc.treatmentRequired]} />}
-                    {!!inc.witnesses && <DetailRow icon="people-outline" label="Witnesses" value={inc.witnesses} />}
-                    {!!inc.immediateActions && <DetailRow icon="flash-outline" label="Immediate Actions" value={inc.immediateActions} />}
-                    {!!inc.rootCause && <DetailRow icon="search-outline" label="Root Cause" value={inc.rootCause} />}
-                    {!!inc.correctiveAction && <DetailRow icon="checkmark-done-outline" label="Corrective Actions" value={inc.correctiveAction} />}
-                    {!!inc.reportedBy && <DetailRow icon="create-outline" label="Reported By" value={inc.reportedBy} />}
-                    {inc.supervisorNotified && <DetailRow icon="call-outline" label="Supervisor Notified" value={inc.supervisorName || "Yes"} />}
+                    {/* Grouped to mirror WorkSafe NZ's Accident Investigation Form.
+                        Each group shows only if it has content; missing fields
+                        slot into their group once the schema adds them. */}
+                    {!!inc.locationArea && (
+                      <>
+                        <Text style={styles.detailGroup}>Event details</Text>
+                        <DetailRow icon="location-outline" label="Location" value={inc.locationArea} />
+                      </>
+                    )}
+                    {(!!inc.injuredParty || !!inc.witnesses || !!inc.reportedBy) && (
+                      <>
+                        <Text style={styles.detailGroup}>People</Text>
+                        {!!inc.injuredParty && <DetailRow icon="person-outline" label="Person Involved" value={[inc.injuredParty, inc.injuredRole, inc.injuredEmployer].filter(Boolean).join(" · ")} />}
+                        {!!inc.witnesses && <DetailRow icon="people-outline" label="Witnesses" value={inc.witnesses} />}
+                        {!!inc.reportedBy && <DetailRow icon="create-outline" label="Reported By" value={inc.reportedBy} />}
+                      </>
+                    )}
+                    {!!inc.natureOfInjury && (
+                      <>
+                        <Text style={styles.detailGroup}>What happened</Text>
+                        <DetailRow icon="bandage-outline" label="Nature of Injury" value={[inc.natureOfInjury, inc.bodyPart].filter(Boolean).join(", ")} />
+                      </>
+                    )}
+                    {((!!inc.treatmentRequired && inc.treatmentRequired !== "none") || !!inc.immediateActions) && (
+                      <>
+                        <Text style={styles.detailGroup}>Immediate response</Text>
+                        {inc.treatmentRequired && inc.treatmentRequired !== "none" && <DetailRow icon="medkit-outline" label="Treatment" value={TREATMENT_LABELS[inc.treatmentRequired]} />}
+                        {!!inc.immediateActions && <DetailRow icon="flash-outline" label="Immediate Actions" value={inc.immediateActions} />}
+                      </>
+                    )}
+                    {!!inc.rootCause && (
+                      <>
+                        <Text style={styles.detailGroup}>Analysis</Text>
+                        <DetailRow icon="search-outline" label="Root Cause" value={inc.rootCause} />
+                      </>
+                    )}
+                    {!!inc.correctiveAction && (
+                      <>
+                        <Text style={styles.detailGroup}>Corrective actions</Text>
+                        <DetailRow icon="checkmark-done-outline" label="Corrective Actions" value={inc.correctiveAction} />
+                      </>
+                    )}
+                    {inc.supervisorNotified && (
+                      <>
+                        <Text style={styles.detailGroup}>Notification & sign-off</Text>
+                        <DetailRow icon="call-outline" label="Supervisor Notified" value={inc.supervisorName || "Yes"} />
+                      </>
+                    )}
 
                     <View style={styles.cardActions}>
                       {inc.status === "open" && (
@@ -319,8 +434,12 @@ export default function IncidentsScreen() {
                           <Text style={styles.actionBtnText}>Close</Text>
                         </Pressable>
                       )}
+                      <Pressable style={[styles.actionBtn, styles.actionBtnExport]} onPress={() => handleExportIncident(inc)}>
+                        <Ionicons name="download-outline" size={14} color={Colors.white} />
+                        <Text style={styles.actionBtnText}>Export</Text>
+                      </Pressable>
                       <Pressable style={[styles.actionBtn, styles.actionBtnRed]} onPress={() => handleDelete(inc.id)}>
-                        <Ionicons name="trash-outline" size={14} color="#fff" />
+                        <Ionicons name="trash-outline" size={14} color={Colors.white} />
                       </Pressable>
                     </View>
                   </View>
@@ -348,22 +467,19 @@ export default function IncidentsScreen() {
               onPress={handleAdd}
               disabled={saving}
             >
-              {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={formStyles.submitBtnText}>Submit</Text>}
+              {saving ? <ActivityIndicator color={Colors.white} size="small" /> : <Text style={formStyles.submitBtnText}>Submit</Text>}
             </Pressable>
           </View>
 
           <ScrollView contentContainerStyle={formStyles.scroll} keyboardShouldPersistTaps="handled">
-            {/* Section 1 – Classification */}
-            <SectionHeader title="1 · Incident Classification" />
+            {/* 1 · Event details */}
+            <SectionHeader title="1 · Event details" />
             <Field label="Incident Type" required>
               <ChipGroup options={types} value={type} onChange={setType} meta={Object.fromEntries(types.map((t) => [t, { color: Colors.primary, label: TYPE_LABELS[t] }]))} />
             </Field>
             <Field label="Severity" required>
               <ChipGroup options={severities} value={severity} onChange={setSeverity} meta={SEVERITY_META} />
             </Field>
-
-            {/* Section 2 – Incident Details */}
-            <SectionHeader title="2 · Incident Details" />
             <View style={formStyles.rowFields}>
               <View style={{ flex: 1 }}>
                 <Field label="Date" required>
@@ -379,20 +495,9 @@ export default function IncidentsScreen() {
             <Field label="Location / Site Area">
               <TextInput style={formStyles.input} value={locationArea} onChangeText={setLocationArea} placeholder="e.g. Level 2, North face, Plant room" placeholderTextColor={Colors.textTertiary} />
             </Field>
-            <Field label="Description of Incident" required>
-              <TextInput
-                style={[formStyles.input, formStyles.multiline]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Describe what happened, the sequence of events, and any relevant context…"
-                placeholderTextColor={Colors.textTertiary}
-                multiline
-                textAlignVertical="top"
-              />
-            </Field>
 
-            {/* Section 3 – Persons Involved */}
-            <SectionHeader title="3 · Persons Involved" />
+            {/* 2 · People */}
+            <SectionHeader title="2 · People" />
             <Field label="Name of Injured / Involved Person">
               <TextInput style={formStyles.input} value={injuredParty} onChangeText={setInjuredParty} placeholder="Full name" placeholderTextColor={Colors.textTertiary} />
             </Field>
@@ -419,9 +524,23 @@ export default function IncidentsScreen() {
                 textAlignVertical="top"
               />
             </Field>
+            <Field label="Reported By">
+              <TextInput style={formStyles.input} value={reportedBy} onChangeText={setReportedBy} placeholder="Your name" placeholderTextColor={Colors.textTertiary} />
+            </Field>
 
-            {/* Section 4 – Injury Details */}
-            <SectionHeader title="4 · Injury / Damage Details" />
+            {/* 3 · What happened */}
+            <SectionHeader title="3 · What happened" />
+            <Field label="Description of Incident" required>
+              <TextInput
+                style={[formStyles.input, formStyles.multiline]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Describe what happened, the sequence of events, and any relevant context…"
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                textAlignVertical="top"
+              />
+            </Field>
             <View style={formStyles.rowFields}>
               <View style={{ flex: 1 }}>
                 <Field label="Nature of Injury">
@@ -434,6 +553,9 @@ export default function IncidentsScreen() {
                 </Field>
               </View>
             </View>
+
+            {/* 4 · Immediate response */}
+            <SectionHeader title="4 · Immediate response" />
             <Field label="Treatment Required">
               <ChipGroup
                 options={treatments}
@@ -442,14 +564,11 @@ export default function IncidentsScreen() {
                 meta={{
                   none:        { color: Colors.textTertiary, label: "None" },
                   "first-aid": { color: Colors.success,      label: "First Aid" },
-                  medical:     { color: "#F6AD55",            label: "Medical" },
+                  medical:     { color: Colors.accentLight,            label: "Medical" },
                   hospital:    { color: Colors.error,         label: "Hospital" },
                 }}
               />
             </Field>
-
-            {/* Section 5 – Cause & Actions */}
-            <SectionHeader title="5 · Cause Analysis & Actions" />
             <Field label="Immediate Actions Taken">
               <TextInput
                 style={[formStyles.input, formStyles.multiline]}
@@ -461,34 +580,37 @@ export default function IncidentsScreen() {
                 textAlignVertical="top"
               />
             </Field>
-            <Field label="Root Cause / Contributing Factors">
+
+            {/* 5 · Analysis */}
+            <SectionHeader title="5 · Analysis" />
+            <Field label="Root Cause">
               <TextInput
                 style={[formStyles.input, formStyles.multiline]}
                 value={rootCause}
                 onChangeText={setRootCause}
-                placeholder="Identify root causes — environment, equipment, procedure, human factors…"
-                placeholderTextColor={Colors.textTertiary}
-                multiline
-                textAlignVertical="top"
-              />
-            </Field>
-            <Field label="Corrective Actions Required">
-              <TextInput
-                style={[formStyles.input, formStyles.multiline]}
-                value={correctiveAction}
-                onChangeText={setCorrectiveAction}
-                placeholder="Actions to prevent recurrence, responsible person, due date…"
+                placeholder="Identify the underlying cause — environment, equipment, procedure, human factors…"
                 placeholderTextColor={Colors.textTertiary}
                 multiline
                 textAlignVertical="top"
               />
             </Field>
 
-            {/* Section 6 – Sign-off */}
-            <SectionHeader title="6 · Sign-off" />
-            <Field label="Reported By">
-              <TextInput style={formStyles.input} value={reportedBy} onChangeText={setReportedBy} placeholder="Your name" placeholderTextColor={Colors.textTertiary} />
+            {/* 6 · Corrective actions */}
+            <SectionHeader title="6 · Corrective actions" />
+            <Field label="Corrective Actions Required">
+              <TextInput
+                style={[formStyles.input, formStyles.multiline]}
+                value={correctiveAction}
+                onChangeText={setCorrectiveAction}
+                placeholder="Actions to prevent recurrence…"
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                textAlignVertical="top"
+              />
             </Field>
+
+            {/* 7 · Notification & sign-off */}
+            <SectionHeader title="7 · Notification & sign-off" />
             <BoolField label="Supervisor Notified?" value={supervisorNotified} onChange={setSupervisorNotified} />
             {supervisorNotified && (
               <Field label="Supervisor Name">
@@ -526,16 +648,16 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 10,
     backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center",
   },
-  headerTitle: { fontSize: 17, fontWeight: "700", color: "#fff" },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: Colors.white },
   headerSub: { fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 1 },
   addBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
   },
-  addBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  addBtnText: { color: Colors.white, fontSize: 14, fontWeight: "700" },
   card: {
-    backgroundColor: "#fff", borderRadius: 16, padding: 14,
-    shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    backgroundColor: Colors.surface, borderRadius: 16, padding: 14,
+    shadowColor: Colors.black, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
   },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   sevBadge: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
@@ -543,67 +665,69 @@ const styles = StyleSheet.create({
   sevText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
   cardDate: { flex: 1, fontSize: 12, color: Colors.textSecondary, textAlign: "right" },
   statusBadge: {
-    backgroundColor: "#FEE2E2", borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
+    backgroundColor: Colors.errorBg, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
   },
-  statusClosed: { backgroundColor: "#D1FAE5" },
-  statusInvestigating: { backgroundColor: "#FEF3C7" },
+  statusClosed: { backgroundColor: Colors.successBg },
+  statusInvestigating: { backgroundColor: Colors.warningBg },
   statusText: { fontSize: 10, fontWeight: "800", color: Colors.text },
   cardType: { fontSize: 11, color: Colors.textTertiary, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.3 },
   cardDesc: { fontSize: 14, color: Colors.text, lineHeight: 20 },
   cardDetail: { marginTop: 12, gap: 8, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.border },
+  detailGroup: { fontSize: 11, fontWeight: "700", color: Colors.accent, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 8, marginBottom: -2 },
   detailRow: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
   detailLabel: { fontSize: 11, color: Colors.textTertiary, textTransform: "uppercase", letterSpacing: 0.2 },
   detailValue: { fontSize: 13, color: Colors.text, lineHeight: 18 },
   cardActions: { flexDirection: "row", gap: 8, marginTop: 8 },
   actionBtn: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, alignItems: "center", justifyContent: "center" },
   actionBtnGreen: { backgroundColor: Colors.success },
-  actionBtnAmber: { backgroundColor: "#F6AD55" },
+  actionBtnAmber: { backgroundColor: Colors.accentLight },
   actionBtnRed: { backgroundColor: Colors.error },
-  actionBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  actionBtnExport: { backgroundColor: Colors.primary, flexDirection: "row", gap: 5 },
+  actionBtnText: { color: Colors.white, fontSize: 13, fontWeight: "700" },
   expandRow: { alignItems: "center", marginTop: 6 },
 });
 
 const formStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, backgroundColor: Colors.surface },
   modalHeader: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 20, paddingBottom: 16,
-    borderBottomWidth: 1, borderBottomColor: "#E8EDF5",
+    borderBottomWidth: 1, borderBottomColor: Colors.surfaceSecondary,
   },
   modalTitle: { fontSize: 17, fontWeight: "700", color: Colors.text },
   submitBtn: {
     backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8,
   },
-  submitBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  submitBtnText: { color: Colors.white, fontSize: 14, fontWeight: "700" },
   scroll: { padding: 20, gap: 12 },
   sectionHeader: {
-    fontSize: 13, fontWeight: "800", color: Colors.primary,
+    fontSize: 13, fontWeight: "800", color: Colors.text,
     textTransform: "uppercase", letterSpacing: 0.6,
-    marginTop: 8, marginBottom: 4,
-    paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: Colors.border,
+    marginTop: 8, marginBottom: 8,
+    paddingLeft: 10, borderLeftWidth: 3, borderLeftColor: Colors.accent,
   },
   field: { gap: 6 },
   label: { fontSize: 13, fontWeight: "600", color: Colors.text },
   required: { color: Colors.error },
   input: {
-    borderWidth: 1, borderColor: "#DDE5EF", borderRadius: 12,
-    padding: 12, fontSize: 14, color: Colors.text, backgroundColor: "#FAFBFC",
+    borderWidth: 1, borderColor: Colors.border, borderRadius: 12,
+    padding: 12, fontSize: 14, color: Colors.text, backgroundColor: Colors.background,
   },
   multiline: { minHeight: 80, textAlignVertical: "top" },
   rowFields: { flexDirection: "row", gap: 12 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
-    backgroundColor: "#F0F4FA", borderWidth: 1, borderColor: "#DDE5EF",
+    backgroundColor: Colors.surfaceSecondary, borderWidth: 1, borderColor: Colors.border,
   },
   chipText: { fontSize: 13, color: Colors.text, fontWeight: "600" },
-  chipTextActive: { color: "#fff" },
+  chipTextActive: { color: Colors.white },
   boolRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   boolChip: {
     paddingHorizontal: 20, paddingVertical: 8, borderRadius: 10,
-    backgroundColor: "#F0F4FA", borderWidth: 1, borderColor: "#DDE5EF",
+    backgroundColor: Colors.surfaceSecondary, borderWidth: 1, borderColor: Colors.border,
   },
   boolChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   boolChipText: { fontSize: 14, color: Colors.text, fontWeight: "600" },
-  boolChipTextActive: { color: "#fff" },
+  boolChipTextActive: { color: Colors.white },
 });

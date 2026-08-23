@@ -55,6 +55,10 @@ const EntrySchema = z.object({
   swmsRef: z.string().optional(),
   hazardNotes: z.string().optional(),
   toolboxTalk: z.boolean().optional(),
+  // 5b: optional hourly-notes template. hour is 0-23; empty-note hours are kept
+  // as-is (exports hide them). notesMode selects which field the UI/export uses.
+  notesMode: z.enum(["free", "hourly"]).optional(),
+  hourlyNotes: z.array(z.object({ hour: z.number().int().min(0).max(23), note: z.string() })).optional(),
 });
 
 const EntryPatchSchema = EntrySchema.omit({ siteId: true }).partial();

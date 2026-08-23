@@ -5,6 +5,20 @@ import { withTenant } from "./tenant";
 export type IncidentSeverity = "near-miss" | "minor" | "major" | "critical";
 export type IncidentStatus = "open" | "closed";
 
+export type IncidentContributingFactors = {
+  environment?: string;
+  human?: string;
+  equipment?: string;
+  methods?: string;
+};
+
+export type IncidentCorrectiveActionItem = {
+  action: string;
+  owner: string;
+  dueDate: string | null;
+  status: string;
+};
+
 export type IncidentRecord = {
   id: string;
   ownerEmail: string;
@@ -19,9 +33,38 @@ export type IncidentRecord = {
   createdAt: string;
   updatedAt?: string;
   deletedAt?: string | null;
+  // Pre-existing-but-previously-dropped fields (024):
+  time: string;
+  type: string;
+  locationArea: string;
+  injuredRole: string;
+  injuredEmployer: string;
+  natureOfInjury: string;
+  bodyPart: string;
+  treatmentRequired: string;
+  witnesses: string;
+  immediateActions: string;
+  rootCause: string;
+  reportedBy: string;
+  supervisorNotified: boolean;
+  supervisorName: string;
+  // New WorkSafe NZ investigation fields (024):
+  propertyDamage: string;
+  firstAiderName: string;
+  contributingFactors: IncidentContributingFactors;
+  worksafeNotified: boolean;
+  worksafeNotifiedAt: string | null;
+  worksafeNotifiedHow: string;
+  investigatorName: string;
+  correctiveActions: IncidentCorrectiveActionItem[];
 };
 
 function useDatabase() {
+  // In test mode DATABASE_URL is deliberately unset (the harness forbids it), so
+  // an explicit TEST_DATABASE_URL selects the Postgres path. Without this the
+  // store's DB code is never exercised by any test — which is how the incident
+  // field-drop bug survived. Non-test behaviour is unchanged.
+  if (process.env.NODE_ENV === "test") return Boolean(process.env.TEST_DATABASE_URL?.trim());
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
 }
 
@@ -40,6 +83,15 @@ function mapRow(row: {
   severity: IncidentSeverity; description: string; injured_party: string | null;
   corrective_action: string | null; status: IncidentStatus;
   created_at: Date; updated_at?: Date | null; deleted_at?: Date | null;
+  time?: string | null; type?: string | null; location_area?: string | null;
+  injured_role?: string | null; injured_employer?: string | null; nature_of_injury?: string | null;
+  body_part?: string | null; treatment_required?: string | null; witnesses?: string | null;
+  immediate_actions?: string | null; root_cause?: string | null; reported_by?: string | null;
+  supervisor_notified?: boolean | null; supervisor_name?: string | null;
+  property_damage?: string | null; first_aider_name?: string | null;
+  contributing_factors?: IncidentContributingFactors | null;
+  worksafe_notified?: boolean | null; worksafe_notified_at?: Date | null; worksafe_notified_how?: string | null;
+  investigator_name?: string | null; corrective_actions?: IncidentCorrectiveActionItem[] | null;
 }): IncidentRecord {
   return {
     id: row.id, ownerEmail: row.owner_email, companyId: row.company_id, siteId: row.site_id, date: row.date,
@@ -48,6 +100,21 @@ function mapRow(row: {
     status: row.status, createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at ? row.updated_at.toISOString() : undefined,
     deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
+    time: row.time || "", type: row.type || "", locationArea: row.location_area || "",
+    injuredRole: row.injured_role || "", injuredEmployer: row.injured_employer || "",
+    natureOfInjury: row.nature_of_injury || "", bodyPart: row.body_part || "",
+    treatmentRequired: row.treatment_required || "", witnesses: row.witnesses || "",
+    immediateActions: row.immediate_actions || "", rootCause: row.root_cause || "",
+    reportedBy: row.reported_by || "", supervisorNotified: row.supervisor_notified ?? false,
+    supervisorName: row.supervisor_name || "",
+    propertyDamage: row.property_damage || "", firstAiderName: row.first_aider_name || "",
+    contributingFactors: row.contributing_factors && typeof row.contributing_factors === "object"
+      ? row.contributing_factors : {},
+    worksafeNotified: row.worksafe_notified ?? false,
+    worksafeNotifiedAt: row.worksafe_notified_at ? row.worksafe_notified_at.toISOString() : null,
+    worksafeNotifiedHow: row.worksafe_notified_how || "",
+    investigatorName: row.investigator_name || "",
+    correctiveActions: Array.isArray(row.corrective_actions) ? row.corrective_actions : [],
   };
 }
 
@@ -89,10 +156,31 @@ export async function createIncident(actor: Actor, payload: Omit<IncidentRecord,
   if (!useDatabase()) { memoryIncidents.set(record.id, record); return record; }
   const result = await withTenant(actor, (client) =>
     client.query(
-      `INSERT INTO incidents (id,owner_email,company_id,site_id,date,severity,description,injured_party,corrective_action,status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO incidents (
+         id,owner_email,company_id,site_id,date,severity,description,injured_party,corrective_action,status,
+         time,type,location_area,injured_role,injured_employer,nature_of_injury,body_part,treatment_required,
+         witnesses,immediate_actions,root_cause,reported_by,supervisor_notified,supervisor_name,
+         property_damage,first_aider_name,contributing_factors,worksafe_notified,worksafe_notified_at,
+         worksafe_notified_how,investigator_name,corrective_actions
+       )
+       VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+         $11,$12,$13,$14,$15,$16,$17,$18,
+         $19,$20,$21,$22,$23,$24,
+         $25,$26,$27::jsonb,$28,$29,
+         $30,$31,$32::jsonb
+       ) RETURNING *`,
       [record.id, actor.email, actor.companyId, record.siteId, record.date, record.severity, record.description,
-       record.injuredParty || null, record.correctiveAction || null, record.status]
+       record.injuredParty || null, record.correctiveAction || null, record.status,
+       record.time || null, record.type || null, record.locationArea || null, record.injuredRole || null,
+       record.injuredEmployer || null, record.natureOfInjury || null, record.bodyPart || null,
+       record.treatmentRequired || null, record.witnesses || null, record.immediateActions || null,
+       record.rootCause || null, record.reportedBy || null, record.supervisorNotified ?? false,
+       record.supervisorName || null,
+       record.propertyDamage || null, record.firstAiderName || null,
+       JSON.stringify(record.contributingFactors || {}), record.worksafeNotified ?? false,
+       record.worksafeNotifiedAt || null, record.worksafeNotifiedHow || null, record.investigatorName || null,
+       JSON.stringify(record.correctiveActions || [])]
     )
   );
   return mapRow(result.rows[0]);

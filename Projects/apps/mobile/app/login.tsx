@@ -247,12 +247,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: Colors.errorBg,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#FCA5A5",
+    borderColor: Colors.errorBorder,
   },
   errorIconWrap: {
     width: 24,
@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: "#991B1B",
+    color: Colors.errorText,
   },
   inputGroup: {
     gap: 6,

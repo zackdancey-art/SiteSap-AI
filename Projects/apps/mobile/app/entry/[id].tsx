@@ -94,6 +94,8 @@ export default function EntryDetailScreen() {
       entryDate: formattedDate,
       notes: entry.notes,
       photos: entry.photos,
+      notesMode: entry.notesMode,
+      hourlyNotes: entry.hourlyNotes,
     });
     Alert.alert("Export Entry Photos", "Choose an export format.", [
       { text: "Cancel", style: "cancel" },

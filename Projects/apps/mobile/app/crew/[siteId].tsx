@@ -1,17 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View, Text, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator,
-  TextInput, Modal, FlatList,
+  TextInput, Modal, Platform,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
+import { formatDate } from "@/lib/format";
 import { EmptyState } from "@/components/EmptyState";
 import { useData } from "@/lib/data-context";
 import { useAuth } from "@/lib/auth-context";
-import { exportReportDocument } from "@/lib/export-utils";
+import { exportReportDocument, buildHtmlDocument } from "@/lib/export-utils";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 
 type Timecard = {
@@ -73,14 +75,32 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Conversions between the stored "HH:MM" / "YYYY-MM-DD" strings and the Date
+// objects the native picker works with.
+function hhmmToDate(t: string): Date {
+  const [h, m] = (t || "").split(":").map(Number);
+  const d = new Date();
+  d.setHours(Number.isFinite(h) ? h : 7, Number.isFinite(m) ? m : 0, 0, 0);
+  return d;
+}
+function dateToHHMM(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function ymdToDate(s: string): Date {
+  const d = new Date(`${s}T00:00:00`);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+function dateToYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function buildTimecardHtml(timecards: Timecard[], siteName: string) {
   const totalReg = timecards.reduce((s, t) => s + t.hoursRegular, 0);
   const totalOT  = timecards.reduce((s, t) => s + t.hoursOvertime, 0);
   const rows = timecards.map((tc) => `
     <tr>
-      <td>${tc.date}</td>
+      <td>${formatDate(tc.date)}</td>
       <td>${tc.workerName}</td>
-      <td>${tc.trade || "—"}</td>
       <td>${formatTime(tc.startTime || "")}</td>
       <td>${formatTime(tc.endTime || "")}</td>
       <td>${tc.breakMinutes ?? 0} min</td>
@@ -90,50 +110,28 @@ function buildTimecardHtml(timecards: Timecard[], siteName: string) {
     </tr>
   `).join("");
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
-  <style>
-    body { font-family: -apple-system, sans-serif; color: #0f2b46; background: #eef2f7; margin: 0; }
-    .page { padding: 32px; }
-    .shell { background: #fff; border-radius: 18px; overflow: hidden; box-shadow: 0 8px 40px rgba(15,43,70,0.10); }
-    .hero { background: linear-gradient(135deg,#0f2b46,#143a5b); color:#fff; padding:28px 32px; }
-    .hero h1 { margin:0; font-size:24px; }
-    .hero p  { margin:6px 0 0; opacity:.7; font-size:13px; }
-    .totals { display:flex; gap:24px; padding:20px 32px; background:#f6f8fb; border-bottom:1px solid #dde5ef; }
-    .tot-card { flex:1; background:#fff; border-radius:12px; padding:14px 18px; border:1px solid #dde5ef; }
-    .tot-val  { font-size:22px; font-weight:700; color:#0f2b46; }
-    .tot-lab  { font-size:11px; color:#6f8095; text-transform:uppercase; letter-spacing:.06em; margin-top:4px; }
-    .content { padding:24px 32px 32px; }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th { background:#f6f8fb; padding:10px 12px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#6f8095; border-bottom:2px solid #dde5ef; }
-    td { padding:10px 12px; border-bottom:1px solid #edf1f7; vertical-align:middle; }
-    tr:last-child td { border-bottom:none; }
-    tr:hover td { background:#fafbfe; }
-    .footer { margin-top:16px; font-size:11px; color:#9eafc2; }
-  </style></head><body><div class="page"><div class="shell">
-    <div class="hero">
-      <div style="font-size:11px;opacity:.6;text-transform:uppercase;letter-spacing:.15em;margin-bottom:8px">Timesheet Export</div>
-      <h1>${siteName}</h1>
-      <p>Generated ${new Date().toLocaleString("en-AU")} · ${timecards.length} records</p>
-    </div>
-    <div class="totals">
-      <div class="tot-card"><div class="tot-val">${timecards.length}</div><div class="tot-lab">Records</div></div>
-      <div class="tot-card"><div class="tot-val">${totalReg.toFixed(1)}h</div><div class="tot-lab">Regular Hours</div></div>
-      <div class="tot-card"><div class="tot-val" style="color:#E8731A">${totalOT.toFixed(1)}h</div><div class="tot-lab">Overtime Hours</div></div>
-      <div class="tot-card"><div class="tot-val">${(totalReg + totalOT).toFixed(1)}h</div><div class="tot-lab">Total Hours</div></div>
-    </div>
-    <div class="content">
-      <table>
-        <thead><tr><th>Date</th><th>Worker</th><th>Trade</th><th>Start</th><th>End</th><th>Break</th><th>Regular</th><th>OT</th><th>Notes</th></tr></thead>
+  return buildHtmlDocument({
+    eyebrow: "Timesheet Export",
+    title: siteName,
+    subtitle: `Generated ${new Date().toLocaleString("en-AU")} · ${timecards.length} records`,
+    meta: [
+      { label: "Records", value: String(timecards.length) },
+      { label: "Regular Hours", value: `${totalReg.toFixed(1)}h` },
+      { label: "Overtime Hours", value: `${totalOT.toFixed(1)}h` },
+      { label: "Total Hours", value: `${(totalReg + totalOT).toFixed(1)}h` },
+    ],
+    body: `
+      <table class="data-table">
+        <thead><tr><th>Date</th><th>Worker</th><th>Start</th><th>End</th><th>Break</th><th>Regular</th><th>OT</th><th>Notes</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <div class="footer">Generated by SiteSnap AI</div>
-    </div>
-  </div></div></body></html>`;
+    `,
+  });
 }
 
 export default function CrewTimecards() {
   const { siteId } = useLocalSearchParams<{ siteId: string }>();
-  const { getSite, sites } = useData();
+  const { getSite } = useData();
   const { user } = useAuth();
   const site = getSite(siteId);
   const insets = useSafeAreaInsets();
@@ -145,15 +143,17 @@ export default function CrewTimecards() {
   const [exporting, setExporting] = useState(false);
   const [tab, setTab]             = useState<"list" | "summary">("list");
 
-  // Form state — worker name pre-filled from the logged-in user
+  // Form state — worker defaults to the logged-in user; site comes from the
+  // screen context (no picker). start/finish/break default to this site's last
+  // used values (see openForm).
   const [workerName, setWorkerName]     = useState(user?.name ?? "");
-  const [selectedSiteName, setSelectedSiteName] = useState("");
   const [date, setDate]                 = useState(new Date().toISOString().slice(0, 10));
   const [startTime, setStartTime]       = useState("07:00");
   const [endTime, setEndTime]           = useState("15:30");
   const [breakMinutes, setBreakMinutes] = useState("30");
   const [notes, setNotes]               = useState("");
-  const [showSitePicker, setShowSitePicker] = useState(false);
+  const [showMore, setShowMore]         = useState(false);
+  const [picker, setPicker]             = useState<null | "date" | "start" | "end">(null);
 
   const computed = useMemo(() => {
     if (startTime && endTime) return calcHours(startTime, endTime, Number(breakMinutes) || 0);
@@ -180,10 +180,24 @@ export default function CrewTimecards() {
 
   const resetForm = () => {
     setWorkerName(user?.name ?? "");
-    setSelectedSiteName("");
     setNotes("");
+    setShowMore(false);
+    setPicker(null);
     setDate(new Date().toISOString().slice(0, 10));
     setStartTime("07:00"); setEndTime("15:30"); setBreakMinutes("30");
+  };
+
+  const openForm = () => {
+    resetForm();
+    // Default start/finish/break to this site's most recent timecard — most
+    // crews work similar hours, so remembering beats a fixed guess.
+    const last = [...timecards].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    if (last) {
+      if (last.startTime) setStartTime(last.startTime);
+      if (last.endTime) setEndTime(last.endTime);
+      if (typeof last.breakMinutes === "number") setBreakMinutes(String(last.breakMinutes));
+    }
+    setShowForm(true);
   };
 
   const handleAdd = async () => {
@@ -193,7 +207,7 @@ export default function CrewTimecards() {
       await apiJson(`/api/crew/timecards`, {
         method: "POST",
         body: JSON.stringify({
-          siteId, workerName: workerName.trim(), trade: selectedSiteName, date,
+          siteId, workerName: workerName.trim(), trade: "", date,
           startTime, endTime, breakMinutes: Number(breakMinutes) || 0,
           hoursRegular: computed.regular,
           hoursOvertime: computed.overtime,
@@ -250,8 +264,8 @@ export default function CrewTimecards() {
             : <Ionicons name="share-outline" size={20} color={Colors.accent} />
           }
         </Pressable>
-        <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color="#fff" />
+        <Pressable onPress={openForm} style={styles.addBtn}>
+          <Ionicons name="add" size={22} color={Colors.white} />
         </Pressable>
       </View>
 
@@ -296,7 +310,7 @@ export default function CrewTimecards() {
       {loading
         ? <ActivityIndicator style={{ marginTop: 48 }} color={Colors.primary} />
         : timecards.length === 0
-          ? <EmptyState icon="time-outline" title="No timecards yet" subtitle="Log crew hours with start & end times, breaks, and overtime." ctaLabel="Add Timecard" onCta={() => setShowForm(true)} />
+          ? <EmptyState icon="time-outline" title="No timecards yet" subtitle="Log crew hours with start & end times, breaks, and overtime." ctaLabel="Add Timecard" onCta={openForm} />
           : tab === "list"
             ? (
               <ScrollView contentContainerStyle={styles.listContent}>
@@ -318,7 +332,6 @@ export default function CrewTimecards() {
                           <View style={{ flex: 1 }}>
                             <View style={styles.cardTopRow}>
                               <Text style={styles.cardName}>{tc.workerName}</Text>
-                              {tc.trade ? <View style={styles.tradeBadge}><Text style={styles.tradeBadgeText}>{tc.trade}</Text></View> : null}
                             </View>
                             <View style={styles.cardTimeRow}>
                               <Ionicons name="time-outline" size={13} color={Colors.textTertiary} />
@@ -395,74 +408,43 @@ export default function CrewTimecards() {
             </Pressable>
             <Text style={styles.modalTitle}>Add Timecard</Text>
             <Pressable onPress={handleAdd} disabled={saving} style={[styles.modalSaveBtn, saving && { opacity: 0.6 }]}>
-              {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalSaveTxt}>Save</Text>}
+              {saving ? <ActivityIndicator size="small" color={Colors.white} /> : <Text style={styles.modalSaveTxt}>Save</Text>}
             </Pressable>
           </View>
 
           <ScrollView contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
-            {/* Worker + Site */}
-            <Text style={styles.formSectionLabel}>Worker Details</Text>
-            <View style={styles.formCard}>
-              <View style={styles.formRow}>
-                <Ionicons name="person-outline" size={18} color={Colors.textTertiary} style={{ marginTop: 14 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Worker Name *</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Full name"
-                    value={workerName}
-                    onChangeText={setWorkerName}
-                    placeholderTextColor={Colors.textTertiary}
-                  />
-                </View>
-              </View>
-              <View style={[styles.formRow, { borderTopWidth: 1, borderTopColor: Colors.borderLight }]}>
-                <Ionicons name="business-outline" size={18} color={Colors.textTertiary} style={{ marginTop: 14 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Select Site</Text>
-                  <Pressable onPress={() => setShowSitePicker(true)} style={[styles.input, { justifyContent: "center", flexDirection: "row", alignItems: "center" }]}>
-                    <Text style={{ flex: 1, color: selectedSiteName ? Colors.text : Colors.textTertiary, fontSize: 15 }}>
-                      {selectedSiteName || "Choose a site…"}
-                    </Text>
-                    <Ionicons name="chevron-down" size={16} color={Colors.textTertiary} />
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-
             {/* Date */}
             <Text style={styles.formSectionLabel}>Date</Text>
             <View style={styles.formCard}>
-              <View style={styles.formRow}>
-                <Ionicons name="calendar-outline" size={18} color={Colors.textTertiary} style={{ marginTop: 14 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Date (YYYY-MM-DD)</Text>
-                  <TextInput style={styles.input} value={date} onChangeText={setDate} placeholderTextColor={Colors.textTertiary} />
-                </View>
-              </View>
+              <Pressable style={styles.pickRow} onPress={() => setPicker("date")}>
+                <Ionicons name="calendar-outline" size={18} color={Colors.textTertiary} />
+                <Text style={styles.pickValue}>{formatDate(date)}</Text>
+                <Ionicons name="chevron-down" size={16} color={Colors.textTertiary} />
+              </Pressable>
             </View>
 
-            {/* Times */}
+            {/* Hours — start / finish / break */}
             <Text style={styles.formSectionLabel}>Hours</Text>
             <View style={styles.formCard}>
               <View style={styles.timeRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Start Time</Text>
-                  <TextInput style={styles.input} value={startTime} onChangeText={setStartTime} placeholder="07:00" keyboardType="numbers-and-punctuation" placeholderTextColor={Colors.textTertiary} />
-                </View>
-                <View style={styles.timeSep}>
-                  <Text style={{ color: Colors.textTertiary, fontSize: 20 }}>→</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>End Time</Text>
-                  <TextInput style={styles.input} value={endTime} onChangeText={setEndTime} placeholder="15:30" keyboardType="numbers-and-punctuation" placeholderTextColor={Colors.textTertiary} />
-                </View>
+                <Pressable style={styles.timeBox} onPress={() => setPicker("start")}>
+                  <Text style={styles.inputLabel}>Start</Text>
+                  <Text style={styles.timeValue}>{formatTime(startTime)}</Text>
+                </Pressable>
+                <View style={styles.timeSep}><Text style={{ color: Colors.textTertiary, fontSize: 20 }}>→</Text></View>
+                <Pressable style={styles.timeBox} onPress={() => setPicker("end")}>
+                  <Text style={styles.inputLabel}>Finish</Text>
+                  <Text style={styles.timeValue}>{formatTime(endTime)}</Text>
+                </Pressable>
               </View>
-              <View style={[styles.formRow, { borderTopWidth: 1, borderTopColor: Colors.borderLight }]}>
-                <Ionicons name="cafe-outline" size={18} color={Colors.textTertiary} style={{ marginTop: 14 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Break (minutes)</Text>
-                  <TextInput style={styles.input} value={breakMinutes} onChangeText={setBreakMinutes} keyboardType="number-pad" placeholderTextColor={Colors.textTertiary} />
+              <View style={[styles.breakBlock, { borderTopWidth: 1, borderTopColor: Colors.borderLight }]}>
+                <Text style={styles.inputLabel}>Break</Text>
+                <View style={styles.breakChips}>
+                  {["0", "15", "30", "45", "60", "90"].map((m) => (
+                    <Pressable key={m} onPress={() => setBreakMinutes(m)} style={[styles.breakChip, breakMinutes === m && styles.breakChipActive]}>
+                      <Text style={[styles.breakChipTxt, breakMinutes === m && styles.breakChipTxtActive]}>{m === "0" ? "None" : `${m}m`}</Text>
+                    </Pressable>
+                  ))}
                 </View>
               </View>
 
@@ -483,52 +465,67 @@ export default function CrewTimecards() {
               )}
             </View>
 
-            {/* Notes */}
-            <Text style={styles.formSectionLabel}>Notes</Text>
-            <View style={styles.formCard}>
-              <TextInput
-                style={[styles.input, { minHeight: 72, textAlignVertical: "top" }]}
-                placeholder="Optional notes (work area, cost code, etc.)"
-                value={notes}
-                onChangeText={setNotes}
-                multiline
-                placeholderTextColor={Colors.textTertiary}
+            {/* More — worker override (for logging someone else) + notes */}
+            <Pressable style={styles.moreToggle} onPress={() => setShowMore((v) => !v)}>
+              <Text style={styles.moreToggleTxt}>{showMore ? "Hide extra details" : "Logging for someone else, or add a note?"}</Text>
+              <Ionicons name={showMore ? "chevron-up" : "chevron-down"} size={16} color={Colors.accent} />
+            </Pressable>
+            {showMore && (
+              <View style={styles.formCard}>
+                <View style={styles.formRow}>
+                  <Ionicons name="person-outline" size={18} color={Colors.textTertiary} style={{ marginTop: 14 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>Worker Name</Text>
+                    <TextInput style={styles.input} placeholder="Full name" value={workerName} onChangeText={setWorkerName} placeholderTextColor={Colors.textTertiary} />
+                  </View>
+                </View>
+                <View style={[styles.formRow, { borderTopWidth: 1, borderTopColor: Colors.borderLight }]}>
+                  <Ionicons name="document-text-outline" size={18} color={Colors.textTertiary} style={{ marginTop: 14 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>Notes</Text>
+                    <TextInput style={[styles.input, { minHeight: 60, textAlignVertical: "top" }]} placeholder="Optional (work area, cost code…)" value={notes} onChangeText={setNotes} multiline placeholderTextColor={Colors.textTertiary} />
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Native date/time pickers */}
+            {picker && Platform.OS === "ios" && (
+              <View style={styles.iosPicker}>
+                <Pressable style={styles.iosPickerDone} onPress={() => setPicker(null)}>
+                  <Text style={styles.iosPickerDoneTxt}>Done</Text>
+                </Pressable>
+                <DateTimePicker
+                  value={picker === "date" ? ymdToDate(date) : picker === "start" ? hhmmToDate(startTime) : hhmmToDate(endTime)}
+                  mode={picker === "date" ? "date" : "time"}
+                  display="spinner"
+                  onChange={(_e: DateTimePickerEvent, d?: Date) => {
+                    if (!d) return;
+                    if (picker === "date") setDate(dateToYMD(d));
+                    else if (picker === "start") setStartTime(dateToHHMM(d));
+                    else setEndTime(dateToHHMM(d));
+                  }}
+                />
+              </View>
+            )}
+            {picker && Platform.OS !== "ios" && (
+              <DateTimePicker
+                value={picker === "date" ? ymdToDate(date) : picker === "start" ? hhmmToDate(startTime) : hhmmToDate(endTime)}
+                mode={picker === "date" ? "date" : "time"}
+                onChange={(e: DateTimePickerEvent, d?: Date) => {
+                  setPicker(null);
+                  if (e.type === "set" && d) {
+                    if (picker === "date") setDate(dateToYMD(d));
+                    else if (picker === "start") setStartTime(dateToHHMM(d));
+                    else setEndTime(dateToHHMM(d));
+                  }
+                }}
               />
-            </View>
+            )}
           </ScrollView>
         </View>
       </Modal>
 
-      {/* Site picker modal */}
-      <Modal visible={showSitePicker} animationType="slide" presentationStyle="pageSheet" transparent>
-        <Pressable style={styles.tradeOverlay} onPress={() => setShowSitePicker(false)} />
-        <View style={[styles.tradeSheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.tradeHandle} />
-          <Text style={styles.tradeTitle}>Select Site</Text>
-          {sites.length === 0 ? (
-            <Text style={{ textAlign: "center", color: Colors.textTertiary, marginTop: 24, fontSize: 14 }}>
-              No sites found. Create a site first.
-            </Text>
-          ) : (
-            <FlatList
-              data={sites}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <Pressable
-                  style={[styles.tradeRow, selectedSiteName === item.name && styles.tradeRowSelected]}
-                  onPress={() => { setSelectedSiteName(item.name); setShowSitePicker(false); }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.tradeRowText, selectedSiteName === item.name && { color: Colors.accent }]}>{item.name}</Text>
-                    {item.client ? <Text style={{ fontSize: 12, color: Colors.textTertiary, marginTop: 2 }}>{item.client}</Text> : null}
-                  </View>
-                  {selectedSiteName === item.name && <Ionicons name="checkmark" size={18} color={Colors.accent} />}
-                </Pressable>
-              )}
-            />
-          )}
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -572,8 +569,6 @@ const styles = StyleSheet.create({
   cardDayNum: { fontSize: 22, fontFamily: "Inter_700Bold", color: Colors.primary },
   cardTopRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
   cardName: { fontSize: 15, fontFamily: "Inter_700Bold", color: Colors.text, flex: 1 },
-  tradeBadge: { backgroundColor: Colors.primary + "15", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
-  tradeBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.primary },
   cardTimeRow: { flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 6 },
   cardTimeTxt: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary },
   cardHoursRow: { flexDirection: "row", gap: 6 },
@@ -586,7 +581,7 @@ const styles = StyleSheet.create({
   // Worker summary
   workerCard: { backgroundColor: Colors.surface, borderRadius: 16, padding: 16, flexDirection: "row", alignItems: "center", gap: 14, borderWidth: 1, borderColor: Colors.border },
   workerAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.primary, alignItems: "center", justifyContent: "center" },
-  workerAvatarText: { fontSize: 18, fontFamily: "Inter_700Bold", color: "#fff" },
+  workerAvatarText: { fontSize: 18, fontFamily: "Inter_700Bold", color: Colors.white },
   workerName: { fontSize: 15, fontFamily: "Inter_700Bold", color: Colors.text },
   workerTrade: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary, marginTop: 1 },
   workerStats: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
@@ -601,7 +596,7 @@ const styles = StyleSheet.create({
   modalClose: { padding: 4 },
   modalTitle: { flex: 1, fontSize: 18, fontFamily: "Inter_700Bold", color: Colors.text },
   modalSaveBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 8 },
-  modalSaveTxt: { color: "#fff", fontFamily: "Inter_600SemiBold", fontSize: 14 },
+  modalSaveTxt: { color: Colors.white, fontFamily: "Inter_600SemiBold", fontSize: 14 },
   modalContent: { padding: 16, gap: 8, paddingBottom: 40 },
 
   formSectionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.textSecondary, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 8, marginLeft: 4 },
@@ -614,13 +609,21 @@ const styles = StyleSheet.create({
   computedRow: { flexDirection: "row", gap: 8, paddingBottom: 12, paddingTop: 4 },
   computedChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: Colors.success + "18", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   computedTxt: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.success },
+  pickRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 16 },
+  pickValue: { flex: 1, fontSize: 15, fontFamily: "Inter_500Medium", color: Colors.text },
+  timeBox: { flex: 1, paddingVertical: 14, paddingHorizontal: 14, alignItems: "center" },
+  timeValue: { fontSize: 20, fontFamily: "Inter_600SemiBold", color: Colors.text, marginTop: 4 },
+  breakBlock: { paddingHorizontal: 14, paddingVertical: 14 },
+  breakChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  breakChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
+  breakChipActive: { backgroundColor: Colors.accent + "18", borderColor: Colors.accent },
+  breakChipTxt: { fontSize: 13, fontFamily: "Inter_500Medium", color: Colors.textSecondary },
+  breakChipTxtActive: { color: Colors.accent, fontFamily: "Inter_600SemiBold" },
+  moreToggle: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, paddingVertical: 12 },
+  moreToggleTxt: { fontSize: 13, fontFamily: "Inter_500Medium", color: Colors.accent },
+  iosPicker: { backgroundColor: Colors.surface, borderRadius: 14, marginTop: 8 },
+  iosPickerDone: { alignItems: "flex-end", paddingHorizontal: 16, paddingTop: 10 },
+  iosPickerDoneTxt: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: Colors.accent },
 
   // Trade picker
-  tradeOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
-  tradeSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 16, maxHeight: "60%" },
-  tradeHandle: { width: 40, height: 4, backgroundColor: Colors.border, borderRadius: 2, alignSelf: "center", marginBottom: 16 },
-  tradeTitle: { fontSize: 16, fontFamily: "Inter_700Bold", color: Colors.text, textAlign: "center", marginBottom: 12 },
-  tradeRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderRadius: 12 },
-  tradeRowSelected: { backgroundColor: Colors.accent + "10" },
-  tradeRowText: { fontSize: 15, fontFamily: "Inter_500Medium", color: Colors.text },
 });

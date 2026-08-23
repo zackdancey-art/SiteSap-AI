@@ -41,6 +41,10 @@ export type EntryRecord = {
   swmsRef?: string;
   hazardNotes?: string;
   toolboxTalk?: boolean;
+  // 5b: per-entry choice of free-form notes vs an hourly log. Additive; the
+  // columns (notes_mode / hourly_notes) were added in migration 024.
+  notesMode?: "free" | "hourly";
+  hourlyNotes?: Array<{ hour: number; note: string }>;
 };
 
 export type DiaryEditLogEntry = {
@@ -292,6 +296,8 @@ function mapEntry(row: {
   swms_ref?: string | null;
   hazard_notes?: string | null;
   toolbox_talk?: boolean | null;
+  notes_mode?: string | null;
+  hourly_notes?: Array<{ hour: number; note: string }> | null;
 }): EntryRecord {
   return {
     id: row.id,
@@ -308,6 +314,8 @@ function mapEntry(row: {
     swmsRef: row.swms_ref ?? undefined,
     hazardNotes: row.hazard_notes ?? undefined,
     toolboxTalk: row.toolbox_talk ?? undefined,
+    notesMode: row.notes_mode === "hourly" ? "hourly" : "free",
+    hourlyNotes: Array.isArray(row.hourly_notes) ? row.hourly_notes : [],
   };
 }
 
@@ -499,6 +507,11 @@ export async function createEntry(
     companyId: actor.companyId,
     timestamp: new Date().toISOString(),
     ...payload,
+    // Normalize the 5b fields here so the in-memory store path (which stores the
+    // record verbatim, never through mapEntry) matches the Postgres path's
+    // defaults instead of leaving them undefined in dev/tests.
+    notesMode: payload.notesMode ?? "free",
+    hourlyNotes: payload.hourlyNotes ?? [],
   };
   if (!useDatabase()) {
     await ensureMemoryLoaded();
@@ -509,8 +522,8 @@ export async function createEntry(
   const result = await withTenant(actor, (client) =>
     client.query(
       `INSERT INTO project_entries
-         (id, owner_email, company_id, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
+         (id, owner_email, company_id, site_id, date, location_address, weather, crew_count, notes, photos_json, swms_ref, hazard_notes, toolbox_talk, notes_mode, hourly_notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15::jsonb)
        RETURNING *`,
       [
         entry.id,
@@ -526,6 +539,8 @@ export async function createEntry(
         entry.swmsRef ?? "",
         entry.hazardNotes ?? "",
         entry.toolboxTalk ?? false,
+        entry.notesMode ?? "free",
+        JSON.stringify(entry.hourlyNotes ?? []),
       ]
     )
   );
@@ -584,6 +599,8 @@ export async function updateEntry(
          swms_ref = COALESCE($8, swms_ref),
          hazard_notes = COALESCE($9, hazard_notes),
          toolbox_talk = COALESCE($10, toolbox_talk),
+         notes_mode = COALESCE($11, notes_mode),
+         hourly_notes = COALESCE($12::jsonb, hourly_notes),
          timestamp = NOW()
        WHERE id = $1
        RETURNING *`,
@@ -598,6 +615,8 @@ export async function updateEntry(
         patch.swmsRef ?? null,
         patch.hazardNotes ?? null,
         patch.toolboxTalk ?? null,
+        patch.notesMode ?? null,
+        patch.hourlyNotes ? JSON.stringify(patch.hourlyNotes) : null,
       ]
     );
     if (result.rowCount === 0) return null;
