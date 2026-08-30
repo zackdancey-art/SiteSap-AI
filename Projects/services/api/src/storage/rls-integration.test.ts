@@ -28,6 +28,7 @@ import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Client } from "pg";
 import type { Pool } from "pg";
 import { getPgPool } from "./postgres";
 import { withTenant } from "./tenant";
@@ -91,8 +92,15 @@ if (!process.env.TEST_DATABASE_URL) {
   const siteBId = `rls-test-site-b-${runId}`;
   const incidentAId = `rls-test-incident-a-${runId}`;
   const incidentBId = `rls-test-incident-b-${runId}`;
+  // RLS assertions MUST run as a NOBYPASSRLS role. The test/app owner (e.g.
+  // Neon's neondb_owner) has BYPASSRLS, which bypasses the policy entirely and
+  // would make every isolation check pass/fail for the wrong reason. All three
+  // assertions below run through this dedicated non-bypass login role.
+  const probeRole = `rls_int_probe_${runId.replace(/[^a-z0-9]/gi, "")}`;
+  const probePassword = `Rls_Int_${Date.now()}_9xZq`;
 
   let pool: Pool;
+  let probe: Client;
 
   before(async () => {
     pool = getPgPool();
@@ -138,9 +146,29 @@ if (!process.env.TEST_DATABASE_URL) {
         [incidentBId, ownerBEmail, siteBId, companyB]
       )
     );
+
+    // Create + connect the NOBYPASSRLS probe role (seeding above runs as the
+    // owner, which is fine — only the *assertions* must be non-bypass).
+    await pool.query(`DROP ROLE IF EXISTS ${probeRole}`);
+    await pool.query(`CREATE ROLE ${probeRole} LOGIN PASSWORD '${probePassword}' NOBYPASSRLS`);
+    await pool.query(`GRANT SELECT, INSERT ON incidents TO ${probeRole}`);
+    const probeUrl = new URL(process.env.TEST_DATABASE_URL as string);
+    probeUrl.username = probeRole;
+    probeUrl.password = probePassword;
+    probeUrl.searchParams.delete("channel_binding");
+    probeUrl.searchParams.delete("sslmode");
+    probe = new Client({ connectionString: probeUrl.toString(), ssl: { rejectUnauthorized: false } });
+    await probe.connect();
   });
 
   after(async () => {
+    try {
+      await probe.end();
+    } catch {
+      /* ignore */
+    }
+    await pool.query(`REVOKE ALL ON incidents FROM ${probeRole}`).catch(() => {});
+    await pool.query(`DROP ROLE IF EXISTS ${probeRole}`).catch(() => {});
     // Deletes on the RLS-forced tables must also run inside withTenant() —
     // a bare-connection DELETE would see zero rows (same fail-closed
     // behaviour under test below) and silently delete nothing.
@@ -157,53 +185,55 @@ if (!process.env.TEST_DATABASE_URL) {
     await pool.end();
   });
 
-  test("a: withTenant(company A) sees only company A's incident", async () => {
-    const result = await withTenant({ companyId: companyA }, (client) =>
-      client.query<{ id: string; company_id: string }>(
-        `SELECT id, company_id FROM incidents WHERE id IN ($1, $2)`,
-        [incidentAId, incidentBId]
-      )
+  test("a: tenant context (company A) sees only company A's incident — via a NOBYPASSRLS role", async () => {
+    await probe.query("BEGIN");
+    await probe.query("SELECT set_config('app.company_id', $1, true)", [companyA]);
+    const result = await probe.query<{ id: string; company_id: string }>(
+      `SELECT id, company_id FROM incidents WHERE id IN ($1, $2)`,
+      [incidentAId, incidentBId]
     );
+    await probe.query("ROLLBACK");
     assert.equal(result.rows.length, 1, `expected exactly 1 visible row, got ${result.rows.length}`);
     assert.equal(result.rows[0].id, incidentAId);
     assert.equal(result.rows[0].company_id, companyA);
   });
 
-  test("b: a bare query with no app.company_id set sees zero rows (fail-closed)", async () => {
-    // Deliberately NOT using withTenant() — this simulates a store call that
-    // forgot to wrap its query, which is exactly the failure mode RLS exists
-    // to catch. FORCE ROW LEVEL SECURITY (migration 019) means even the
-    // table-owning connection the app uses is subject to the policy.
-    const result = await pool.query<{ id: string }>(
+  test("b: no app.company_id set sees zero rows (fail-closed) — via a NOBYPASSRLS role", async () => {
+    // No transaction / no set_config → current_setting('app.company_id', true)
+    // is NULL → the policy matches nothing. This is the forgot-to-wrap failure
+    // mode RLS exists to catch, observed on a role that cannot bypass the policy.
+    const result = await probe.query<{ id: string }>(
       `SELECT id FROM incidents WHERE id IN ($1, $2)`,
       [incidentAId, incidentBId]
     );
     assert.equal(
       result.rows.length,
       0,
-      `expected zero rows outside withTenant(); RLS must fail closed, not leak either tenant's row. Got: ${JSON.stringify(result.rows)}`
+      `expected zero rows with no app.company_id; RLS must fail closed, not leak either tenant's row. Got: ${JSON.stringify(result.rows)}`
     );
   });
 
-  test("c: an INSERT whose company_id does not match the tenant context is rejected by WITH CHECK", async () => {
+  test("c: an INSERT whose company_id does not match the tenant context is rejected by WITH CHECK — via a NOBYPASSRLS role", async () => {
     const rogueId = `rls-test-incident-rogue-${runId}`;
+    await probe.query("BEGIN");
+    await probe.query("SELECT set_config('app.company_id', $1, true)", [companyA]);
     await assert.rejects(
       () =>
-        withTenant({ companyId: companyA }, (client) =>
-          client.query(
-            `INSERT INTO incidents (id, owner_email, site_id, date, severity, description, company_id)
-             VALUES ($1, $2, $3, '2026-01-01', 'minor', 'should be rejected by WITH CHECK', $4)`,
-            [rogueId, ownerAEmail, siteAId, companyB] // tenant context is A, but company_id column says B
-          )
+        probe.query(
+          `INSERT INTO incidents (id, owner_email, site_id, date, severity, description, company_id)
+           VALUES ($1, $2, $3, '2026-01-01', 'minor', 'should be rejected by WITH CHECK', $4)`,
+          [rogueId, ownerAEmail, siteAId, companyB] // tenant context is A, but company_id column says B
         ),
-      /row-level security|permission denied/i,
+      /row-level security|policy/i,
       "an INSERT stamping a different company_id than the active tenant context must be rejected by the WITH CHECK policy"
     );
+    await probe.query("ROLLBACK");
 
-    // Belt-and-braces: confirm the rejected row was not partially committed.
-    const check = await withTenant({ companyId: companyA }, (client) =>
-      client.query(`SELECT id FROM incidents WHERE id = $1`, [rogueId])
-    );
+    // Belt-and-braces: confirm the rejected row was not committed.
+    await probe.query("BEGIN");
+    await probe.query("SELECT set_config('app.company_id', $1, true)", [companyA]);
+    const check = await probe.query(`SELECT id FROM incidents WHERE id = $1`, [rogueId]);
+    await probe.query("ROLLBACK");
     assert.equal(check.rows.length, 0, "rejected INSERT must not have left a row behind");
   });
 }
