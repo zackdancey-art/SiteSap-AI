@@ -17,6 +17,7 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { AddressSuggestion, fetchAddressSuggestions } from "@/lib/geo";
+import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 
 export default function CreateSiteScreen() {
   const { addSite } = useData();
@@ -29,6 +30,9 @@ export default function CreateSiteScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateDraft, setDateDraft] = useState(new Date(`${new Date().toISOString().split("T")[0]}T00:00:00`));
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const isDirty = Boolean(name.trim() || address.trim() || client.trim());
+  const markSaved = useUnsavedChangesGuard(isDirty);
 
   useEffect(() => {
     let isCancelled = false;
@@ -83,6 +87,7 @@ export default function CreateSiteScreen() {
         startDate,
         status: "active",
       });
+      markSaved();
       router.back();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create site.";

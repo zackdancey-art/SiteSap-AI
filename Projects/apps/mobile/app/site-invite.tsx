@@ -9,17 +9,16 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { InviteResult } from "@/lib/types";
+import { ScreenHeader } from "@/components/ScreenHeader";
 
 type Role = "crew" | "manager";
 
 export default function SiteInviteScreen() {
-  const insets = useSafeAreaInsets();
   const { siteId, siteName } = useLocalSearchParams<{ siteId?: string; siteName?: string }>();
   const { inviteCrewMembers } = useData();
 
@@ -66,16 +65,18 @@ export default function SiteInviteScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={22} color={Colors.white} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Invite Crew</Text>
-          {!!siteName && <Text style={styles.headerSub}>{siteName}</Text>}
-        </View>
-      </View>
+    <View style={styles.container}>
+      <ScreenHeader
+        variant="navy"
+        title="Invite Crew"
+        subtitle={siteName || undefined}
+        backGlyph="arrow-back"
+        backSize={22}
+        paddingBottom={16}
+        backButtonStyle={styles.backButton}
+        titleStyle={styles.headerTitle}
+        subtitleStyle={styles.headerSub}
+      />
 
       <ScrollView
         style={styles.scroll}
@@ -159,14 +160,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  header: {
-    backgroundColor: Colors.primary,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-  },
   backButton: {
     width: 40,
     height: 40,
@@ -178,6 +171,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontFamily: "Inter_700Bold",
+    fontWeight: undefined,
     color: Colors.white,
   },
   headerSub: {

@@ -18,6 +18,7 @@ import { useData } from "@/lib/data-context";
 import Colors from "@/constants/colors";
 import { Photo } from "@/lib/types";
 import { buildEntryPhotosReportHtml, exportReportDocument } from "@/lib/export-utils";
+import { BackButton } from "@/components/BackButton";
 
 export default function EntryDetailScreen() {
   const insets = useSafeAreaInsets();
@@ -124,9 +125,7 @@ export default function EntryDetailScreen() {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + webTopInset + 8 }]}>
         <View style={styles.headerNav}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={22} color={Colors.white} />
-          </Pressable>
+          <BackButton tone="onNavy" glyph="arrow-back" size={22} style={styles.backButton} />
           <Text style={styles.headerLabel}>Daily Entry</Text>
           <View style={styles.headerActions}>
             <Pressable onPress={handleEdit} style={styles.headerAction}>

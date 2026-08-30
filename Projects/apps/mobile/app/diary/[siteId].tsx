@@ -19,6 +19,7 @@ import { apiRequest, BASE_URL } from "@/lib/query-client";
 import Colors from "@/constants/colors";
 import { DailyEntry, GeneratedDiary, DiarySection, DiaryEditLogEntry } from "@/lib/types";
 import { buildDiaryReportHtml, exportReportDocument, ReportExportFormat } from "@/lib/export-utils";
+import { BackButton } from "@/components/BackButton";
 
 type ReportPeriod = "daily" | "weekly" | "monthly";
 
@@ -412,9 +413,7 @@ export default function DiaryPreviewScreen() {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + webTopInset + 8 }]}>
         <View style={styles.headerNav}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={22} color={Colors.white} />
-          </Pressable>
+          <BackButton tone="onNavy" glyph="arrow-back" size={22} style={styles.backButton} />
           <Text style={styles.headerLabel}>Site Diary</Text>
           <Pressable onPress={handleShare} style={styles.shareButton}>
             <Ionicons name="share-outline" size={20} color={Colors.white} />

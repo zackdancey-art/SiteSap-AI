@@ -3,7 +3,7 @@ import {
   View, Text, Pressable, ScrollView, StyleSheet, Alert,
   ActivityIndicator, TextInput, Modal,
 } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -15,6 +15,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { SignaturePad } from "@/components/SignaturePad";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import { useData } from "@/lib/data-context";
+import { ScreenHeader } from "@/components/ScreenHeader";
 
 type InspectionResult = { item: string; passed: boolean | null; notes: string; na?: boolean };
 type InspectionDefect = { description: string; severity: string; owner: string; dueDate: string | null; status: string };
@@ -497,19 +498,24 @@ export default function InspectionsScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Inspections</Text>
-          {site && <Text style={styles.headerSub}>{site.name}</Text>}
-        </View>
-        <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color={Colors.white} />
-        </Pressable>
-      </View>
+    <View style={styles.container}>
+      <ScreenHeader
+        borderWidth={1}
+        variant="light"
+        title="Inspections"
+        subtitle={site?.name}
+        paddingBottom={16}
+        paddingTopExtra={16}
+        borderColor={Colors.surfaceSecondary}
+        backButtonStyle={styles.backBtn}
+        titleStyle={styles.headerTitle}
+        subtitleStyle={styles.headerSub}
+        right={
+          <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
+            <Ionicons name="add" size={22} color={Colors.white} />
+          </Pressable>
+        }
+      />
 
       {loading
         ? <ActivityIndicator style={{ marginTop: 40 }} />
@@ -927,7 +933,6 @@ export default function InspectionsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: { flexDirection: "row", alignItems: "center", padding: 16, gap: 12, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.surfaceSecondary },
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 17, fontWeight: "700", color: Colors.text },
   headerSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 1 },
