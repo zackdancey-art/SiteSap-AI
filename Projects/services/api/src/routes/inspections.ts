@@ -30,6 +30,10 @@ const ResultItemSchema = z.object({
   // lives inside results_json (JSONB) so it needs no DDL. It IS signed content —
   // computeInspectionContentHash includes it.
   na: z.boolean().default(false),
+  // Per-item photo evidence (Part B). Loose passthrough (like entry photos) so
+  // the Part 5a Photo fields (kind/derivedFromId/annotationVector) survive; base64
+  // is stripped client-side before send. Signed content (by stable identity).
+  photos: z.array(z.record(z.unknown())).default([]),
 });
 
 const DefectItemSchema = z.object({

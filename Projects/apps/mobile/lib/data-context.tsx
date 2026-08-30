@@ -190,7 +190,7 @@ async function uploadPhoto(photo: Entry["photos"][number]): Promise<Entry["photo
   throw lastErr;
 }
 
-async function uploadPhotos(photos: Entry["photos"]) {
+export async function uploadPhotos(photos: Entry["photos"]) {
   return Promise.all(photos.map((photo) => uploadPhoto(photo)));
 }
 

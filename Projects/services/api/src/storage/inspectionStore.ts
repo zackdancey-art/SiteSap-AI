@@ -18,6 +18,10 @@ export type InspectionResultItem = {
   passed: boolean | null;
   notes: string;
   na?: boolean;
+  // Per-item photo evidence (Part B). Loose shape mirroring the mobile Photo
+  // type (id/uri/kind/derivedFromId/annotationVector/…); lives inside
+  // results_json (JSONB) — no DDL. base64 is stripped client-side before send.
+  photos?: Array<Record<string, unknown>>;
 };
 
 export type InspectionDefectItem = {
@@ -187,8 +191,33 @@ export async function getInspection(actor: Actor, id: string): Promise<Inspectio
   return mapInspection(result.rows[0]);
 }
 
+// Belt-and-braces server-side guard: base64 image data must NEVER be persisted
+// into results_json (photos belong in S3 + the client payload store). The mobile
+// client strips base64 before every send; this strips it again at the
+// persistence boundary so a future/forgotten/malicious client path cannot bloat
+// the JSONB row. Only `base64` is removed — uri/storageKey/kind/derivedFromId/
+// annotationVector (the signable identity + display refs) are preserved, so the
+// content hash is unaffected.
+function sanitizeResultPhotos(results: InspectionResultItem[]): InspectionResultItem[] {
+  return results.map((r) => {
+    if (!r.photos || r.photos.length === 0) return r;
+    return {
+      ...r,
+      photos: r.photos.map((p) => {
+        if (p && typeof p === "object" && "base64" in p) {
+          const rest = { ...(p as Record<string, unknown>) };
+          delete rest.base64;
+          return rest;
+        }
+        return p;
+      }),
+    };
+  });
+}
+
 export async function createInspection(actor: Actor, payload: Omit<InspectionRecord, "id" | "ownerEmail" | "companyId" | "createdAt" | "updatedAt" | "deletedAt">): Promise<InspectionRecord> {
   const record: InspectionRecord = { id: uuidv4(), ownerEmail: actor.email, companyId: actor.companyId, createdAt: new Date().toISOString(), ...payload };
+  record.results = sanitizeResultPhotos(record.results);
   if (!useDatabase()) { memoryInspections.set(record.id, record); return record; }
   const result = await getPgPool().query(
     `INSERT INTO inspections (
@@ -225,6 +254,7 @@ export type InspectionPatch = {
 };
 
 export async function updateInspection(actor: Actor, id: string, patch: InspectionPatch): Promise<InspectionRecord | null> {
+  if (patch.results) patch = { ...patch, results: sanitizeResultPhotos(patch.results) };
   if (!useDatabase()) {
     const existing = memoryInspections.get(id);
     if (!existing || !canAccess(actor, existing.companyId, existing.ownerEmail) || existing.deletedAt) return null;

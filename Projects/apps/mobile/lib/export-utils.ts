@@ -21,7 +21,7 @@ function normalizeFilename(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
-function buildAnnotationOverlayHtml(photo: Photo) {
+export function buildAnnotationOverlayHtml(photo: Photo) {
   if (photo.kind !== "annotated" || !photo.annotationVector) return "";
   const { viewBox, strokes } = photo.annotationVector;
   const paths = strokes

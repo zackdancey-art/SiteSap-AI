@@ -76,6 +76,17 @@ export function computeInspectionContentHash(insp: SignableInspection): {
       passed: r.passed,
       notes: r.notes,
       na: r.na ?? false,
+      // Per-item photo evidence is signable, but hashed by STABLE IDENTITY only
+      // (id + kind + derivedFromId + annotationVector). Deliberately excludes
+      // uri/storageKey (changes local->remote on upload) and base64 (stripped
+      // before persistence) so a photo added/removed/annotated voids the
+      // signature, while merely uploading an already-captured photo does NOT.
+      photos: (r.photos || []).map((p) => ({
+        id: (p as Record<string, unknown>).id ?? null,
+        kind: (p as Record<string, unknown>).kind ?? null,
+        derivedFromId: (p as Record<string, unknown>).derivedFromId ?? null,
+        annotationVector: (p as Record<string, unknown>).annotationVector ?? null,
+      })),
     })),
     defects: (insp.defects || []).map((d) => ({
       description: d.description,
