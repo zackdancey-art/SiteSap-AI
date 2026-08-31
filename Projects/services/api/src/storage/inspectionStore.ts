@@ -166,10 +166,10 @@ export async function listInspections(actor: Actor, siteId?: string): Promise<In
   const crew = crewScopeSql(actor, params, true);
   if (crew) conditions.push(crew);
   if (siteId) { params.push(siteId); conditions.push(`site_id = $${params.length}`); }
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `SELECT * FROM inspections WHERE ${conditions.join(" AND ")} ORDER BY date DESC`,
     params
-  );
+  ));
   return result.rows.map(mapInspection);
 }
 
@@ -183,10 +183,10 @@ export async function getInspection(actor: Actor, id: string): Promise<Inspectio
   const conditions = ["id = $1", "company_id = $2", "deleted_at IS NULL"];
   const crew = crewScopeSql(actor, params, true);
   if (crew) conditions.push(crew);
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `SELECT * FROM inspections WHERE ${conditions.join(" AND ")}`,
     params
-  );
+  ));
   if (result.rowCount === 0) return null;
   return mapInspection(result.rows[0]);
 }
@@ -219,7 +219,7 @@ export async function createInspection(actor: Actor, payload: Omit<InspectionRec
   const record: InspectionRecord = { id: uuidv4(), ownerEmail: actor.email, companyId: actor.companyId, createdAt: new Date().toISOString(), ...payload };
   record.results = sanitizeResultPhotos(record.results);
   if (!useDatabase()) { memoryInspections.set(record.id, record); return record; }
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `INSERT INTO inspections (
        id, owner_email, company_id, site_id, template_id, name, date, results_json, status,
        scope, area_inspected, time, inspector_name, inspector_role, inspector_company,
@@ -235,7 +235,7 @@ export async function createInspection(actor: Actor, payload: Omit<InspectionRec
      record.scope || null, record.areaInspected || null, record.time || null, record.inspectorName || null,
      record.inspectorRole || null, record.inspectorCompany || null,
      JSON.stringify(record.defects || []), record.overallOutcome || null, record.followUpRequired ?? false]
-  );
+  ));
   return mapInspection(result.rows[0]);
 }
 
@@ -313,9 +313,9 @@ export async function deleteInspection(actor: Actor, id: string): Promise<boolea
     memoryInspections.set(id, { ...existing, deletedAt: new Date().toISOString() });
     return true;
   }
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `UPDATE inspections SET deleted_at = NOW() WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL`,
     [id, actor.companyId]
-  );
+  ));
   return (result.rowCount ?? 0) > 0;
 }

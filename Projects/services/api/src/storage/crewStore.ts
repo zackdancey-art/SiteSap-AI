@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
-import { getPgPool } from "./postgres";
 import { Actor, isCrew } from "./actor";
+import { withTenant } from "./tenant";
 
 export type TimecardRecord = {
   id: string;
@@ -76,23 +76,23 @@ export async function listTimecards(actor: Actor, siteId?: string): Promise<Time
   const crew = crewScopeSql(actor, params);
   if (crew) conditions.push(crew);
   if (siteId) { params.push(siteId); conditions.push(`site_id = $${params.length}`); }
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `SELECT * FROM crew_timecards WHERE ${conditions.join(" AND ")} ORDER BY date DESC`,
     params
-  );
+  ));
   return result.rows.map(mapRow);
 }
 
 export async function createTimecard(actor: Actor, payload: Omit<TimecardRecord, "id" | "ownerEmail" | "companyId" | "createdAt" | "updatedAt" | "deletedAt">): Promise<TimecardRecord> {
   const record: TimecardRecord = { id: uuidv4(), ownerEmail: actor.email, companyId: actor.companyId, createdAt: new Date().toISOString(), ...payload };
   if (!useDatabase()) { memoryTimecards.set(record.id, record); return record; }
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `INSERT INTO crew_timecards (id,owner_email,company_id,site_id,entry_id,worker_name,date,start_time,end_time,break_minutes,hours_regular,hours_overtime,trade,notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
     [record.id, actor.email, actor.companyId, record.siteId, record.entryId ?? null, record.workerName, record.date,
      record.startTime ?? null, record.endTime ?? null, record.breakMinutes ?? null,
      record.hoursRegular, record.hoursOvertime, record.trade || null, record.notes || null]
-  );
+  ));
   return mapRow(result.rows[0]);
 }
 
@@ -105,9 +105,9 @@ export async function deleteTimecard(actor: Actor, id: string): Promise<boolean>
   }
   const conditions = isCrew(actor) ? `id = $1 AND company_id = $2 AND owner_email = $3` : `id = $1 AND company_id = $2`;
   const params = isCrew(actor) ? [id, actor.companyId, actor.email] : [id, actor.companyId];
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `UPDATE crew_timecards SET deleted_at = NOW() WHERE ${conditions} AND deleted_at IS NULL`,
     params
-  );
+  ));
   return (result.rowCount ?? 0) > 0;
 }

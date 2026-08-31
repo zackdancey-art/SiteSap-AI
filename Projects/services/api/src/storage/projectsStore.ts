@@ -135,6 +135,11 @@ const memory: MemoryState = {
 };
 
 function useDatabase() {
+  // In test mode DATABASE_URL is deliberately unset (the harness forbids it), so
+  // an explicit TEST_DATABASE_URL selects the Postgres path — otherwise this
+  // store's DB code (incl. the H1b withTenant conversions + acceptSiteInvite's
+  // token-scoped accept) is never exercised by any test. Non-test unchanged.
+  if (process.env.NODE_ENV === "test") return Boolean(process.env.TEST_DATABASE_URL?.trim());
   return Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
 }
 
@@ -1257,15 +1262,15 @@ export async function createSiteInvites(
         results.push({ email, status: "sent" });
       }
     } else {
-      const isMember = await getPgPool().query<{ exists: boolean }>(
+      const isMember = await withTenant(actor, (client) => client.query<{ exists: boolean }>(
         `SELECT EXISTS(SELECT 1 FROM site_members WHERE site_id=$1 AND member_email=$2) AS exists`,
         [siteId, email]
-      );
+      ));
       if (isMember.rows[0].exists) {
         results.push({ email, status: "already_member" });
         continue;
       }
-      const upsert = await getPgPool().query(
+      const upsert = await withTenant(actor, (client) => client.query(
         `INSERT INTO site_invites (id, site_id, company_id, company_role, invited_email, invited_by, role, token, expires_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT (site_id, invited_email) WHERE site_id IS NOT NULL DO UPDATE
@@ -1273,7 +1278,7 @@ export async function createSiteInvites(
                company_id=$3, company_role=$4
          RETURNING *, (xmax = 0) AS inserted`,
         [uuidv7(), siteId, inviteCompanyId, inviteCompanyRole, email, actor.email, role, token, expiresAt]
-      );
+      ));
       const wasNew = (upsert as unknown as { rows: Array<{ xmax: string }> }).rows[0].xmax === "0";
       results.push({ email, status: wasNew ? "sent" : "resent" });
     }
@@ -1316,14 +1321,14 @@ export async function createCompanyInvite(
     await persistMemory();
     return record;
   }
-  const r = await getPgPool().query(
+  const r = await withTenant(actor, (client) => client.query(
     `INSERT INTO site_invites (id, site_id, company_id, company_role, invited_email, invited_by, role, token, expires_at)
      VALUES ($1,NULL,$2,$3,$4,$5,'worker',$6,$7)
      ON CONFLICT (company_id, invited_email) WHERE company_id IS NOT NULL AND site_id IS NULL DO UPDATE
        SET token=$6, expires_at=$7, company_role=$3, invited_by=$5
      RETURNING *`,
     [record.id, actor.companyId, companyRole, email, actor.email, token, expiresAt]
-  );
+  ));
   return mapInvite(r.rows[0]);
 }
 
@@ -1339,10 +1344,10 @@ export async function listSiteInvites(
       (i) => i.siteId === siteId && i.expiresAt > now
     );
   }
-  const r = await getPgPool().query(
+  const r = await withTenant(actor, (client) => client.query(
     `SELECT * FROM site_invites WHERE site_id=$1 AND expires_at > NOW() ORDER BY created_at DESC`,
     [siteId]
-  );
+  ));
   return r.rows.map(mapInvite);
 }
 
@@ -1363,10 +1368,10 @@ export async function deleteSiteInvite(
     }
     return false;
   }
-  const r = await getPgPool().query(
+  const r = await withTenant(actor, (client) => client.query(
     `DELETE FROM site_invites WHERE id=$1 AND site_id=$2`,
     [inviteId, siteId]
-  );
+  ));
   return (r.rowCount ?? 0) > 0;
 }
 
@@ -1462,6 +1467,12 @@ export async function acceptSiteInvite(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // The accept is intentionally cross-company: the invite belongs to the
+    // company being JOINED. Supply the invite token so the site_invites
+    // company-OR-token RLS policy (migration 025) exposes exactly this one
+    // invite row. SET LOCAL (is_local=true) — scoped to THIS transaction only,
+    // never session-scoped, never leaking into other queries on this connection.
+    await client.query("SELECT set_config('app.invite_token', $1, true)", [token]);
     // Peek at the invite first (without consuming) so a cross-company rejection
     // doesn't burn the token.
     const peek = await client.query<{
@@ -1502,6 +1513,16 @@ export async function acceptSiteInvite(
       return "wrong_user";
     }
 
+    // Invite validated (token claimed atomically + invited_email matches). ONLY
+    // NOW establish the tenant context of the company being JOINED, so the
+    // site_members INSERT below satisfies WITH CHECK and the project_sites name
+    // read isn't fail-closed. Setting app.company_id strictly AFTER validation
+    // prevents a forged/mismatched token from steering the membership write into
+    // another tenant.
+    if (invite.company_id) {
+      await client.query("SELECT set_config('app.company_id', $1, true)", [invite.company_id]);
+    }
+
     // Stamp company membership within the same transaction (soft relationship).
     if (invite.company_id) {
       await client.query(
@@ -1515,18 +1536,15 @@ export async function acceptSiteInvite(
     let siteName: string | null = null;
     if (invite.site_id) {
       await client.query(
-        `INSERT INTO site_members (site_id, member_email, role, invited_by)
-         VALUES ($1,$2,$3,$4)
+        `INSERT INTO site_members (site_id, member_email, role, invited_by, company_id)
+         VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT DO NOTHING`,
-        [invite.site_id, actorEmail, invite.role, invite.invited_by]
+        [invite.site_id, actorEmail, invite.role, invite.invited_by, invite.company_id]
       );
       // Cross-company read: the site belongs to the invite's company, which may
-      // differ from the accepter's current company. Scope the RLS-protected
-      // project_sites read to the site's company so the name lookup isn't
-      // fail-closed. (The ?? fallback below still covers a null-company invite.)
-      if (invite.company_id) {
-        await client.query("SELECT set_config('app.company_id', $1, true)", [invite.company_id]);
-      }
+      // differ from the accepter's current company; app.company_id was already
+      // set to invite.company_id above (strictly after validation), so this
+      // RLS-protected read is scoped to the site's company, not fail-closed.
       const siteRow = await client.query<{ name: string }>(
         `SELECT name FROM project_sites WHERE id=$1`,
         [invite.site_id]
@@ -1559,12 +1577,12 @@ export async function listSiteMembers(
     await ensureMemoryLoaded();
     return Array.from(memory.siteMembers.values()).filter((m) => m.siteId === siteId);
   }
-  const r = await getPgPool().query<{
+  const r = await withTenant(actor, (client) => client.query<{
     site_id: string; member_email: string; role: string; invited_by: string; joined_at: Date;
   }>(
     `SELECT * FROM site_members WHERE site_id=$1 ORDER BY joined_at ASC`,
     [siteId]
-  );
+  ));
   return r.rows.map((row) => ({
     siteId: row.site_id,
     memberEmail: row.member_email,
@@ -1611,9 +1629,9 @@ export async function removeSiteMember(
     await persistMemory();
     return true;
   }
-  const r = await getPgPool().query(
+  const r = await withTenant(actor, (client) => client.query(
     `DELETE FROM site_members WHERE site_id=$1 AND member_email=$2`,
     [siteId, memberEmail]
-  );
+  ));
   return (r.rowCount ?? 0) > 0;
 }
