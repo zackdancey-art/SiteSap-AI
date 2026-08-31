@@ -3,8 +3,14 @@ import { test, before, after, beforeEach } from "node:test";
 import http from "node:http";
 import { createApp } from "../server";
 import { resetAuthStoreForTests } from "../storage/authStore";
-import { resetProjectStoreForTests } from "../storage/projectsStore";
+import {
+  resetProjectStoreForTests,
+  createSite as createSiteRecord,
+  createSiteInvites,
+  INVITE_ROLE_TOO_HIGH,
+} from "../storage/projectsStore";
 import { resetRateLimitStoreForTests } from "../middleware/rateLimit";
+import type { Actor } from "../storage/actor";
 
 let server: http.Server;
 let baseUrl: string;
@@ -413,4 +419,201 @@ test("role 'owner' is rejected by the invite schema (owner is not assignable via
     ownerToken
   );
   assert.equal(r.status, 400, "'owner' must not be assignable via invite");
+});
+
+// ─── Part C: invite role ceiling (non-owner site invites are crew-only) ───────
+//
+// Prior to the fix, `createSiteInvites` stamped the invitee's COMPANY role to
+// whatever `role` the inviter requested, with no check on the inviter's own
+// companyRole. Any user who could manage a site (a company manager/owner, or a
+// crew/viewer member who personally owns that site) could therefore mint a
+// company-manager or company-viewer via a site invite — a privilege-escalation
+// path around the owner-only `/company/members/invite` endpoint. The fix adds a
+// ceiling: only an `owner` may request `role !== "crew"`; anyone else gets
+// `INVITE_ROLE_TOO_HIGH` → HTTP 403.
+
+const CEILING_ERROR = "Only an owner can invite managers or viewers. You can invite crew only.";
+
+/** Looks up the pending invite token for `email` on `siteId` (as a manager) and
+ *  accepts it as a freshly-registered invitee, returning the accept response
+ *  (which carries the invitee's fresh token, companyId, and companyRole). */
+async function acceptSiteInviteFor(
+  listerToken: string,
+  siteId: string,
+  email: string,
+  phone: string,
+  name: string
+): Promise<{ token: string; companyId: string; companyRole: string }> {
+  const listR = await req<{ invites: Array<{ token: string; invitedEmail: string }> }>(
+    "GET", `/projects/sites/${siteId}/invites`, undefined, listerToken
+  );
+  const invite = listR.body.invites.find((i) => i.invitedEmail === email);
+  assert.ok(invite, `no pending invite found for ${email}`);
+  const inviteeToken = await registerAndLogin(email, phone, name);
+  const acceptR = await req<{ token: string; companyId: string; companyRole: string }>(
+    "POST", "/projects/invites/accept",
+    { token: invite!.token },
+    inviteeToken
+  );
+  assert.equal(acceptR.status, 200, `accept failed for ${email}: ${JSON.stringify(acceptR.body)}`);
+  return acceptR.body;
+}
+
+test("ceiling: owner inviting 'manager' via site invite succeeds (201)", async () => {
+  const ownerToken = await registerAndLogin("ceil-owner1@example.com", "+447911002001", "CeilOwner1");
+  const siteId = await createSite(ownerToken, "Ceiling Site 1");
+
+  const r = await req<{ results: Array<{ email: string; status: string }> }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-mgr1@example.com"], role: "manager" },
+    ownerToken
+  );
+  assert.equal(r.status, 201);
+  assert.equal(r.body.results[0].status, "sent");
+});
+
+test("ceiling: manager inviting 'crew' via site invite succeeds (201)", async () => {
+  const ownerToken = await registerAndLogin("ceil-owner2@example.com", "+447911002010", "CeilOwner2");
+  const siteId = await createSite(ownerToken, "Ceiling Site 2");
+
+  await req("POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-mgr2@example.com"], role: "manager" }, ownerToken);
+  const accepted = await acceptSiteInviteFor(
+    ownerToken, siteId, "ceil-mgr2@example.com", "+447911002011", "CeilMgr2"
+  );
+  assert.equal(accepted.companyRole, "manager");
+
+  const r = await req<{ results: Array<{ email: string; status: string }> }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-crew2@example.com"], role: "crew" },
+    accepted.token
+  );
+  assert.equal(r.status, 201);
+  assert.equal(r.body.results[0].status, "sent");
+});
+
+test("ceiling (headline): manager inviting 'manager' via site invite is rejected 403", async () => {
+  const ownerToken = await registerAndLogin("ceil-owner3@example.com", "+447911002020", "CeilOwner3");
+  const siteId = await createSite(ownerToken, "Ceiling Site 3");
+
+  await req("POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-mgr3@example.com"], role: "manager" }, ownerToken);
+  const accepted = await acceptSiteInviteFor(
+    ownerToken, siteId, "ceil-mgr3@example.com", "+447911002021", "CeilMgr3"
+  );
+  assert.equal(accepted.companyRole, "manager");
+
+  const r = await req<{ error: string }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-escalate3@example.com"], role: "manager" },
+    accepted.token
+  );
+  assert.equal(r.status, 403, "a non-owner must not be able to mint a company-manager via a site invite");
+  assert.equal(
+    r.body.error,
+    CEILING_ERROR,
+    "must be the specific role-ceiling error, not the generic 'insufficient permissions' 403"
+  );
+});
+
+test("ceiling: manager inviting 'viewer' via site invite is rejected 403", async () => {
+  const ownerToken = await registerAndLogin("ceil-owner4@example.com", "+447911002030", "CeilOwner4");
+  const siteId = await createSite(ownerToken, "Ceiling Site 4");
+
+  await req("POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-mgr4@example.com"], role: "manager" }, ownerToken);
+  const accepted = await acceptSiteInviteFor(
+    ownerToken, siteId, "ceil-mgr4@example.com", "+447911002031", "CeilMgr4"
+  );
+  assert.equal(accepted.companyRole, "manager");
+
+  const r = await req<{ error: string }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-escalate4@example.com"], role: "viewer" },
+    accepted.token
+  );
+  assert.equal(r.status, 403, "a non-owner must not be able to mint a company-viewer via a site invite either");
+  assert.equal(r.body.error, CEILING_ERROR);
+});
+
+test("ceiling (store-level): a crew member who owns a site cannot grant a company role above crew via a site invite", async () => {
+  // canManageSite() grants a crew/viewer member management of a site they
+  // personally own (independent of company role), so the ceiling must apply on
+  // that path too — the hole isn't limited to company managers. This is a
+  // near-unreachable state via the HTTP API (site creation is gated at
+  // manager+), so we exercise the store directly with a crew actor who owns the
+  // site: no token/accept indirection, just the exact authorization logic.
+  const companyId = "ceil-co-store-5";
+  const crewActor: Actor = { email: "crew-owner5@example.com", role: "worker", companyId, companyRole: "crew" };
+  const crewSite = await createSiteRecord(crewActor, {
+    name: "Crew-owned site", address: "9 Crew Rd", client: "Crew Client", startDate: "2026-01-01", status: "active",
+  });
+
+  // The crew member CAN manage their own site: inviting crew succeeds (returns
+  // an InviteResult[]), proving the escalation rejection below is the ROLE
+  // ceiling firing, not a generic "can't manage this site" denial.
+  const okCrew = await createSiteInvites(crewActor, crewSite.id, ["mate@example.com"], "crew", "crew");
+  assert.ok(Array.isArray(okCrew), "a crew site-owner can invite crew to their own site");
+
+  // But NOT an elevated company role — the ceiling returns INVITE_ROLE_TOO_HIGH.
+  const escalate = await createSiteInvites(crewActor, crewSite.id, ["escalate@example.com"], "manager", "manager");
+  assert.equal(escalate, INVITE_ROLE_TOO_HIGH, "a crew site-owner must not mint a company-manager via a site invite");
+});
+
+test("ceiling: company-member invite remains owner-only (manager 403, owner 201)", async () => {
+  const ownerToken = await registerAndLogin("ceil-owner6@example.com", "+447911002050", "CeilOwner6");
+  const siteId = await createSite(ownerToken, "Ceiling Site 6");
+
+  await req("POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-mgr6@example.com"], role: "manager" }, ownerToken);
+  const accepted = await acceptSiteInviteFor(
+    ownerToken, siteId, "ceil-mgr6@example.com", "+447911002051", "CeilMgr6"
+  );
+  assert.equal(accepted.companyRole, "manager");
+
+  const managerAttempt = await req<{ error?: string }>(
+    "POST", "/company/members/invite",
+    { emails: ["ceil-blocked6@example.com"], companyRole: "crew" },
+    accepted.token
+  );
+  assert.equal(managerAttempt.status, 403, "manager must remain blocked from the company-member invite endpoint");
+
+  const ownerAttempt = await req<{ results: Array<{ email: string; status: string }> }>(
+    "POST", "/company/members/invite",
+    { emails: ["ceil-allowed6@example.com"], companyRole: "crew" },
+    ownerToken
+  );
+  assert.equal(ownerAttempt.status, 201, "owner-only company-member invite must still succeed unchanged");
+  assert.equal(ownerAttempt.body.results[0].status, "sent");
+});
+
+test("ceiling: server-side enforcement — a rejected manager→manager site invite leaves no invite record", async () => {
+  // Proves the 403 is a real server-side boundary, not merely a client-facing
+  // error message: the escalation attempt must not have created state that a
+  // different client path could exploit or that a race could accept.
+  const ownerToken = await registerAndLogin("ceil-owner7@example.com", "+447911002060", "CeilOwner7");
+  const siteId = await createSite(ownerToken, "Ceiling Site 7");
+
+  await req("POST", `/projects/sites/${siteId}/invites`,
+    { emails: ["ceil-mgr7@example.com"], role: "manager" }, ownerToken);
+  const accepted = await acceptSiteInviteFor(
+    ownerToken, siteId, "ceil-mgr7@example.com", "+447911002061", "CeilMgr7"
+  );
+
+  const escalateEmail = "ceil-escalate7@example.com";
+  const r = await req<{ status: number; error?: string }>(
+    "POST", `/projects/sites/${siteId}/invites`,
+    { emails: [escalateEmail], role: "manager" },
+    accepted.token
+  );
+  assert.equal(r.status, 403);
+  assert.equal(r.body.error, CEILING_ERROR);
+
+  const listR = await req<{ invites: Array<{ invitedEmail: string }> }>(
+    "GET", `/projects/sites/${siteId}/invites`, undefined, ownerToken
+  );
+  assert.ok(
+    !listR.body.invites.some((i) => i.invitedEmail === escalateEmail),
+    "a rejected escalation attempt must not leave behind a usable invite record"
+  );
 });

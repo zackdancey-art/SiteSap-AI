@@ -34,9 +34,15 @@ interface DataContextType {
   loading: boolean;
   refresh: () => Promise<void>;
   inviteCrewMembers: (siteId: string, emails: string[], role: string) => Promise<InviteResult[]>;
+  inviteCompanyMembers: (emails: string[], companyRole: string) => Promise<CompanyInviteResult[]>;
   acceptInvite: (token: string) => Promise<{ siteId: string; siteName: string; role: string }>;
   getSiteMembers: (siteId: string) => Promise<SiteMember[]>;
   removeSiteMember: (siteId: string, memberEmail: string) => Promise<void>;
+}
+
+export interface CompanyInviteResult {
+  email: string;
+  status: "sent" | "error";
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -639,6 +645,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     return resp.results;
   };
 
+  const inviteCompanyMembers = async (emails: string[], companyRole: string): Promise<CompanyInviteResult[]> => {
+    const resp = await apiJson<{ results: CompanyInviteResult[] }>("/company/members/invite", {
+      method: "POST",
+      body: JSON.stringify({ emails, companyRole }),
+    });
+    return resp.results;
+  };
+
   const acceptInvite = async (token: string): Promise<{ siteId: string; siteName: string; role: string }> => {
     const resp = await apiJson<{ siteId: string; siteName: string; role: string }>("/projects/invites/accept", {
       method: "POST",
@@ -685,6 +699,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         loading,
         refresh,
         inviteCrewMembers,
+        inviteCompanyMembers,
         acceptInvite,
         getSiteMembers,
         removeSiteMember,

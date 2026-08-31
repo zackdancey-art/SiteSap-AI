@@ -1189,6 +1189,8 @@ async function canManageSite(actor: Actor, siteId: string): Promise<boolean> {
 
 // Sentinel returned when an invite requests the un-assignable 'owner' role.
 export const INVITE_OWNER_REJECTED = "owner_role_not_assignable" as const;
+// A non-owner tried to grant a company role above crew via a site invite.
+export const INVITE_ROLE_TOO_HIGH = "invite_role_exceeds_inviter" as const;
 
 export async function createSiteInvites(
   actor: Actor,
@@ -1196,7 +1198,7 @@ export async function createSiteInvites(
   emails: string[],
   role: string,
   companyRole?: CompanyRole
-): Promise<InviteResult[] | null | typeof INVITE_OWNER_REJECTED> {
+): Promise<InviteResult[] | null | typeof INVITE_OWNER_REJECTED | typeof INVITE_ROLE_TOO_HIGH> {
   // Owner is never assignable via invite — it is only acquired by founding a
   // company at signup or via explicit owner-to-owner promotion.
   if (companyRole === "owner") return INVITE_OWNER_REJECTED;
@@ -1208,6 +1210,13 @@ export async function createSiteInvites(
   // Invites always carry the actor's company so acceptance can stamp membership.
   const inviteCompanyId = actor.companyId;
   const inviteCompanyRole: CompanyRole = companyRole ?? "crew";
+
+  // Role ceiling (privilege-escalation fix): only an owner may grant an elevated
+  // company role via a site invite. Any other inviter — a manager, or a crew/
+  // viewer who happens to own the site (both pass canManageSite) — may bring
+  // people in as crew ONLY. Without this, a site invite is a backdoor around the
+  // owner-only company-member invite: e.g. a manager could mint a company-manager.
+  if (actor.companyRole !== "owner" && inviteCompanyRole !== "crew") return INVITE_ROLE_TOO_HIGH;
 
   for (const email of emails) {
     const token = generateInviteToken();

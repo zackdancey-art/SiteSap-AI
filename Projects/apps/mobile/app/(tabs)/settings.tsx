@@ -228,6 +228,17 @@ export default function SettingsScreen() {
               description="Update the password you use to sign in."
               onPress={handleChangePassword}
             />
+            {user?.companyRole === "owner" && (
+              <>
+                <View style={styles.divider} />
+                <SettingRow
+                  icon="person-add-outline"
+                  label="Invite team member"
+                  description="Add a manager, viewer or crew member to your company."
+                  onPress={() => router.push("/company-invite")}
+                />
+              </>
+            )}
           </View>
           {changingPassword && (
             <View style={[styles.sectionCard, { marginTop: 12, padding: 16, gap: 12 }]}>
