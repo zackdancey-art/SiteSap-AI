@@ -87,9 +87,12 @@ pnpm -C Projects --filter services-api run test
 pnpm -C Projects run lint
 ```
 
-Because the API `test` script is `pnpm run build && node --test dist/**/*.test.js`, tests run against **compiled output in `dist/`**, not the `.ts` source. A test file that doesn't compile won't run. Always typecheck before assuming a test failure is a logic problem.
+The API `test` script is `rm -rf dist tsconfig.tsbuildinfo && pnpm run build && node --require ./dist/test-setup.js --test $(find dist -name '*.test.js')`. Consequences to keep in mind:
+- Tests run against **compiled output in `dist/`**, not the `.ts` source. A test file that doesn't compile won't run. Always typecheck before assuming a test failure is a logic problem.
+- The runner enumerates files with **`find dist -name '*.test.js'`, not a shell glob.** Do **not** revert this to `node --test dist/**/*.test.js`: `pnpm`/npm run scripts under `sh`, which has no globstar, so `**` collapses to `*` and the pattern silently matches only files exactly one directory deep — a test at the `dist/` root, or two-plus directories deep, never runs *and is never reported as skipped*. `find` is depth-independent and matches the files on disk exactly. (`node --test dist` directory recursion is also wrong — its broad default patterns re-pick-up `dist/test-setup.js`, the `--require` preload.)
+- The leading `rm -rf dist tsconfig.tsbuildinfo` forces a clean full compile every run. The project is `composite: true` (incremental), so deleting `dist` alone leaves the buildinfo and tsc under-emits; and without the clean a renamed/deleted test can linger in `dist` as a stale, still-passing copy.
 
-Mobile and web currently have **zero tests** and no meaningful `test` script. The 8 real test files all live under `Projects/services/api/src/`.
+Mobile and web currently have **zero tests** and no meaningful `test` script. All of the real test files live under `Projects/services/api/src/`.
 
 ---
 
@@ -98,7 +101,7 @@ Mobile and web currently have **zero tests** and no meaningful `test` script. Th
 The existing suite (e.g. `services/api/src/routes/company-rbac.test.ts`, `change-password.test.ts`) is the template:
 
 - **Runner:** `node:test` — `import { test, before, after, beforeEach } from "node:test"` and `import assert from "node:assert/strict"`. No Jest, no Vitest, no supertest.
-- **Location:** test files sit next to the code they test, named `*.test.ts`, under `src/`. They compile into `dist/**/*.test.js`.
+- **Location:** test files sit next to the code they test, named `*.test.ts`, under `src/` (at any depth — the runner finds them by `find` enumeration, see §5, so a file at the `src/` root is fine). They compile to a matching `dist/…/*.test.js`.
 - **HTTP:** tests boot the real app with `createApp()` from `../server`, listen on an ephemeral port, and drive it with a hand-rolled `http.request` helper (typically named `req`) that returns `{ status, body }`. Copy that helper's shape; don't add a dependency.
 - **In-memory mode:** at the top of the file, `delete process.env.DATABASE_URL` (forces the JSON/in-memory store), set `process.env.AUTH_TOKEN_SECRET = "<something>-test-secret"` and `process.env.NODE_ENV = "test"`. **Consequence:** the in-memory suite cannot exercise anything Postgres-only — NOT NULL constraints, foreign keys, or Row-Level Security. Tests that must prove RLS or a DB constraint have to run against a real Postgres via `TEST_DATABASE_URL` and skip when it is unset (this environment has no local Postgres).
 - **Isolation between tests:** reset store state with the exported helpers — `resetAuthStoreForTests()`, `resetProjectStoreForTests()`, `resetRateLimitStoreForTests()` — in `before`/`beforeEach`.
@@ -145,4 +148,5 @@ This is how the tenancy/security remediation (X1, H3a, H4–H8) was done, and th
 
 - **Migrations** are additive and idempotent (`IF NOT EXISTS` / `DROP POLICY IF EXISTS` … `CREATE`), run at boot. RLS uses `FORCE` (the app connects as the DB owner) and fail-closed `current_setting('app.company_id', true)`. A migration that must read another RLS-forced table cross-company (e.g. the H7 backfill reading `project_entries`) lifts `FORCE` for the read inside its own transaction and restores it.
 
-- **Git & secrets.** Feature branches only, never `main`. Real credentials live only in gitignored `.env`; scan the diff before committing. The pre-commit hook runs the full `lint && typecheck && test`; a logical-split commit series may use `--no-verify` because intermediate commits aren't individually green, but the **branch tip must pass all three** before push.
+- **Git & secrets.** Feature branches only, never `main`. Real credentials live only in gitignored `.env`; scan the diff before committing.
+- **What actually gates a commit vs. a merge.** The pre-commit hook (`.git/hooks/pre-commit`) is **branch-aware**: on feature branches it runs **`typecheck` + `lint` only** (tests are kept out to keep the commit loop fast); on `main`/`master` it additionally runs `test`. So on a feature branch a `--no-verify` is justified only when an intermediate logical-split commit doesn't individually pass **typecheck/lint** — tests are *not* the blocker there, and the earlier belief that "the hook's full-suite check can't pass on intermediate commits" was false. The **full suite is gated by CI, not the hook**: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `lint` + `typecheck` + `test` on **every `pull_request`** (and on push to `main`/`master`). Treat green CI on the PR as the real pre-merge gate; the branch tip must pass typecheck + lint locally and the full suite in CI before merge.
