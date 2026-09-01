@@ -18,7 +18,7 @@ function isConfigured(value?: string) {
   return Boolean(value && value.trim());
 }
 
-function validateProviderConfig() {
+export function validateProviderConfig() {
   const isProd = process.env.NODE_ENV === "production";
   const hasDatabase = isConfigured(process.env.DATABASE_URL);
   const hasAuthSecret = isConfigured(process.env.AUTH_TOKEN_SECRET);
@@ -30,6 +30,13 @@ function validateProviderConfig() {
     isConfigured(process.env.TWILIO_AUTH_TOKEN) &&
     isConfigured(process.env.TWILIO_FROM_NUMBER);
   const hasMediaStorage = isProductionMediaStorageReady();
+  // X2: OPENAI_API_KEY is now a hard boot requirement in production. Without it
+  // AI diary generation would silently fall back to the rule-based generator for
+  // EVERY request — an unrecorded downgrade of the product's headline feature
+  // (finding C1). We keep the rule-based generator only as a RUNTIME fallback for
+  // a reachable-but-erroring API (see routes/ai.ts), not as a substitute for a
+  // missing key at boot.
+  const hasOpenAI = isConfigured(process.env.OPENAI_API_KEY);
 
   if (isProd) {
     const secret = process.env.AUTH_TOKEN_SECRET ?? "";
@@ -45,6 +52,7 @@ function validateProviderConfig() {
       !hasEmailProvider ? "email provider (RESEND/SENDGRID + EMAIL_FROM)" : null,
       !hasSmsProvider ? "Twilio SMS provider (SID, TOKEN, FROM_NUMBER)" : null,
       !hasMediaStorage ? "S3-compatible media storage (MEDIA_STORAGE_PROVIDER=s3 + S3_* env vars)" : null,
+      !hasOpenAI ? "OPENAI_API_KEY (required for AI diary generation — set it in the Render service environment)" : null,
     ].filter(Boolean);
     if (missing.length > 0) {
       throw new Error(`Missing production configuration: ${missing.join(", ")}`);
