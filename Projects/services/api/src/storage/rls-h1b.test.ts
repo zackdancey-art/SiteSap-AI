@@ -104,7 +104,10 @@ if (!process.env.TEST_DATABASE_URL) {
     await pool.query(`GRANT SELECT, INSERT ON site_members, material_deliveries, crew_timecards, inspections, site_invites TO ${probeRole}`);
     const u = new URL(process.env.TEST_DATABASE_URL as string);
     u.username = probeRole; u.password = probePassword; u.searchParams.delete("channel_binding"); u.searchParams.delete("sslmode");
-    probe = new Client({ connectionString: u.toString(), ssl: { rejectUnauthorized: false } });
+    // SSL only when the target DB requires it (Neon: PG_SSL=require). Against a
+    // plain Postgres with no TLS (e.g. the CI postgres:16 service) an ssl object
+    // forces a handshake the server rejects; mirror getPgPool()'s PG_SSL gate.
+    probe = new Client({ connectionString: u.toString(), ssl: process.env.PG_SSL === "require" ? { rejectUnauthorized: false } : undefined });
     await probe.connect();
   });
 
