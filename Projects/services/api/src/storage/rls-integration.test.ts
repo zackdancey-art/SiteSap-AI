@@ -157,7 +157,9 @@ if (!process.env.TEST_DATABASE_URL) {
     probeUrl.password = probePassword;
     probeUrl.searchParams.delete("channel_binding");
     probeUrl.searchParams.delete("sslmode");
-    probe = new Client({ connectionString: probeUrl.toString(), ssl: { rejectUnauthorized: false } });
+    // SSL only when the target DB requires it (Neon: PG_SSL=require); a plain
+    // Postgres (CI postgres:16 service) rejects a forced ssl handshake. Mirror getPgPool().
+    probe = new Client({ connectionString: probeUrl.toString(), ssl: process.env.PG_SSL === "require" ? { rejectUnauthorized: false } : undefined });
     await probe.connect();
   });
 

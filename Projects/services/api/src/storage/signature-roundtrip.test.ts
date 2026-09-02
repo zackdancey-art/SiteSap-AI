@@ -291,11 +291,13 @@ if (!process.env.TEST_DATABASE_URL) {
     const probeUrl = new URL(process.env.TEST_DATABASE_URL as string);
     probeUrl.username = probeRole;
     probeUrl.password = probePassword;
-    // SSL is supplied explicitly below; drop libpq-only params node-postgres
-    // doesn't honour (channel_binding forces SCRAM channel binding, unsupported).
+    // Drop libpq-only params node-postgres doesn't honour (channel_binding forces
+    // SCRAM channel binding, unsupported). SSL only when the DB requires it
+    // (Neon: PG_SSL=require); a plain Postgres (CI postgres:16) rejects a forced
+    // ssl handshake, so mirror getPgPool()'s PG_SSL gate.
     probeUrl.searchParams.delete("channel_binding");
     probeUrl.searchParams.delete("sslmode");
-    const probe = new Client({ connectionString: probeUrl.toString(), ssl: { rejectUnauthorized: false } });
+    const probe = new Client({ connectionString: probeUrl.toString(), ssl: process.env.PG_SSL === "require" ? { rejectUnauthorized: false } : undefined });
     await probe.connect();
     try {
       // Tenant context = company B: must see ZERO of company A's signatures.
