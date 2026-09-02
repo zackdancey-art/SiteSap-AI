@@ -67,3 +67,20 @@ export async function hydrateEntriesWithPhotoPayloads(entries: Entry[]) {
     })),
   }));
 }
+
+export function stripPhotoArray(photos: Photo[]): Photo[] {
+  return photos.map((photo) => ({
+    ...photo,
+    base64: undefined,
+    mimeType: photo.mimeType,
+  }));
+}
+
+export async function hydratePhotos(photos: Photo[]): Promise<Photo[]> {
+  const payloadMap = await readPayloadMap();
+  return photos.map((photo) => ({
+    ...photo,
+    base64: photo.base64 || payloadMap[photo.id]?.base64,
+    mimeType: photo.mimeType || payloadMap[photo.id]?.mimeType || "image/jpeg",
+  }));
+}

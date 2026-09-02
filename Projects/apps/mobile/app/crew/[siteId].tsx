@@ -3,7 +3,7 @@ import {
   View, Text, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator,
   TextInput, Modal, Platform,
 } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
@@ -15,6 +15,7 @@ import { useData } from "@/lib/data-context";
 import { useAuth } from "@/lib/auth-context";
 import { exportReportDocument, buildHtmlDocument } from "@/lib/export-utils";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import { ScreenHeader } from "@/components/ScreenHeader";
 
 type Timecard = {
   id: string; workerName: string; date: string;
@@ -248,26 +249,32 @@ export default function CrewTimecards() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Timesheets</Text>
-          {site && <Text style={styles.headerSub}>{site.name}</Text>}
-        </View>
-        <Pressable onPress={handleExport} style={styles.exportBtn} disabled={exporting}>
-          {exporting
-            ? <ActivityIndicator size="small" color={Colors.accent} />
-            : <Ionicons name="share-outline" size={20} color={Colors.accent} />
-          }
-        </Pressable>
-        <Pressable onPress={openForm} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color={Colors.white} />
-        </Pressable>
-      </View>
+    <View style={styles.container}>
+      <ScreenHeader
+        borderWidth={1}
+        variant="light"
+        title="Timesheets"
+        subtitle={site?.name}
+        paddingBottom={12}
+        paddingTopExtra={12}
+        gap={10}
+        backButtonStyle={styles.backBtn}
+        titleStyle={styles.headerTitle}
+        subtitleStyle={styles.headerSub}
+        right={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Pressable onPress={handleExport} style={styles.exportBtn} disabled={exporting}>
+              {exporting
+                ? <ActivityIndicator size="small" color={Colors.accent} />
+                : <Ionicons name="share-outline" size={20} color={Colors.accent} />
+              }
+            </Pressable>
+            <Pressable onPress={openForm} style={styles.addBtn}>
+              <Ionicons name="add" size={22} color={Colors.white} />
+            </Pressable>
+          </View>
+        }
+      />
 
       {/* Summary banner */}
       {timecards.length > 0 && (
@@ -534,10 +541,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
 
   // Header
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, gap: 10, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
   backBtn: { padding: 4 },
-  headerTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: Colors.text },
-  headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary },
+  headerTitle: { fontSize: 17, fontFamily: "Inter_700Bold", fontWeight: undefined, color: Colors.text },
+  headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary, marginTop: 0 },
   exportBtn: { padding: 8, borderWidth: 1, borderColor: Colors.accent + "44", borderRadius: 10, marginLeft: "auto" },
   addBtn: { backgroundColor: Colors.primary, borderRadius: 10, padding: 8 },
 

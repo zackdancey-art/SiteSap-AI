@@ -8,6 +8,7 @@ import {
   createEntry,
   createSite,
   createSiteInvites,
+  INVITE_ROLE_TOO_HIGH,
   createTemplate,
   deleteEntry,
   deleteSite,
@@ -281,6 +282,9 @@ projectsRouter.post("/projects/sites/:siteId/invites", async (req, res) => {
   const results = await createSiteInvites(actor, req.params.siteId, parsed.data.emails, parsed.data.role, parsed.data.role);
   if (results === null) {
     return res.status(403).json({ error: "Insufficient permissions to manage this site." });
+  }
+  if (results === INVITE_ROLE_TOO_HIGH) {
+    return res.status(403).json({ error: "Only an owner can invite managers or viewers. You can invite crew only." });
   }
   if (typeof results === "string") {
     return res.status(400).json({ error: "Invalid invite: owner role cannot be assigned via invite." });

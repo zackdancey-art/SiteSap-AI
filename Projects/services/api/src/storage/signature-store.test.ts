@@ -24,6 +24,18 @@
  *     field changes, and is stable when only a non-signable field (status,
  *     id) changes.
  *
+ * Part B (checklist-photo content hash) additions:
+ *  8. Adding a photo to a checklist result DOES void an active signature.
+ *  9. Swapping only a photo's uri (the local -> remote upload rewrite) does
+ *     NOT void — this is the anti-false-void guarantee the hash's stable-
+ *     identity design exists to provide.
+ * 10. Appending an annotated derivative photo DOES void.
+ * 11. Pure-hash assertions (no store): computeInspectionContentHash is
+ *     invariant to a photo's uri/base64, and changes when a photo's
+ *     id/kind/derivedFromId/annotationVector differs or a photo is
+ *     added/removed.
+ * 12. Round-trip: photos survive createInspection -> getInspection intact.
+ *
  * The module-level `memorySignatures`/`memoryInspections` Maps in the two
  * stores are never reset between tests (no `resetXForTests` helper exists
  * for this feature), so every test uses a fresh, unique companyId/site via
@@ -38,8 +50,14 @@ process.env.AUTH_TOKEN_SECRET = "signature-store-test-secret";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Actor } from "./actor";
-import { createInspection, updateInspection, InspectionRecord } from "./inspectionStore";
-import { createSignature, listSignatures, voidSignature, computeInspectionContentHash } from "./signatureStore";
+import { createInspection, updateInspection, getInspection, InspectionRecord } from "./inspectionStore";
+import {
+  createSignature,
+  listSignatures,
+  voidSignature,
+  computeInspectionContentHash,
+  SignableInspection,
+} from "./signatureStore";
 
 let n = 0;
 const uniq = () => `${Date.now()}-${n++}`;
@@ -207,4 +225,302 @@ test("computeInspectionContentHash: deterministic, changes on signable-field edi
   const changedId = { ...insp, id: "some-other-id" };
   const idHash = computeInspectionContentHash(changedId);
   assert.equal(idHash.hash, first.hash, "changing only id must not change the hash");
+});
+
+// ─── Part B: checklist-photo content hash ───────────────────────────────────
+
+test("Part B / photo add: adding a photo to a checklist result DOES void an active signature", async () => {
+  const companyId = "sig-photo-add-" + uniq();
+  const a = actor(companyId);
+  const insp = await makeInspection(a, {
+    results: [{ item: "PPE", passed: true, notes: "" }],
+  });
+  const sig = await sign(a, insp);
+
+  const updated = await updateInspection(a, insp.id, {
+    results: [
+      {
+        item: "PPE",
+        passed: true,
+        notes: "",
+        photos: [{ id: "p1", uri: "file:///local.jpg", kind: "original" }],
+      },
+    ],
+  });
+  assert.ok(updated, "expected updateInspection to return the updated record");
+
+  const list = await listSignatures(a, insp.id);
+  const got = list.find((s) => s.id === sig.id);
+  assert.ok(got, "expected the original signature to still be listed");
+  assert.equal(got!.status, "voided", "adding a photo to a checklist result must void the signature");
+});
+
+test("Part B / photo uri swap: local -> remote uri rewrite on the SAME photo does NOT void (anti-false-void guarantee)", async () => {
+  const companyId = "sig-photo-uri-" + uniq();
+  const a = actor(companyId);
+  const insp = await makeInspection(a, {
+    results: [
+      {
+        item: "PPE",
+        passed: true,
+        notes: "",
+        photos: [{ id: "p1", uri: "file:///local.jpg", kind: "original" }],
+      },
+    ],
+  });
+  const sig = await sign(a, insp);
+
+  // Simulate the upload pipeline swapping the local file:// uri for the
+  // uploaded remote path, leaving id/kind (and derivedFromId/annotationVector)
+  // untouched — this is the exact rewrite that must NOT be treated as content
+  // change, or every photo upload would silently destroy trust in a signature.
+  const updated = await updateInspection(a, insp.id, {
+    results: [
+      {
+        item: "PPE",
+        passed: true,
+        notes: "",
+        photos: [{ id: "p1", uri: "/uploads/abc-local.jpg", kind: "original" }],
+      },
+    ],
+  });
+  assert.ok(updated);
+  assert.equal(
+    (updated!.results[0].photos as Array<Record<string, unknown>>)[0].uri,
+    "/uploads/abc-local.jpg",
+    "sanity: the uri really did change in storage"
+  );
+
+  const list = await listSignatures(a, insp.id);
+  const got = list.find((s) => s.id === sig.id);
+  assert.ok(got, "expected the original signature to still be listed");
+  assert.equal(
+    got!.status,
+    "active",
+    "a local->remote uri swap on an unchanged photo identity must NOT void the signature"
+  );
+});
+
+test("Part B / annotation: appending an annotated derivative photo DOES void", async () => {
+  const companyId = "sig-photo-annotate-" + uniq();
+  const a = actor(companyId);
+  const insp = await makeInspection(a, {
+    results: [
+      {
+        item: "PPE",
+        passed: true,
+        notes: "",
+        photos: [{ id: "p1", uri: "file:///local.jpg", kind: "original" }],
+      },
+    ],
+  });
+  const sig = await sign(a, insp);
+
+  const updated = await updateInspection(a, insp.id, {
+    results: [
+      {
+        item: "PPE",
+        passed: true,
+        notes: "",
+        photos: [
+          { id: "p1", uri: "file:///local.jpg", kind: "original" },
+          {
+            id: "p2",
+            uri: "/uploads/abc.jpg",
+            kind: "annotated",
+            derivedFromId: "p1",
+            annotationVector: { viewBox: "0 0 100 100", strokes: [] },
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(updated);
+
+  const list = await listSignatures(a, insp.id);
+  const got = list.find((s) => s.id === sig.id);
+  assert.ok(got, "expected the original signature to still be listed");
+  assert.equal(got!.status, "voided", "appending an annotated derivative photo must void the signature");
+});
+
+test("Part B / pure hash: computeInspectionContentHash is invariant to a photo's uri/base64 but sensitive to id/kind/derivedFromId/annotationVector and add/remove", () => {
+  const base: SignableInspection = {
+    name: "Weekly",
+    date: "2026-02-01",
+    scope: "site-wide",
+    areaInspected: "Level 2",
+    time: "09:00",
+    inspectorName: "Ada",
+    inspectorRole: "H&S",
+    inspectorCompany: "Acme",
+    results: [
+      {
+        item: "PPE",
+        passed: true,
+        notes: "",
+        photos: [{ id: "p1", uri: "file:///local.jpg", kind: "original", base64: "AAAA" }],
+      },
+    ],
+    defects: [],
+    overallOutcome: "pass",
+    followUpRequired: false,
+  };
+  const baseHash = computeInspectionContentHash(base).hash;
+
+  // uri AND base64 both change: hash must be unaffected (uri changes on
+  // upload, base64 is stripped before persistence — neither is stable
+  // identity and neither should be able to void a signature on its own).
+  const uriAndBase64Changed: SignableInspection = {
+    ...base,
+    results: [
+      {
+        ...base.results[0],
+        photos: [{ id: "p1", uri: "/uploads/abc-local.jpg", kind: "original" }],
+      },
+    ],
+  };
+  assert.equal(
+    computeInspectionContentHash(uriAndBase64Changed).hash,
+    baseHash,
+    "changing only uri/base64 on a photo must not change the hash"
+  );
+
+  // id differs: hash must change.
+  const idChanged: SignableInspection = {
+    ...base,
+    results: [
+      {
+        ...base.results[0],
+        photos: [{ id: "p1-different", uri: "file:///local.jpg", kind: "original", base64: "AAAA" }],
+      },
+    ],
+  };
+  assert.notEqual(computeInspectionContentHash(idChanged).hash, baseHash, "changing a photo's id must change the hash");
+
+  // kind differs: hash must change.
+  const kindChanged: SignableInspection = {
+    ...base,
+    results: [
+      {
+        ...base.results[0],
+        photos: [{ id: "p1", uri: "file:///local.jpg", kind: "annotated", base64: "AAAA" }],
+      },
+    ],
+  };
+  assert.notEqual(computeInspectionContentHash(kindChanged).hash, baseHash, "changing a photo's kind must change the hash");
+
+  // derivedFromId differs: hash must change.
+  const derivedFromIdChanged: SignableInspection = {
+    ...base,
+    results: [
+      {
+        ...base.results[0],
+        photos: [{ id: "p1", uri: "file:///local.jpg", kind: "original", derivedFromId: "some-parent", base64: "AAAA" }],
+      },
+    ],
+  };
+  assert.notEqual(
+    computeInspectionContentHash(derivedFromIdChanged).hash,
+    baseHash,
+    "changing a photo's derivedFromId must change the hash"
+  );
+
+  // annotationVector differs: hash must change.
+  const annotationVectorChanged: SignableInspection = {
+    ...base,
+    results: [
+      {
+        ...base.results[0],
+        photos: [
+          {
+            id: "p1",
+            uri: "file:///local.jpg",
+            kind: "original",
+            annotationVector: { viewBox: "0 0 10 10", strokes: [] },
+            base64: "AAAA",
+          },
+        ],
+      },
+    ],
+  };
+  assert.notEqual(
+    computeInspectionContentHash(annotationVectorChanged).hash,
+    baseHash,
+    "changing a photo's annotationVector must change the hash"
+  );
+
+  // Photo removed: hash must change.
+  const photoRemoved: SignableInspection = {
+    ...base,
+    results: [{ ...base.results[0], photos: [] }],
+  };
+  assert.notEqual(computeInspectionContentHash(photoRemoved).hash, baseHash, "removing a photo must change the hash");
+
+  // Photo added: hash must change.
+  const photoAdded: SignableInspection = {
+    ...base,
+    results: [
+      {
+        ...base.results[0],
+        photos: [
+          { id: "p1", uri: "file:///local.jpg", kind: "original", base64: "AAAA" },
+          { id: "p2", uri: "file:///local2.jpg", kind: "original" },
+        ],
+      },
+    ],
+  };
+  assert.notEqual(computeInspectionContentHash(photoAdded).hash, baseHash, "adding a photo must change the hash");
+});
+
+test("Part B / round-trip: checklist-result photos survive createInspection -> read-back intact", async () => {
+  const companyId = "sig-photo-roundtrip-" + uniq();
+  const a = actor(companyId);
+  const photo = {
+    id: "p1",
+    uri: "file:///local.jpg",
+    kind: "original",
+    caption: "Fire extinguisher tag",
+  };
+  const insp = await makeInspection(a, {
+    results: [{ item: "PPE", passed: true, notes: "all good", photos: [photo] }],
+  });
+
+  const readBack = await getInspection(a, insp.id);
+  assert.ok(readBack, "expected the created inspection to be readable back");
+  assert.equal(readBack!.results.length, 1);
+  const readPhotos = readBack!.results[0].photos as Array<Record<string, unknown>> | undefined;
+  assert.ok(readPhotos, "expected photos to survive the round-trip");
+  assert.equal(readPhotos!.length, 1);
+  assert.equal(readPhotos![0].id, "p1");
+  assert.equal(readPhotos![0].uri, "file:///local.jpg");
+  assert.equal(readPhotos![0].kind, "original");
+  assert.equal(readPhotos![0].caption, "Fire extinguisher tag");
+});
+
+test("Part B / server-side guard: base64 is stripped from result photos on create AND update, identity preserved", async () => {
+  const companyId = "sig-photo-b64strip-" + uniq();
+  const a = actor(companyId);
+
+  // A client that (wrongly) sends base64 image data in a checklist photo.
+  const withB64 = {
+    id: "p1",
+    uri: "/uploads/abc-tag.jpg",
+    kind: "original",
+    base64: "AAAABBBBCCCCDDDD-pretend-image-bytes",
+  };
+  const insp = await makeInspection(a, {
+    results: [{ item: "PPE", passed: true, notes: "", photos: [withB64] }],
+  });
+  const created = (await getInspection(a, insp.id))!.results[0].photos as Array<Record<string, unknown>>;
+  assert.equal("base64" in created[0], false, "base64 must NOT be persisted into results_json on create");
+  assert.equal(created[0].id, "p1", "identity (id) is preserved");
+  assert.equal(created[0].uri, "/uploads/abc-tag.jpg", "uri/storageKey ref is preserved");
+
+  // And on update, too.
+  await updateInspection(a, insp.id, {
+    results: [{ item: "PPE", passed: true, notes: "", photos: [{ id: "p2", uri: "/uploads/def.jpg", kind: "original", base64: "MORE-fake-bytes" }] }],
+  });
+  const updated = (await getInspection(a, insp.id))!.results[0].photos as Array<Record<string, unknown>>;
+  assert.equal("base64" in updated[0], false, "base64 must NOT be persisted into results_json on update");
+  assert.equal(updated[0].id, "p2", "updated photo identity preserved");
 });

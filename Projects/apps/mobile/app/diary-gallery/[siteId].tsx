@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import Colors from "@/constants/colors";
 import { useData } from "@/lib/data-context";
 import { Photo } from "@/lib/types";
 import { exportReportDocument, buildHtmlDocument } from "@/lib/export-utils";
+import { ScreenHeader } from "@/components/ScreenHeader";
 
 type GalleryItem = {
   id: string;
@@ -18,7 +18,6 @@ type GalleryItem = {
 };
 
 export default function DiaryGalleryScreen() {
-  const insets = useSafeAreaInsets();
   const { siteId } = useLocalSearchParams<{ siteId: string }>();
   const data = useData();
   const safeSiteId = typeof siteId === "string" ? siteId : "";
@@ -126,18 +125,22 @@ export default function DiaryGalleryScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable style={styles.headerIcon} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={20} color={Colors.white} />
-        </Pressable>
-        <View style={styles.headerTextWrap}>
-          <Text style={styles.headerTitle}>Diary Gallery</Text>
-          <Text style={styles.headerSubtitle}>{site.name} • {galleryItems.length} photos</Text>
-        </View>
-        <Pressable style={styles.headerIcon} onPress={exportAll}>
-          <Ionicons name="download-outline" size={20} color={Colors.white} />
-        </Pressable>
-      </View>
+      <ScreenHeader
+        variant="navy"
+        title="Diary Gallery"
+        subtitle={`${site.name} • ${galleryItems.length} photos`}
+        backGlyph="arrow-back"
+        backSize={20}
+        gap={10}
+        backButtonStyle={styles.headerIcon}
+        titleStyle={styles.headerTitle}
+        subtitleStyle={styles.headerSubtitle}
+        right={
+          <Pressable style={styles.headerIcon} onPress={exportAll}>
+            <Ionicons name="download-outline" size={20} color={Colors.white} />
+          </Pressable>
+        }
+      />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {galleryItems.length === 0 ? (
@@ -220,14 +223,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center" },
   notFoundText: { color: Colors.text, fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  header: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
   headerIcon: {
     width: 38,
     height: 38,
@@ -236,9 +231,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTextWrap: { flex: 1 },
-  headerTitle: { fontSize: 18, color: Colors.white, fontFamily: "Inter_700Bold" },
-  headerSubtitle: { fontSize: 12, color: Colors.white, opacity: 0.9, fontFamily: "Inter_400Regular" },
+  headerTitle: { fontSize: 18, color: Colors.white, fontFamily: "Inter_700Bold", fontWeight: undefined },
+  headerSubtitle: { fontSize: 12, color: Colors.white, opacity: 0.9, fontFamily: "Inter_400Regular", marginTop: 0 },
   content: { padding: 16, gap: 12, paddingBottom: 30 },
   emptyState: { paddingVertical: 40, alignItems: "center", gap: 8 },
   emptyTitle: { fontSize: 16, color: Colors.text, fontFamily: "Inter_600SemiBold" },

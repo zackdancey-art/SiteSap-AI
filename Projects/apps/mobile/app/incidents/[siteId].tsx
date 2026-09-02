@@ -3,7 +3,7 @@ import {
   View, Text, Pressable, ScrollView, StyleSheet, Alert,
   ActivityIndicator, TextInput, Modal,
 } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -13,6 +13,7 @@ import { buildHtmlDocument, exportReportDocument, escapeHtml } from "@/lib/expor
 import { EmptyState } from "@/components/EmptyState";
 import { useData } from "@/lib/data-context";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import { ScreenHeader } from "@/components/ScreenHeader";
 
 type Severity = "near-miss" | "minor" | "moderate" | "major" | "critical";
 type IncidentType = "near-miss" | "first-aid" | "medical-treatment" | "lost-time" | "property-damage" | "environmental" | "other";
@@ -324,21 +325,23 @@ export default function IncidentsScreen() {
   const treatments: Treatment[] = ["none", "first-aid", "medical", "hospital"];
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={Colors.white} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Incident Register</Text>
-          {site && <Text style={styles.headerSub}>{site.name}</Text>}
-        </View>
-        <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color={Colors.white} />
-          <Text style={styles.addBtnText}>Report</Text>
-        </Pressable>
-      </View>
+    <View style={styles.container}>
+      <ScreenHeader
+        variant="navy"
+        title="Incident Register"
+        subtitle={site?.name}
+        paddingBottom={18}
+        paddingTopExtra={16}
+        backButtonStyle={styles.backBtn}
+        titleStyle={styles.headerTitle}
+        subtitleStyle={styles.headerSub}
+        right={
+          <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
+            <Ionicons name="add" size={22} color={Colors.white} />
+            <Text style={styles.addBtnText}>Report</Text>
+          </Pressable>
+        }
+      />
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={Colors.primary} />
@@ -640,10 +643,6 @@ function DetailRow({ icon, label, value }: { icon: string; label: string; value:
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: {
-    flexDirection: "row", alignItems: "center", padding: 16, gap: 12,
-    backgroundColor: Colors.primary, paddingBottom: 18,
-  },
   backBtn: {
     width: 36, height: 36, borderRadius: 10,
     backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center",

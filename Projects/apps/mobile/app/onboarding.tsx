@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   FlatList,
   Animated,
   Platform,
+  BackHandler,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -67,6 +68,19 @@ export default function OnboardingScreen() {
       setCurrentIndex(next);
     }
   };
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (currentIndex > 0) {
+        const prev = currentIndex - 1;
+        flatListRef.current?.scrollToIndex({ index: prev, animated: true });
+        setCurrentIndex(prev);
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [currentIndex]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>

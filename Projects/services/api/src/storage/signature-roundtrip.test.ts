@@ -44,7 +44,7 @@ import type { Pool } from "pg";
 import { getPgPool } from "./postgres";
 import { withTenant } from "./tenant";
 import { Actor } from "./actor";
-import { createInspection, updateInspection, InspectionRecord } from "./inspectionStore";
+import { createInspection, updateInspection, getInspection, InspectionRecord } from "./inspectionStore";
 import { createSignature, listSignatures, voidSignature, computeInspectionContentHash } from "./signatureStore";
 
 if (!process.env.TEST_DATABASE_URL) {
@@ -320,5 +320,45 @@ if (!process.env.TEST_DATABASE_URL) {
       await pool.query(`REVOKE ALL ON inspection_signatures FROM ${probeRole}`);
       await pool.query(`DROP ROLE IF EXISTS ${probeRole}`);
     }
+  });
+
+  test("6: Part B — checklist photos round-trip through Postgres; base64 stripped server-side; photo change voids, uri swap does not", async () => {
+    // (a) A client that WRONGLY includes base64 bytes in a checklist photo.
+    const insp = await createInspection(actorA, signableInput(siteA, {
+      name: "Checklist photo probe",
+      results: [{ item: "Fire extinguisher tag", passed: true, notes: "tagged", na: false,
+        photos: [{ id: "cp1", uri: "/uploads/xyz-tag.jpg", kind: "original", caption: "tag", base64: "PRETEND-IMAGE-BYTES" }] }],
+    }));
+    const readBack = await getInspection(actorA, insp.id);
+    assert.ok(readBack, "created inspection should read back from Postgres");
+    const photos = readBack!.results[0].photos as Array<Record<string, unknown>>;
+    assert.equal(photos.length, 1);
+    assert.equal("base64" in photos[0], false, "base64 must NOT be persisted into results_json (server-side strip on the DB path)");
+    assert.equal(photos[0].id, "cp1", "photo identity survives the JSONB round-trip");
+    assert.equal(photos[0].uri, "/uploads/xyz-tag.jpg");
+    assert.equal(photos[0].kind, "original");
+
+    // (b) Signable: adding a photo to a signed inspection auto-voids (DB path).
+    const sig = await sign(actorA, readBack!);
+    await updateInspection(actorA, insp.id, {
+      results: [{ ...readBack!.results[0], photos: [...photos, { id: "cp2", uri: "/uploads/xyz-2.jpg", kind: "original", base64: "MORE-BYTES" }] }],
+    });
+    const afterAdd = await listSignatures(actorA, insp.id);
+    assert.equal(afterAdd.find((s) => s.id === sig.id)?.status, "voided", "adding a checklist photo must auto-void the signature (DB path)");
+
+    // (c) Anti-false-void: a local->remote uri swap on the SAME photo identity must NOT void.
+    const insp2 = await createInspection(actorA, signableInput(siteA, {
+      name: "uri swap probe",
+      results: [{ item: "Edge protection", passed: true, notes: "", na: false, photos: [{ id: "u1", uri: "file:///local.jpg", kind: "original" }] }],
+    }));
+    const sig2 = await sign(actorA, (await getInspection(actorA, insp2.id))!);
+    await updateInspection(actorA, insp2.id, {
+      results: [{ item: "Edge protection", passed: true, notes: "", na: false, photos: [{ id: "u1", uri: "/uploads/u1.jpg", kind: "original" }] }],
+    });
+    const afterSwap = await listSignatures(actorA, insp2.id);
+    assert.equal(afterSwap.find((s) => s.id === sig2.id)?.status, "active", "local->remote uri swap must NOT void (no false void) — DB path");
+
+    await withTenant({ companyId: companyA }, (client) =>
+      client.query(`DELETE FROM inspection_signatures WHERE inspection_id = ANY($1)`, [[insp.id, insp2.id]]));
   });
 }

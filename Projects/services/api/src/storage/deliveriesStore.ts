@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getPgPool } from "./postgres";
 import { Actor, isCrew } from "./actor";
+import { withTenant } from "./tenant";
 
 export type DeliveryRecord = {
   id: string;
@@ -89,10 +90,10 @@ export async function listDeliveries(actor: Actor, siteId?: string): Promise<Del
     params.push(siteId);
     conditions.push(`site_id = $${params.length}`);
   }
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `SELECT * FROM material_deliveries WHERE ${conditions.join(" AND ")} ORDER BY date DESC`,
     params
-  );
+  ));
   return result.rows.map(mapRow);
 }
 
@@ -111,12 +112,12 @@ export async function createDelivery(
     memory.set(record.id, record);
     return record;
   }
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `INSERT INTO material_deliveries (id, owner_email, company_id, site_id, date, supplier, items_json, quantity, notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING *`,
     [record.id, actor.email, actor.companyId, payload.siteId, payload.date, payload.supplier,
      JSON.stringify(payload.items), payload.quantity, payload.notes]
-  );
+  ));
   return mapRow(result.rows[0]);
 }
 
@@ -132,25 +133,27 @@ export async function updateDelivery(
     memory.set(id, updated);
     return updated;
   }
-  const check = await getPgPool().query<{ owner_email: string; company_id: string }>(
-    `SELECT owner_email, company_id FROM material_deliveries WHERE id = $1 AND deleted_at IS NULL LIMIT 1`, [id]
-  );
-  if (check.rowCount === 0 || !canAccess(actor, check.rows[0].company_id, check.rows[0].owner_email)) return null;
-  const result = await getPgPool().query(
-    `UPDATE material_deliveries SET
-       date     = COALESCE($2, date),
-       supplier = COALESCE($3, supplier),
-       items_json = COALESCE($4::jsonb, items_json),
-       quantity = COALESCE($5, quantity),
-       notes    = COALESCE($6, notes),
-       updated_at = NOW()
-     WHERE id = $1 AND company_id = $7 RETURNING *`,
-    [id, patch.date ?? null, patch.supplier ?? null,
-     patch.items ? JSON.stringify(patch.items) : null,
-     patch.quantity ?? null, patch.notes ?? null, actor.companyId]
-  );
-  if (result.rowCount === 0) return null;
-  return mapRow(result.rows[0]);
+  return withTenant(actor, async (client) => {
+    const check = await client.query<{ owner_email: string; company_id: string }>(
+      `SELECT owner_email, company_id FROM material_deliveries WHERE id = $1 AND deleted_at IS NULL LIMIT 1`, [id]
+    );
+    if (check.rowCount === 0 || !canAccess(actor, check.rows[0].company_id, check.rows[0].owner_email)) return null;
+    const result = await client.query(
+      `UPDATE material_deliveries SET
+         date     = COALESCE($2, date),
+         supplier = COALESCE($3, supplier),
+         items_json = COALESCE($4::jsonb, items_json),
+         quantity = COALESCE($5, quantity),
+         notes    = COALESCE($6, notes),
+         updated_at = NOW()
+       WHERE id = $1 AND company_id = $7 RETURNING *`,
+      [id, patch.date ?? null, patch.supplier ?? null,
+       patch.items ? JSON.stringify(patch.items) : null,
+       patch.quantity ?? null, patch.notes ?? null, actor.companyId]
+    );
+    if (result.rowCount === 0) return null;
+    return mapRow(result.rows[0]);
+  });
 }
 
 export async function deleteDelivery(actor: Actor, id: string): Promise<boolean> {
@@ -162,8 +165,8 @@ export async function deleteDelivery(actor: Actor, id: string): Promise<boolean>
   }
   const conditions = isCrew(actor) ? `id = $1 AND company_id = $2 AND owner_email = $3` : `id = $1 AND company_id = $2`;
   const params = isCrew(actor) ? [id, actor.companyId, actor.email] : [id, actor.companyId];
-  const result = await getPgPool().query(
+  const result = await withTenant(actor, (client) => client.query(
     `UPDATE material_deliveries SET deleted_at = NOW() WHERE ${conditions} AND deleted_at IS NULL`, params
-  );
+  ));
   return (result.rowCount ?? 0) > 0;
 }

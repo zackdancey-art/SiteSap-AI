@@ -146,6 +146,7 @@ function RootLayoutNav() {
       />
       <Stack.Screen name="invite" options={{ headerShown: false }} />
       <Stack.Screen name="site-invite" options={{ headerShown: false }} />
+      <Stack.Screen name="company-invite" options={{ headerShown: false }} />
       <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       <Stack.Screen name="crew/[siteId]" options={{ headerShown: false }} />
       <Stack.Screen name="incidents/[siteId]" options={{ headerShown: false }} />

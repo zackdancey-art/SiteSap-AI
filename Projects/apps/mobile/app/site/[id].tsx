@@ -19,6 +19,7 @@ import Colors from "@/constants/colors";
 import { DailyEntry, SiteMember } from "@/lib/types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import { BackButton } from "@/components/BackButton";
 
 function EntryCard({ entry }: { entry: DailyEntry }) {
   const dateObj = new Date(entry.date + "T00:00:00");
@@ -192,9 +193,7 @@ export default function SiteDetailScreen() {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + webTopInset + 8 }]}>
         <View style={styles.headerNav}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={22} color={Colors.white} />
-          </Pressable>
+          <BackButton tone="onNavy" glyph="arrow-back" size={22} style={styles.backButton} />
           <View style={styles.headerActions}>
             {canManage && (
               <Pressable

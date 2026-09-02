@@ -11,17 +11,31 @@ let _client: OpenAI | null = null;
 type RecordedOpenAICall = { input: unknown };
 const recordedCalls: RecordedOpenAICall[] = [];
 
+// X2 runtime-fallback tests: queue an error the next test-client call will throw,
+// so we can prove the route degrades gracefully for a reachable-but-erroring API
+// (401/500/timeout) without a real network call. Consumed once, then cleared.
+let _nextErrorForTests: unknown = null;
+export function setOpenAINextErrorForTests(err: unknown): void {
+  _nextErrorForTests = err;
+}
+
 export function getRecordedOpenAICallsForTests(): RecordedOpenAICall[] {
   return recordedCalls;
 }
 export function resetOpenAIRecordingForTests(): void {
   recordedCalls.length = 0;
+  _nextErrorForTests = null;
 }
 
 function makeTestClient(): OpenAI {
   return {
     responses: {
       create: async (args: { input: unknown }) => {
+        if (_nextErrorForTests) {
+          const err = _nextErrorForTests;
+          _nextErrorForTests = null;
+          throw err;
+        }
         recordedCalls.push({ input: args?.input });
         return {
           output_text: JSON.stringify({

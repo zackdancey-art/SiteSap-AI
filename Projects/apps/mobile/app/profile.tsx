@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -14,15 +14,28 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
 import { DEFAULT_PROFILE, LocalProfile, getLocalProfile, saveLocalProfile } from "@/lib/profile-store";
+import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 
 export default function ProfileScreen() {
   const { user, updateProfile } = useAuth();
   const [name, setName] = useState(user?.name ?? "");
   const [profile, setProfile] = useState<LocalProfile>(DEFAULT_PROFILE);
   const [saving, setSaving] = useState(false);
+  // Snapshots of every editable value as loaded, so ANY unsaved edit (name or
+  // any local-profile field — job title, company, phone, emergency contact,
+  // avatar) is detected. The profile object loads async, so its snapshot is
+  // captured inside the load effect.
+  const initialNameRef = useRef((user?.name ?? "").trim());
+  const initialProfileRef = useRef<LocalProfile>(DEFAULT_PROFILE);
+  const isDirty =
+    name.trim() !== initialNameRef.current ||
+    JSON.stringify(profile) !== JSON.stringify(initialProfileRef.current);
+  useUnsavedChangesGuard(isDirty);
 
   useEffect(() => {
-    getLocalProfile().then(setProfile).catch(() => setProfile(DEFAULT_PROFILE));
+    getLocalProfile()
+      .then((p) => { setProfile(p); initialProfileRef.current = p; })
+      .catch(() => { setProfile(DEFAULT_PROFILE); initialProfileRef.current = DEFAULT_PROFILE; });
   }, []);
 
   const pickAvatar = async () => {
@@ -46,6 +59,8 @@ export default function ProfileScreen() {
     try {
       await updateProfile({ name: name.trim() });
       await saveLocalProfile(profile);
+      initialNameRef.current = name.trim();
+      initialProfileRef.current = profile;
       Alert.alert("Saved", "Your profile has been updated.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Profile update failed.";

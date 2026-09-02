@@ -3,20 +3,28 @@ import {
   View, Text, Pressable, ScrollView, StyleSheet, Alert,
   ActivityIndicator, TextInput, Modal,
 } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Svg, { Path } from "react-native-svg";
+import * as ImagePicker from "expo-image-picker";
+import * as Crypto from "expo-crypto";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import Colors from "@/constants/colors";
 import { formatDate } from "@/lib/format";
-import { buildHtmlDocument, exportReportDocument, escapeHtml } from "@/lib/export-utils";
+import { buildHtmlDocument, exportReportDocument, escapeHtml, buildAnnotationOverlayHtml } from "@/lib/export-utils";
 import { EmptyState } from "@/components/EmptyState";
 import { SignaturePad } from "@/components/SignaturePad";
+import { AnnotatedImage } from "@/components/AnnotatedImage";
+import { PhotoAnnotator } from "@/components/PhotoAnnotator";
 import { getApiBaseUrl } from "@/lib/api-base-url";
-import { useData } from "@/lib/data-context";
+import { useData, uploadPhotos } from "@/lib/data-context";
+import { hydratePhotos, savePhotoPayloads, stripPhotoArray } from "@/lib/photo-payload-store";
+import { ScreenHeader } from "@/components/ScreenHeader";
+import { AnnotationVector, Photo } from "@/lib/types";
 
-type InspectionResult = { item: string; passed: boolean | null; notes: string; na?: boolean };
+type InspectionResult = { item: string; passed: boolean | null; notes: string; na?: boolean; photos?: Photo[] };
 type InspectionDefect = { description: string; severity: string; owner: string; dueDate: string | null; status: string };
 type Inspection = {
   id: string; siteId: string; name: string; date: string;
@@ -71,7 +79,17 @@ function buildInspectionHtml(insp: Inspection, siteName: string, client: string,
         : r.passed === true ? `<span style="color:#166534;font-weight:700;">Pass</span>`
         : r.passed === false ? `<span style="color:#991b1b;font-weight:700;">Fail</span>`
         : `<span style="color:#6f8095;">—</span>`;
-      return `<tr><td>${escapeHtml(r.item)}</td><td>${result}</td><td>${escapeHtml(r.notes || "")}</td></tr>`;
+      const photos = r.photos ?? [];
+      const photosHtml = photos.length
+        ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">${photos
+            .map((p) =>
+              p.base64
+                ? `<div style="position:relative;width:96px;height:96px;border-radius:8px;overflow:hidden;flex-shrink:0;"><img src="data:${escapeHtml(p.mimeType || "image/jpeg")};base64,${p.base64}" style="width:100%;height:100%;object-fit:cover;display:block;" />${buildAnnotationOverlayHtml(p)}</div>`
+                : ""
+            )
+            .join("")}</div>`
+        : "";
+      return `<tr><td>${escapeHtml(r.item)}</td><td>${result}</td><td>${escapeHtml(r.notes || "")}${photosHtml}</td></tr>`;
     })
     .join("");
 
@@ -186,6 +204,48 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function normalizeImageMimeType(_mimeType?: string | null) {
+  return "image/jpeg";
+}
+
+function extractGpsFromExif(exif: Record<string, unknown> | undefined | null): { latitude?: number; longitude?: number } {
+  if (!exif) return {};
+  const lat = exif["GPSLatitude"] ?? exif["GPS Latitude"];
+  const lon = exif["GPSLongitude"] ?? exif["GPS Longitude"];
+  const latRef = String(exif["GPSLatitudeRef"] ?? "N");
+  const lonRef = String(exif["GPSLongitudeRef"] ?? "E");
+  if (typeof lat !== "number" || typeof lon !== "number") return {};
+  return {
+    latitude: latRef === "S" ? -lat : lat,
+    longitude: lonRef === "W" ? -lon : lon,
+  };
+}
+
+/** Mirrors new-entry.tsx's createStoredPhoto: camera/library asset → compressed, base64-carrying Photo. */
+async function createStoredPhoto(asset: ImagePicker.ImagePickerAsset): Promise<Photo> {
+  const manipulated = await manipulateAsync(
+    asset.uri,
+    [],
+    {
+      compress: 0.55,
+      format: SaveFormat.JPEG,
+      base64: true,
+    }
+  );
+
+  const gps = extractGpsFromExif(asset.exif as Record<string, unknown> | undefined | null);
+
+  return {
+    id: Crypto.randomUUID(),
+    uri: manipulated.uri,
+    caption: "",
+    timestamp: new Date().toISOString(),
+    base64: manipulated.base64 || asset.base64 || "",
+    mimeType: normalizeImageMimeType(asset.mimeType),
+    ...gps,
+  };
+}
+
 const DEFAULT_ITEMS = [
   "PPE worn by all workers",
   "Site boundary secured",
@@ -249,6 +309,11 @@ export default function InspectionsScreen() {
   const [showActive, setShowActive] = useState<Inspection | null>(null);
   const [signatures, setSignatures] = useState<Signature[]>([]);
 
+  // Per-checklist-item photo evidence
+  const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
+  const [pickingPhotoIdx, setPickingPhotoIdx] = useState<number | null>(null);
+  const [annotatingTarget, setAnnotatingTarget] = useState<{ idx: number; photo: Photo } | null>(null);
+
   // New inspection form state
   const [inspName, setInspName] = useState("Safety Inspection");
   const [inspDate, setInspDate] = useState(new Date().toISOString().split("T")[0]);
@@ -279,7 +344,17 @@ export default function InspectionsScreen() {
         apiJson<{ inspections: Inspection[] }>(`/api/inspections?siteId=${siteId}`),
         apiJson<{ templates: Template[] }>(`/api/inspection-templates`),
       ]);
-      setInspections(inspData.inspections);
+      // Re-attach base64 from the local payload store (same source hydrateEntriesWithPhotoPayloads
+      // reads) so checklist photos are displayable/exportable, matching the entry-photo flow.
+      const hydratedInspections = await Promise.all(
+        inspData.inspections.map(async (insp) => ({
+          ...insp,
+          results: await Promise.all(
+            insp.results.map(async (r) => ({ ...r, photos: await hydratePhotos(r.photos ?? []) }))
+          ),
+        }))
+      );
+      setInspections(hydratedInspections);
       setTemplates(tplData.templates);
     } catch (err) {
       console.error(err);
@@ -362,13 +437,32 @@ export default function InspectionsScreen() {
    *  content auto-voids signatures server-side, so surface that to the user. */
   const patchActive = async (id: string, patch: Record<string, unknown>) => {
     const prevActiveSigIds = new Set(signatures.filter((s) => s.status === "active").map((s) => s.id));
+    // Base64 must never reach results_json — strip it (originals AND annotation derivatives)
+    // on a deep copy before serializing. The local `showActive`/`inspections` state, updated
+    // separately via updateActiveLocal, is untouched and keeps base64 for display/export.
+    const outgoingPatch = patch.results
+      ? {
+          ...patch,
+          results: (patch.results as InspectionResult[]).map((r) => ({
+            ...r,
+            photos: stripPhotoArray(r.photos ?? []),
+          })),
+        }
+      : patch;
     try {
       const { inspection } = await apiJson<{ inspection: Inspection }>(`/api/inspections/${id}`, {
         method: "PATCH",
-        body: JSON.stringify(patch),
+        body: JSON.stringify(outgoingPatch),
       });
-      setShowActive((prev) => (prev && prev.id === id ? inspection : prev));
-      setInspections((prev) => prev.map((i) => (i.id === id ? inspection : i)));
+      // The server echoes back the stripped (base64-less) photos — re-hydrate from the local
+      // payload store, same as data-context's hydrateEntriesWithPhotoPayloads, so thumbnails
+      // don't disappear from the screen after every save.
+      const hydratedResults = await Promise.all(
+        inspection.results.map(async (r) => ({ ...r, photos: await hydratePhotos(r.photos ?? []) }))
+      );
+      const hydratedInspection: Inspection = { ...inspection, results: hydratedResults };
+      setShowActive((prev) => (prev && prev.id === id ? hydratedInspection : prev));
+      setInspections((prev) => prev.map((i) => (i.id === id ? hydratedInspection : i)));
       const newSigs = await loadSignatures(id);
       const stillActive = new Set(newSigs.filter((s) => s.status === "active").map((s) => s.id));
       const flipped = Array.from(prevActiveSigIds).some((sid) => !stillActive.has(sid));
@@ -402,6 +496,102 @@ export default function InspectionsScreen() {
     if (!showActive) return;
     const updated = showActive.results.map((r, i) => (i === idx ? { ...r, notes } : r));
     updateActiveLocal({ results: updated });
+  };
+
+  /** Captures/picks a photo for a checklist item, uploads it via the shared company-bound
+   *  upload flow (same path as new-entry), persists its base64 locally, then appends it
+   *  (with base64, for on-screen display) to that item's photos and PATCHes. */
+  const handleAddResultPhoto = async (idx: number, source: "camera" | "gallery") => {
+    if (!showActive || pickingPhotoIdx !== null) return;
+    setPickingPhotoIdx(idx);
+    try {
+      let asset: ImagePicker.ImagePickerAsset | undefined;
+      if (source === "camera") {
+        if (!cameraPermission?.granted) {
+          const result = await requestCameraPermission();
+          if (!result.granted) {
+            Alert.alert("Permission Required", "Camera access is needed to take photos.");
+            return;
+          }
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ["images"],
+          quality: 0.35,
+          base64: true,
+          exif: true,
+          allowsEditing: false,
+        });
+        if (!result.canceled) asset = result.assets[0];
+      } else {
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ["images"],
+          quality: 0.35,
+          base64: true,
+        });
+        if (!result.canceled) asset = result.assets[0];
+      }
+      if (!asset) return;
+
+      const photo = await createStoredPhoto(asset);
+      const [uploaded] = await uploadPhotos([photo]);
+      await savePhotoPayloads([uploaded]);
+
+      const updated = showActive.results.map((r, i) =>
+        i === idx ? { ...r, photos: [...(r.photos ?? []), uploaded] } : r
+      );
+      updateActiveLocal({ results: updated });
+      await patchActive(showActive.id, { results: updated });
+    } catch (err) {
+      console.error("Checklist photo error:", err);
+      Alert.alert("Error", "Failed to add photo.");
+    } finally {
+      setPickingPhotoIdx(null);
+    }
+  };
+
+  const handleRemoveResultPhoto = (idx: number, photoId: string) => {
+    if (!showActive) return;
+    const updated = showActive.results.map((r, i) =>
+      i === idx ? { ...r, photos: (r.photos ?? []).filter((p) => p.id !== photoId) } : r
+    );
+    updateActiveLocal({ results: updated });
+    void patchActive(showActive.id, { results: updated });
+  };
+
+  /** Appends an annotated derivative of an original checklist photo — no new raster, no new
+   *  upload; reuses the original's uri/base64/storageKey, exactly like new-entry's
+   *  handleSaveAnnotation, but scoped to the checklist item that owns the source photo. */
+  const handleSaveResultAnnotation = async (vector: AnnotationVector) => {
+    if (!showActive || !annotatingTarget) return;
+    const { idx, photo: sourcePhoto } = annotatingTarget;
+    const sourceId = sourcePhoto.id;
+    const currentPhotos = showActive.results[idx]?.photos ?? [];
+    const withOriginalMarked = currentPhotos.map((p) =>
+      p.id === sourceId && !p.kind ? { ...p, kind: "original" as const } : p
+    );
+    const source = withOriginalMarked.find((p) => p.id === sourceId) ?? sourcePhoto;
+    const derivative: Photo = {
+      id: Crypto.randomUUID(),
+      uri: source.uri,
+      base64: source.base64,
+      mimeType: source.mimeType,
+      caption: source.caption,
+      timestamp: new Date().toISOString(),
+      latitude: source.latitude,
+      longitude: source.longitude,
+      storagePath: source.storagePath,
+      storageKey: source.storageKey,
+      kind: "annotated",
+      derivedFromId: source.id,
+      annotationVector: vector,
+    };
+    const nextPhotos = [...withOriginalMarked, derivative];
+    await savePhotoPayloads([derivative]);
+
+    const updatedResults = showActive.results.map((r, i) => (i === idx ? { ...r, photos: nextPhotos } : r));
+    updateActiveLocal({ results: updatedResults });
+    setAnnotatingTarget(null);
+    await patchActive(showActive.id, { results: updatedResults });
   };
 
   const updateDefectLocal = (idx: number, patch: Partial<InspectionDefect>) => {
@@ -497,19 +687,24 @@ export default function InspectionsScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Inspections</Text>
-          {site && <Text style={styles.headerSub}>{site.name}</Text>}
-        </View>
-        <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
-          <Ionicons name="add" size={22} color={Colors.white} />
-        </Pressable>
-      </View>
+    <View style={styles.container}>
+      <ScreenHeader
+        borderWidth={1}
+        variant="light"
+        title="Inspections"
+        subtitle={site?.name}
+        paddingBottom={16}
+        paddingTopExtra={16}
+        borderColor={Colors.surfaceSecondary}
+        backButtonStyle={styles.backBtn}
+        titleStyle={styles.headerTitle}
+        subtitleStyle={styles.headerSub}
+        right={
+          <Pressable onPress={() => setShowForm(true)} style={styles.addBtn}>
+            <Ionicons name="add" size={22} color={Colors.white} />
+          </Pressable>
+        }
+      />
 
       {loading
         ? <ActivityIndicator style={{ marginTop: 40 }} />
@@ -706,6 +901,60 @@ export default function InspectionsScreen() {
                     placeholderTextColor={Colors.textTertiary}
                     multiline
                   />
+                  {!!(result.photos && result.photos.length > 0) && (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.resultPhotoScroll}
+                      contentContainerStyle={styles.resultPhotoScrollContent}
+                    >
+                      {result.photos!.map((photo) => (
+                        <View key={photo.id} style={styles.resultPhotoThumb}>
+                          <AnnotatedImage photo={photo} />
+                          {photo.kind === "annotated" ? (
+                            <View style={styles.photoBadge}>
+                              <Text style={styles.photoBadgeText}>Annotated</Text>
+                            </View>
+                          ) : (
+                            <Pressable
+                              style={styles.photoAnnotate}
+                              onPress={() => setAnnotatingTarget({ idx, photo })}
+                            >
+                              <Ionicons name="brush-outline" size={12} color={Colors.white} />
+                            </Pressable>
+                          )}
+                          <Pressable
+                            style={styles.photoRemove}
+                            onPress={() => handleRemoveResultPhoto(idx, photo.id)}
+                          >
+                            <Ionicons name="close" size={12} color={Colors.white} />
+                          </Pressable>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  )}
+                  <View style={styles.resultPhotoActions}>
+                    <Pressable
+                      style={[styles.resultPhotoBtn, pickingPhotoIdx !== null && styles.resultPhotoBtnDisabled]}
+                      onPress={() => handleAddResultPhoto(idx, "camera")}
+                      disabled={pickingPhotoIdx !== null}
+                    >
+                      {pickingPhotoIdx === idx ? (
+                        <ActivityIndicator size="small" color={Colors.primary} />
+                      ) : (
+                        <Ionicons name="camera-outline" size={16} color={Colors.primary} />
+                      )}
+                      <Text style={styles.resultPhotoBtnText}>Photo</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.resultPhotoBtn, pickingPhotoIdx !== null && styles.resultPhotoBtnDisabled]}
+                      onPress={() => handleAddResultPhoto(idx, "gallery")}
+                      disabled={pickingPhotoIdx !== null}
+                    >
+                      <Ionicons name="images-outline" size={16} color={Colors.primary} />
+                      <Text style={styles.resultPhotoBtnText}>Gallery</Text>
+                    </Pressable>
+                  </View>
                 </View>
               ))}
 
@@ -847,6 +1096,22 @@ export default function InspectionsScreen() {
               <View style={{ height: 24 }} />
             </ScrollView>
 
+            {/* Checklist photo annotation modal */}
+            <Modal
+              visible={!!annotatingTarget}
+              animationType="slide"
+              presentationStyle="pageSheet"
+              onRequestClose={() => setAnnotatingTarget(null)}
+            >
+              {annotatingTarget && (
+                <PhotoAnnotator
+                  photo={annotatingTarget.photo}
+                  onSave={(vector) => void handleSaveResultAnnotation(vector)}
+                  onCancel={() => setAnnotatingTarget(null)}
+                />
+              )}
+            </Modal>
+
             {/* Add Signature modal */}
             <Modal visible={showSignModal} animationType="slide" transparent>
               <View style={styles.sigModalOverlay}>
@@ -927,7 +1192,6 @@ export default function InspectionsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: { flexDirection: "row", alignItems: "center", padding: 16, gap: 12, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.surfaceSecondary },
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 17, fontWeight: "700", color: Colors.text },
   headerSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 1 },
@@ -977,6 +1241,18 @@ const styles = StyleSheet.create({
   resultBtnFail: { backgroundColor: Colors.error, borderColor: Colors.error },
   resultBtnNa: { backgroundColor: Colors.textTertiary, borderColor: Colors.textTertiary },
   notesInput: { borderWidth: 1, borderColor: Colors.border, borderRadius: 10, padding: 10, fontSize: 13, color: Colors.text, backgroundColor: Colors.surface, minHeight: 40 },
+
+  resultPhotoScroll: { marginTop: 2 },
+  resultPhotoScrollContent: { gap: 8, paddingRight: 4 },
+  resultPhotoThumb: { width: 72, height: 72, borderRadius: 10, overflow: "hidden", position: "relative" },
+  photoBadge: { position: "absolute", bottom: 4, left: 4, right: 4, paddingVertical: 2, borderRadius: 6, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center" },
+  photoBadgeText: { fontSize: 8, fontWeight: "700", color: Colors.white },
+  photoAnnotate: { position: "absolute", bottom: 4, left: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" },
+  photoRemove: { position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" },
+  resultPhotoActions: { flexDirection: "row", gap: 8 },
+  resultPhotoBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1, borderColor: Colors.border, borderRadius: 10, paddingVertical: 10, backgroundColor: Colors.surface },
+  resultPhotoBtnDisabled: { opacity: 0.5 },
+  resultPhotoBtnText: { fontSize: 12, fontWeight: "700", color: Colors.primary },
 
   defectCard: { backgroundColor: Colors.background, borderRadius: 12, padding: 14, gap: 10 },
   miniChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },

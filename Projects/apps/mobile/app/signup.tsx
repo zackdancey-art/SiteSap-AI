@@ -17,6 +17,7 @@ import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { apiRequest } from "@/lib/query-client";
+import { BackButton, goBackSafe } from "@/components/BackButton";
 
 type PrefixOption = {
   label: string;
@@ -159,7 +160,8 @@ export default function SignUpScreen() {
   const webTopInset = Platform.OS === "web" ? 67 : 0;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}> 
+    <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+      <BackButton tone="onLight" homeFallback="/login" style={{ position: "absolute", top: insets.top + 8, left: 12, zIndex: 10 }} />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
           <View style={styles.logoSection}>
@@ -349,7 +351,7 @@ export default function SignUpScreen() {
 
           <View style={[styles.footer, { paddingBottom: insets.bottom + (Platform.OS === "web" ? 34 : 16) }]}>
             <Text style={styles.footerText}>Already have an account?</Text>
-            <Pressable onPress={() => router.replace("/login")}>
+            <Pressable onPress={() => goBackSafe("/login")}>
               <Text style={styles.linkText}>Sign In</Text>
             </Pressable>
           </View>

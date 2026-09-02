@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node ./dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && NODE_ENV=test node --require ./dist/test-setup.js --test dist/**/*.test.js",
+    "test": "rm -rf dist tsconfig.tsbuildinfo && pnpm run build && NODE_ENV=test node --require ./dist/test-setup.js --test $(find dist -name '*.test.js')",
     "load-test": "NODE_ENV=test RATE_LIMIT_DISABLE=1 ts-node-dev --transpile-only --exit-child load-test.ts",
     "teardown-loadtest": "ts-node-dev --transpile-only --exit-child teardown-loadtest.ts"
   },

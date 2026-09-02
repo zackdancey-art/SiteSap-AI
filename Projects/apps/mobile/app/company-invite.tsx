@@ -10,28 +10,22 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
-import { useData } from "@/lib/data-context";
+import { router } from "expo-router";
+import { useData, CompanyInviteResult } from "@/lib/data-context";
 import { useAuth } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
-import { InviteResult } from "@/lib/types";
 import { ScreenHeader } from "@/components/ScreenHeader";
 
-type Role = "crew" | "manager";
+type Role = "manager" | "viewer" | "crew";
 
-export default function SiteInviteScreen() {
-  const { siteId, siteName } = useLocalSearchParams<{ siteId?: string; siteName?: string }>();
-  const { inviteCrewMembers } = useData();
+export default function CompanyInviteScreen() {
   const { user } = useAuth();
-
-  // Only owners may invite as manager — everyone else can only invite crew.
-  const isOwner = user?.companyRole === "owner";
-  const availableRoles: Role[] = isOwner ? ["crew", "manager"] : ["crew"];
+  const { inviteCompanyMembers } = useData();
 
   const [emailsText, setEmailsText] = useState("");
   const [role, setRole] = useState<Role>("crew");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<InviteResult[] | null>(null);
+  const [results, setResults] = useState<CompanyInviteResult[] | null>(null);
 
   const parseEmails = (raw: string): string[] =>
     raw
@@ -40,7 +34,6 @@ export default function SiteInviteScreen() {
       .filter((e) => e.includes("@"));
 
   const handleSend = async () => {
-    if (!siteId) return;
     const emails = parseEmails(emailsText);
     if (emails.length === 0) {
       Alert.alert("No emails", "Enter at least one valid email address.");
@@ -48,7 +41,7 @@ export default function SiteInviteScreen() {
     }
     setLoading(true);
     try {
-      const res = await inviteCrewMembers(siteId, emails, isOwner ? role : "crew");
+      const res = await inviteCompanyMembers(emails, role);
       setResults(res);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -58,24 +51,43 @@ export default function SiteInviteScreen() {
     }
   };
 
-  const statusIcon = (status: InviteResult["status"]) => {
+  const statusIcon = (status: CompanyInviteResult["status"]) => {
     if (status === "sent") return <Ionicons name="mail-outline" size={16} color={Colors.success} />;
-    if (status === "resent") return <Ionicons name="refresh-outline" size={16} color={Colors.warning} />;
-    return <Ionicons name="checkmark-circle-outline" size={16} color={Colors.textTertiary} />;
+    return <Ionicons name="alert-circle-outline" size={16} color={Colors.error} />;
   };
 
-  const statusLabel = (status: InviteResult["status"]) => {
+  const statusLabel = (status: CompanyInviteResult["status"]) => {
     if (status === "sent") return "Invite sent";
-    if (status === "resent") return "Invite resent";
-    return "Already a member";
+    return "Failed to send";
   };
+
+  // Screen self-guards regardless of whether the settings entry point is hidden.
+  if (user?.companyRole !== "owner") {
+    return (
+      <View style={styles.container}>
+        <ScreenHeader
+          variant="navy"
+          title="Invite Team Member"
+          backGlyph="arrow-back"
+          backSize={22}
+          paddingBottom={16}
+          backButtonStyle={styles.backButton}
+          titleStyle={styles.headerTitle}
+          subtitleStyle={styles.headerSub}
+        />
+        <View style={styles.deniedWrap}>
+          <Ionicons name="lock-closed-outline" size={32} color={Colors.textTertiary} />
+          <Text style={styles.deniedText}>Only owners can invite company members.</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <ScreenHeader
         variant="navy"
-        title="Invite Crew"
-        subtitle={siteName || undefined}
+        title="Invite Team Member"
         backGlyph="arrow-back"
         backSize={22}
         paddingBottom={16}
@@ -108,7 +120,7 @@ export default function SiteInviteScreen() {
 
             <Text style={[styles.label, { marginTop: 24 }]}>Role</Text>
             <View style={styles.roleRow}>
-              {availableRoles.map((r) => (
+              {(["manager", "viewer", "crew"] as Role[]).map((r) => (
                 <Pressable
                   key={r}
                   style={[styles.roleChip, role === r && styles.roleChipActive]}
@@ -185,6 +197,19 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: "rgba(255,255,255,0.6)",
     marginTop: 2,
+  },
+  deniedWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingHorizontal: 32,
+  },
+  deniedText: {
+    fontSize: 15,
+    fontFamily: "Inter_500Medium",
+    color: Colors.textSecondary,
+    textAlign: "center",
   },
   scroll: {
     flex: 1,

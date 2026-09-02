@@ -25,6 +25,7 @@ import { AddressSuggestion, fetchAddressSuggestions } from "@/lib/geo";
 import { saveDraft, loadDraft, clearDraft } from "@/lib/draft-store";
 import { PhotoAnnotator } from "@/components/PhotoAnnotator";
 import { AnnotatedImage } from "@/components/AnnotatedImage";
+import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 
 const DEFAULT_HOUR_START = 7;
 const DEFAULT_HOUR_END = 17;
@@ -43,6 +44,25 @@ function buildHourlyWindow(start: number, end: number, existing: HourlyNote[]): 
 }
 
 type PhotoWithBase64 = Photo & { base64?: string | null };
+
+type EntryDirtySnapshot = {
+  date: string;
+  weather: string;
+  locationAddress: string;
+  crewCount: string;
+  notes: string;
+  notesMode: "free" | "hourly";
+  hourlyNotesJson: string;
+  photosJson: string;
+};
+
+function snapshotPhotos(photos: PhotoWithBase64[]): string {
+  return JSON.stringify(photos.map((p) => p.id));
+}
+
+function snapshotHourlyNotes(hourlyNotes: HourlyNote[]): string {
+  return JSON.stringify(hourlyNotes.map((h) => ({ hour: h.hour, note: h.note })));
+}
 
 function normalizeImageMimeType(_mimeType?: string | null) {
   return "image/jpeg";
@@ -121,6 +141,20 @@ export default function NewEntryScreen() {
 
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
 
+  // Stable snapshot of the form's starting values, used to detect unsaved changes.
+  // For a new entry this is the blank/default state; for an existing entry it is
+  // populated below, inside the same effect that loads the entry's fields.
+  const initialSnapshotRef = useRef<EntryDirtySnapshot>({
+    date: existingEntry?.date ?? new Date().toISOString().split("T")[0],
+    weather: "",
+    locationAddress: "",
+    crewCount: "",
+    notes: "",
+    notesMode: "free",
+    hourlyNotesJson: snapshotHourlyNotes(buildHourlyWindow(DEFAULT_HOUR_START, DEFAULT_HOUR_END, [])),
+    photosJson: snapshotPhotos([]),
+  });
+
   // Populate form when editing an existing entry
   useEffect(() => {
     if (!existingEntry) return;
@@ -131,13 +165,40 @@ export default function NewEntryScreen() {
     setNotes(existingEntry.notes);
     setPhotos(existingEntry.photos as PhotoWithBase64[]);
     setNotesMode(existingEntry.notesMode ?? "free");
+    let snapshotHourStart = DEFAULT_HOUR_START;
+    let snapshotHourEnd = DEFAULT_HOUR_END;
+    let snapshotHourlySource: HourlyNote[] = [];
     if (existingEntry.hourlyNotes && existingEntry.hourlyNotes.length > 0) {
       const hours = existingEntry.hourlyNotes.map((h) => h.hour);
-      setHourStart(Math.min(...hours));
-      setHourEnd(Math.max(...hours));
+      snapshotHourStart = Math.min(...hours);
+      snapshotHourEnd = Math.max(...hours);
+      snapshotHourlySource = existingEntry.hourlyNotes;
+      setHourStart(snapshotHourStart);
+      setHourEnd(snapshotHourEnd);
       setHourlyNotes(existingEntry.hourlyNotes);
     }
+    initialSnapshotRef.current = {
+      date: existingEntry.date,
+      weather: existingEntry.weather,
+      locationAddress: existingEntry.locationAddress ?? "",
+      crewCount: existingEntry.crewCount,
+      notes: existingEntry.notes,
+      notesMode: existingEntry.notesMode ?? "free",
+      hourlyNotesJson: snapshotHourlyNotes(buildHourlyWindow(snapshotHourStart, snapshotHourEnd, snapshotHourlySource)),
+      photosJson: snapshotPhotos(existingEntry.photos as PhotoWithBase64[]),
+    };
   }, [existingEntry]);
+
+  const isDirty =
+    date !== initialSnapshotRef.current.date ||
+    weather !== initialSnapshotRef.current.weather ||
+    locationAddress !== initialSnapshotRef.current.locationAddress ||
+    crewCount !== initialSnapshotRef.current.crewCount ||
+    notes !== initialSnapshotRef.current.notes ||
+    notesMode !== initialSnapshotRef.current.notesMode ||
+    snapshotHourlyNotes(hourlyNotes) !== initialSnapshotRef.current.hourlyNotesJson ||
+    snapshotPhotos(photos) !== initialSnapshotRef.current.photosJson;
+  const markSaved = useUnsavedChangesGuard(isDirty);
 
   // Keep hourlyNotes in sync with the [hourStart, hourEnd] window, preserving
   // any notes already entered for hours that remain in range.
@@ -416,6 +477,7 @@ export default function NewEntryScreen() {
         await addEntry(payload);
         await clearDraft(effectiveSiteId);
       }
+      markSaved();
       router.back();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save entry.";
