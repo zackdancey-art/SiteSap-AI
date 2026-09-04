@@ -252,3 +252,11 @@ The real root cause behind L10, L11, H6, and the incident data-loss bug. Schema 
 ### L9 — Media is company-scoped but not crew-scoped (residual of H7) — LOW
 
 Promoted to its own finding during Part D (H1b). `uploadBelongsToActorCompany` (`storage/uploadsStore.ts`) gates media access on `company_id` only, so **any** member of a company can fetch **any** upload in that company — a crew member is not restricted to media for sites they are a member of. This is the residual (b) noted under H7 (which closed the cross-*tenant* exposure). Deliberately NOT bundled into migration 025: the fix is a larger, media-path change, not RLS on the five operational tables. **Disposition:** OPEN — `uploads` currently has no `site_id` dimension (`id, filename, company_id, owner_email`), so crew-scoping requires either adding `site_id` to `uploads` + backfilling from the earliest referencing `project_entries`/inspection/etc. and scoping reads by site membership, or accepting company-scoping as the boundary. Track separately; the cross-tenant boundary (H7) remains closed.
+
+### L13 — Half-configured `getsitesnapai.com` domain map: `eas.json` mobile build targets `api.getsitesnapai.com`, but the live API is `sitesap-ai.onrender.com` and `api.`/`app.` don't resolve — LOW (config)
+
+Surfaced while building the public marketing site. The `getsitesnapai.com` subdomain map is only partly wired:
+- Mobile **production** build (`Projects/apps/mobile/eas.json`, `EXPO_PUBLIC_API_URL`) targets `https://api.getsitesnapai.com`; **staging** targets `https://api-staging.getsitesnapai.com`.
+- But the API is actually served at `https://sitesap-ai.onrender.com`, and `app.getsitesnapai.com` (the intended supervisor-web host, linked from the marketing site's since-removed sign-in button) **does not resolve**. The apex `getsitesnapai.com` returns 200; `api.`/`app.` are not set up.
+
+A production mobile build shipped as-is would call an unresolved API host. **Disposition:** OPEN — resolve when the dashboard + custom domains are set up (the "prompt 03" work): either point `api.getsitesnapai.com` / `app.getsitesnapai.com` at the Render services (and add both to `CORS_ALLOWED_ORIGINS`), or change `eas.json` to the actual API host. Logged here so it doesn't turn into a confusing mid-launch debug session.
