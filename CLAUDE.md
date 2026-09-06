@@ -25,6 +25,8 @@ Paths to `docs/`, `.claude/`, and `CLAUDE.md` are relative to the repo root (no 
 
 ## 2. Monorepo layout and the three deployables
 
+**This is a `pnpm` workspace — NOT Yarn.** Some external notes/prompts describe it as a Yarn workspace; that is wrong. There is a `Projects/pnpm-lock.yaml` and no `yarn.lock`. Use pnpm exclusively (`pnpm install`, `pnpm --filter <pkg> …`); never run `yarn`. Render build/start commands for these services must use pnpm too.
+
 pnpm workspace (`Projects/pnpm-workspace.yaml`) with packages `apps/*`, `services/*`, `shared`.
 
 | Package | Path | What it is |
