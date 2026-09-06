@@ -4,7 +4,7 @@ const withBundleAnalyzer = bundleAnalyzer({
   enabled: process.env.ANALYZE === "true",
 });
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 // Extract origin from NEXT_PUBLIC_API_URL for CSP connect-src; fall back to 'self'
 // if it isn't set (rather than assuming a dev default the CSP shouldn't hardcode).
